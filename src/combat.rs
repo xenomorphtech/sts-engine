@@ -58,9 +58,11 @@ impl Combat {
         }
         for (i, monster) in monsters.iter_mut().enumerate() {
             monster.roll_move_group(rng, 0, ally_count, i as i32);
-            // BattleStartEffect.showIntent / MonsterGroup.showIntent:
-            // createIntent before the first player action.
-            monster.create_intent();
+            // AbstractMonster.getMove/setMove fills EnemyMoveInfo only.
+            // intent stays DEBUG and intentBaseDmg stays -1 until
+            // BattleStartEffect.update → MonsterGroup.showIntent → createIntent
+            // (duration < 3s after timer1). ExactTextSim can publish the first
+            // combat_turn in that window, so ForTheEyesAction sees ibd < 0.
         }
 
         player.block = 0;
@@ -119,6 +121,13 @@ impl Combat {
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
             r.counter = 0;
         }
+        if player
+            .relics
+            .iter()
+            .any(|r| r.id == RelicId::Pen_Nib && r.counter == 9)
+        {
+            player.add_power(PowerId::PenNib, 1);
+        }
         // CentennialPuzzle.atPreBattle: usedThisCombat = false.
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Centennial_Puzzle) {
             r.used_up = false;
@@ -174,6 +183,13 @@ impl Combat {
 
     pub fn all_dead(&self) -> bool {
         self.monsters.iter().all(|m| !m.alive())
+    }
+
+    /// MonsterGroup.showIntent → AbstractMonster.createIntent.
+    pub fn publish_intents(&mut self) {
+        for monster in &mut self.monsters {
+            monster.create_intent();
+        }
     }
 }
 
@@ -419,7 +435,7 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
     }
 }
 
-fn spawn_monster_at_hp(id: MonsterId, hp: i32) -> Monster {
+fn spawn_monster_at_hp(id: MonsterId, hp: i32, ascension: i32) -> Monster {
     Monster {
         id,
         hp,
@@ -440,7 +456,8 @@ fn spawn_monster_at_hp(id: MonsterId, hp: i32) -> Monster {
         split_triggered: false,
         stasis_card: None,
         half_dead: false,
-        ascension: 0,
+        // Split constructors pass currentHealth but keep AbstractDungeon.ascensionLevel.
+        ascension,
     }
 }
 
@@ -765,16 +782,33 @@ impl Monster {
             MonsterId::SpikeSlimeL => {
                 if self.hp <= self.max_hp / 2 && !self.split_triggered {
                     self.set_move(3, Intent::Unknown, 0, 1);
-                } else if num < 30 {
-                    if self.last_two(1) {
-                        self.set_move(4, Intent::Debuff, 0, 1);
-                    } else {
-                        self.set_move(1, Intent::AttackDebuff, 16, 1);
-                    }
-                } else if self.last_two(4) {
-                    self.set_move(1, Intent::AttackDebuff, 16, 1);
                 } else {
-                    self.set_move(4, Intent::Debuff, 0, 1);
+                    // SpikeSlime_L.getMove: A17 uses lastMove(4) in the >=30 branch;
+                    // Flame Tackle 18 at A2+ (Java A_2_TACKLE_DAMAGE).
+                    let dmg = if self.ascension >= 2 { 18 } else { 16 };
+                    if self.ascension >= 17 {
+                        if num < 30 {
+                            if self.last_two(1) {
+                                self.set_move(4, Intent::Debuff, 0, 1);
+                            } else {
+                                self.set_move(1, Intent::AttackDebuff, dmg, 1);
+                            }
+                        } else if self.last_move(4) {
+                            self.set_move(1, Intent::AttackDebuff, dmg, 1);
+                        } else {
+                            self.set_move(4, Intent::Debuff, 0, 1);
+                        }
+                    } else if num < 30 {
+                        if self.last_two(1) {
+                            self.set_move(4, Intent::Debuff, 0, 1);
+                        } else {
+                            self.set_move(1, Intent::AttackDebuff, dmg, 1);
+                        }
+                    } else if self.last_two(4) {
+                        self.set_move(1, Intent::AttackDebuff, dmg, 1);
+                    } else {
+                        self.set_move(4, Intent::Debuff, 0, 1);
+                    }
                 }
             }
             MonsterId::SpikeSlimeS => self.set_move(1, Intent::Attack, if self.ascension >= 2 { 6 } else { 5 }, 1),
@@ -1240,7 +1274,8 @@ impl Monster {
         self.move_history.push(move_id);
     }
 
-    fn create_intent(&mut self) {
+    pub fn create_intent(&mut self) {
+        // AbstractMonster.createIntent: copies move.baseDamage into intentBaseDmg.
         self.intent_base_damage = match self.intent {
             Intent::Attack | Intent::AttackBuff | Intent::AttackDebuff | Intent::AttackDefend => {
                 self.intent_damage
@@ -1495,20 +1530,23 @@ impl Monster {
                 self.hp = 0;
                 self.dead = true;
                 self.set_move(3, Intent::Unknown, 0, 1);
-                return Some(split_into(MonsterId::AcidSlimeM, hp, rng));
+                return Some(split_into(MonsterId::AcidSlimeM, hp, rng, self.ascension));
             }
             (MonsterId::SpikeSlimeL, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
                 player.discard.push(Card::new(CardId::Slimed));
                 player.discard.push(Card::new(CardId::Slimed));
             }
-            (MonsterId::SpikeSlimeL, 4) => player.add_power_from_monster(PowerId::Frail, 2),
+            (MonsterId::SpikeSlimeL, 4) => {
+                // SpikeSlime_L FRAIL_LICK: 3 at A17, else 2.
+                player.add_power_from_monster(PowerId::Frail, if ascension >= 17 { 3 } else { 2 })
+            }
             (MonsterId::SpikeSlimeL, 3) => {
                 let hp = self.hp;
                 self.hp = 0;
                 self.dead = true;
                 self.set_move(3, Intent::Unknown, 0, 1);
-                return Some(split_into(MonsterId::SpikeSlimeM, hp, rng));
+                return Some(split_into(MonsterId::SpikeSlimeM, hp, rng, self.ascension));
             }
 
             (MonsterId::SphericGuardian, 1) => {
@@ -1696,8 +1734,8 @@ impl Monster {
                 let hp = self.hp.max(1);
                 self.hp = 0;
                 self.dead = true;
-                let mut spike = spawn_monster_at_hp(MonsterId::SpikeSlimeL, hp);
-                let mut acid = spawn_monster_at_hp(MonsterId::AcidSlimeL, hp);
+                let mut spike = spawn_monster_at_hp(MonsterId::SpikeSlimeL, hp, self.ascension);
+                let mut acid = spawn_monster_at_hp(MonsterId::AcidSlimeL, hp, self.ascension);
                 spike.roll_move(rng);
                 acid.roll_move(rng);
                 return Some(vec![spike, acid]);
@@ -1901,8 +1939,11 @@ fn looter_steal(monster: &mut Monster, player: &mut Player, amt: i32) {
     monster.stolen_gold += steal;
 }
 
-fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet) -> Vec<Monster> {
-    let mut kids = vec![spawn_monster_at_hp(child, hp), spawn_monster_at_hp(child, hp)];
+fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet, ascension: i32) -> Vec<Monster> {
+    let mut kids = vec![
+        spawn_monster_at_hp(child, hp, ascension),
+        spawn_monster_at_hp(child, hp, ascension),
+    ];
     for k in &mut kids {
         k.roll_move(rng);
     }
@@ -1910,6 +1951,15 @@ fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet) -> Vec<Monster> {
 }
 
 
+
+/// TungstenRod.onLoseHpLast after decrementBlock / Buffer: incoming HP loss -1 if > 0.
+pub fn on_lose_hp_last(player: &Player, damage: i32) -> i32 {
+    if damage > 0 && player.has_relic(RelicId::TungstenRod) {
+        damage - 1
+    } else {
+        damage
+    }
+}
 
 /// BufferPower.onAttackedToChangeDamage after decrementBlock: consume 1 and return 0.
 fn buffer_absorb(player: &mut Player, dmg: i32) -> i32 {
@@ -1941,6 +1991,7 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
         }
         dmg = apply_block(&mut player.block, dmg);
         dmg = buffer_absorb(player, dmg);
+        dmg = on_lose_hp_last(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
             if let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::PlatedArmor) {
@@ -2028,6 +2079,9 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
     let mut pending_curl = 0;
     for _ in 0..hits {
         let mut dmg_f = (base + player.power_amount(PowerId::Strength)) as f32;
+        if player.power_amount(PowerId::PenNib) > 0 {
+            dmg_f *= 2.0;
+        }
         if player.power_amount(PowerId::Weak) > 0 {
             dmg_f *= 0.75;
         }
@@ -2045,6 +2099,7 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
         if thorns > 0 {
             let bounced = apply_block(&mut player.block, thorns);
             let bounced = buffer_absorb(player, bounced);
+            let bounced = on_lose_hp_last(player, bounced);
             if bounced > 0 {
                 player.hp -= bounced;
                 if player.hp < 0 {
@@ -2374,11 +2429,22 @@ pub fn play_card(
             }
             CardType::ATTACK => {
                 combat.attacks_this_turn += 1;
-                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Pen_Nib) {
+                // PenNibPower.onUseCard: remove after the doubled attack lands.
+                player.powers.retain(|p| p.id != PowerId::PenNib);
+                let apply_pen_nib = if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Pen_Nib)
+                {
                     r.counter += 1;
-                    if r.counter >= 10 {
+                    if r.counter == 10 {
                         r.counter = 0;
+                        false
+                    } else {
+                        r.counter == 9
                     }
+                } else {
+                    false
+                };
+                if apply_pen_nib {
+                    player.add_power(PowerId::PenNib, 1);
                 }
                 if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
                     if r.counter < 0 {
@@ -2395,9 +2461,11 @@ pub fn play_card(
         }
     }
 
-    for monster in combat.monsters.iter_mut() {
-        monster.create_intent();
-    }
+    // BattleStartEffect.showIntent often lands during the first card's
+    // queued actions (DamageAction duration). UseCardAction itself does not
+    // call createIntent; this is the tickless stand-in so a later GftE in
+    // the same opening turn sees getIntentBaseDmg() >= 0.
+    combat.publish_intents();
     if (card.id == CardId::Thinking_Ahead && card.exhaust)
         || (card.id == CardId::Hologram && combat.need_discard_to_hand)
     {
@@ -2470,9 +2538,12 @@ fn apply_card_effect(
         }
         CardId::Strike_R | CardId::Strike_B | CardId::Bash | CardId::Bludgeon | CardId::Hemokinesis | CardId::Anger => {
             if card.id == CardId::Hemokinesis {
-                player.hp -= card.base_magic as i32;
-                red_skull_on_hp_change(player);
-                centennial_puzzle_was_hp_lost(player, rng);
+                let dmg = on_lose_hp_last(player, card.base_magic as i32);
+                if dmg > 0 {
+                    player.hp -= dmg;
+                    red_skull_on_hp_change(player);
+                    centennial_puzzle_was_hp_lost(player, rng);
+                }
             }
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
@@ -2553,8 +2624,11 @@ fn apply_card_effect(
                     damage_monster(m, player, rng, dmg, 1);
                 }
             }
-            for _ in 0..card.base_magic.max(1) {
-                channel_orb(player, combat, rng, OrbKind::Lightning);
+            // DamageAction -> GameActionManager.clearPostCombatActions drops ChannelAction.
+            if !combat.all_dead() {
+                for _ in 0..card.base_magic.max(1) {
+                    channel_orb(player, combat, rng, OrbKind::Lightning);
+                }
             }
         }
         CardId::Cold_Snap => {
@@ -2563,8 +2637,11 @@ fn apply_card_effect(
                     damage_monster(m, player, rng, dmg, 1);
                 }
             }
-            for _ in 0..card.base_magic.max(1) {
-                channel_orb(player, combat, rng, OrbKind::Frost);
+            // DamageAction -> GameActionManager.clearPostCombatActions drops ChannelAction.
+            if !combat.all_dead() {
+                for _ in 0..card.base_magic.max(1) {
+                    channel_orb(player, combat, rng, OrbKind::Frost);
+                }
             }
         }
         CardId::Beam_Cell => {
@@ -2768,8 +2845,11 @@ fn apply_card_effect(
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 damage_monster(monster, player, rng, dmg, 1);
             }
-            for _ in 0..card.base_magic.max(1) {
-                channel_orb(player, combat, rng, OrbKind::Dark);
+            // DamageAction -> GameActionManager.clearPostCombatActions drops ChannelAction.
+            if !combat.all_dead() {
+                for _ in 0..card.base_magic.max(1) {
+                    channel_orb(player, combat, rng, OrbKind::Dark);
+                }
             }
         }
         CardId::Electrodynamics => {
@@ -2889,9 +2969,12 @@ fn apply_card_effect(
         }
         CardId::Bloodletting => player.energy += card.base_magic as i32,
         CardId::Offering => {
-            player.hp -= 6;
-            red_skull_on_hp_change(player);
-            centennial_puzzle_was_hp_lost(player, rng);
+            let dmg = on_lose_hp_last(player, 6);
+            if dmg > 0 {
+                player.hp -= dmg;
+                red_skull_on_hp_change(player);
+                centennial_puzzle_was_hp_lost(player, rng);
+            }
             player.energy += 2;
             reshuffle_if_needed(player, rng);
             let n = draw_cards_rng(player, card.base_magic as i32, Some(rng));
@@ -2944,6 +3027,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     if burn_dmg > 0 {
         let dmg = apply_block(&mut player.block, burn_dmg);
         let dmg = buffer_absorb(player, dmg);
+        let dmg = on_lose_hp_last(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
             red_skull_on_hp_change(player);
@@ -3050,6 +3134,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
             if explosive == 1 {
                 let dealt = apply_block(&mut player.block, 30);
                 let dealt = buffer_absorb(player, dealt);
+                let dealt = on_lose_hp_last(player, dealt);
                 if dealt > 0 {
                     player.hp -= dealt;
                     if player.hp < 0 {
@@ -3161,9 +3246,12 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     }
     if player.power_amount(PowerId::Brutality) > 0 {
         let n = player.power_amount(PowerId::Brutality);
-        player.hp -= n;
-        red_skull_on_hp_change(player);
-        centennial_puzzle_was_hp_lost(player, rng);
+        let dmg = on_lose_hp_last(player, n);
+        if dmg > 0 {
+            player.hp -= dmg;
+            red_skull_on_hp_change(player);
+            centennial_puzzle_was_hp_lost(player, rng);
+        }
         reshuffle_if_needed(player, rng);
         let statuses = draw_cards_rng(player, n, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, statuses);

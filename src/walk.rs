@@ -210,6 +210,17 @@ struct CombatSnap {
 struct Mon {
     id: String,
     current_hp: i32,
+    #[serde(default)]
+    intent: Option<String>,
+}
+
+fn java_intents_published(snap: &Envelope) -> bool {
+    let Some(combat) = snap.state.combat.as_ref() else {
+        return false;
+    };
+    combat.monsters.iter().any(|m| {
+        m.current_hp > 0 && m.intent.as_deref().is_some_and(|intent| intent != "DEBUG")
+    })
 }
 
 fn parse_envelope(line: &str) -> Result<Option<Envelope>, serde_json::Error> {
@@ -276,6 +287,14 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
         while applied < target && applied < cmds.len() {
             game.step(&cmds[applied]);
             applied += 1;
+        }
+        // Newer ExactTextSim waits for intent != DEBUG before combat_turn
+        // (BattleStartEffect.showIntent already ran). Older oracles publish
+        // while still DEBUG; Combat::start matches that pre-showIntent window.
+        if java_intents_published(&snap) {
+            if let Some(combat) = game.combat.as_mut() {
+                combat.publish_intents();
+            }
         }
         let rust = rust_side(&game);
         let java = java_side(&snap);
@@ -415,6 +434,7 @@ fn rust_side(game: &Game) -> Side {
                     RewardKind::Relic(id) => format!("RELIC({}){taken}", id.sts_id()),
                     RewardKind::Card => format!("CARD{taken}"),
                     RewardKind::EmeraldKey => format!("EMERALD_KEY{taken}"),
+                    RewardKind::SapphireKey => format!("SAPPHIRE_KEY{taken}"),
                 }
             })
             .collect(),

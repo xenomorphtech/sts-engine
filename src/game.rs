@@ -30,6 +30,18 @@ pub enum Screen {
 pub struct Reward {
     pub kind: RewardKind,
     pub taken: bool,
+    /// Bidirectional `RewardItem.relicLink` (chest relic ↔ sapphire key).
+    relic_link: Option<usize>,
+}
+
+impl Reward {
+    fn new(kind: RewardKind) -> Self {
+        Self {
+            kind,
+            taken: false,
+            relic_link: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +52,7 @@ pub enum RewardKind {
     Relic(RelicId),
     Card,
     EmeraldKey,
+    SapphireKey,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +108,7 @@ pub struct Game {
     rest_selected: bool,
     has_ruby_key: bool,
     has_emerald_key: bool,
+    has_sapphire_key: bool,
     final_act_available: bool,
     grid: Option<GridSelect>,
     exhaust_select: bool,
@@ -278,6 +292,7 @@ impl Game {
             rest_selected: false,
             has_ruby_key: false,
             has_emerald_key: false,
+            has_sapphire_key: false,
             final_act_available: true,
             grid: None,
             exhaust_select: false,
@@ -442,6 +457,7 @@ impl Game {
                             RewardKind::Relic(_) => "RELIC",
                             RewardKind::Card => "CARD",
                             RewardKind::EmeraldKey => "EMERALD_KEY",
+                            RewardKind::SapphireKey => "SAPPHIRE_KEY",
                         };
                         actions.push(Action::Choose {
                             index: compact,
@@ -699,10 +715,7 @@ impl Game {
                 self.rewards.clear();
                 for _ in 0..3 {
                     let p = crate::rewards::get_random_potion_for(&mut self.rng, self.character);
-                    self.rewards.push(Reward {
-                        kind: RewardKind::Potion(p),
-                        taken: false,
-                    });
+                    self.rewards.push(Reward::new(RewardKind::Potion(p)));
                 }
                 self.screen = Screen::CombatReward;
             }
@@ -1336,86 +1349,220 @@ impl Game {
             })
             .unwrap_or(0);
         after_combat_relics(&mut self.player);
-        if self.event.as_ref().is_some_and(|e| e.id == "MindBloom") {
+        let event_room = self.current_room == RoomType::Event;
+        // AbstractRoom.endBattle gold is `instanceof MonsterRoomBoss/Elite/MonsterRoom`.
+        // EventRoom keeps pre-seeded rewards (Mushrooms gold+Odd Mushroom, MindBloom, …)
+        // and does not roll hallway gold.
+        if !event_room {
             self.rewards.clear();
-            self.rewards.push(Reward {
-                kind: RewardKind::Gold(50),
-                taken: false,
-            });
-            if let Some(id) = self.take_relic(RelicTier::RARE) {
-                self.rewards.push(Reward {
-                    kind: RewardKind::Relic(id),
-                    taken: false,
-                });
+            if stolen > 0 {
+                self.add_stolen_gold_to_rewards(stolen);
             }
-            self.rewards.push(Reward {
-                kind: RewardKind::Card,
-                taken: false,
-            });
-            self.generate_card_reward();
-            self.combat = None;
-            self.screen = Screen::CombatReward;
-            return;
-        }
-        self.rewards.clear();
-        if stolen > 0 {
-            self.rewards.push(Reward {
-                kind: RewardKind::StolenGold(stolen),
-                taken: false,
-            });
+            let boss = self.current_room == RoomType::Boss;
+            let elite = self.current_room == RoomType::Elite;
+            let gold = crate::rewards::roll_monster_gold(&mut self.rng, boss, elite);
+            self.add_gold_to_rewards(gold);
+            if elite {
+                // MonsterRoomElite.returnRandomRelicTier: <50 common, >82 rare, else uncommon.
+                let roll = self.rng.relic.random_range(0, 99);
+                let tier = if roll < 50 {
+                    RelicTier::COMMON
+                } else if roll > 82 {
+                    RelicTier::RARE
+                } else {
+                    RelicTier::UNCOMMON
+                };
+                if let Some(id) = self.take_relic(tier) {
+                    self.add_relic_to_rewards(id);
+                }
+                // MonsterRoomElite.addEmeraldKey: after relic(s), before potion/CARD.
+                self.add_emerald_key_reward();
+            }
+        } else if stolen > 0 {
+            self.add_stolen_gold_to_rewards(stolen);
         }
         let boss = self.current_room == RoomType::Boss;
         let elite = self.current_room == RoomType::Elite;
-        let gold = crate::rewards::roll_monster_gold(&mut self.rng, boss, elite);
-        self.rewards.push(Reward {
-            kind: RewardKind::Gold(gold),
-            taken: false,
-        });
-        if elite {
-            // MonsterRoomElite.returnRandomRelicTier: <50 common, >82 rare, else uncommon.
-            let roll = self.rng.relic.random_range(0, 99);
-            let tier = if roll < 50 {
-                RelicTier::COMMON
-            } else if roll > 82 {
-                RelicTier::RARE
-            } else {
-                RelicTier::UNCOMMON
-            };
-            if let Some(id) = self.take_relic(tier) {
-                self.rewards.push(Reward {
-                    kind: RewardKind::Relic(id),
-                    taken: false,
-                });
-            }
-            // MonsterRoomElite.addEmeraldKey: after relic(s), before potion/CARD.
-            self.add_emerald_key_reward();
-        }
         let darklings = self
             .combat
             .as_ref()
             .is_some_and(|c| c.monsters.iter().any(|m| m.id == crate::ids::MonsterId::Darkling));
         // CombatRewardScreen.setupItemReward: potion first, then CARD.
         // addPotionToRewards uses chance 0 when rewards.size() >= 4 but still rolls.
+        // EventRoom still uses chance 40 + blizzard (not the boss/darkling miss).
         if let Some(p) = crate::rewards::roll_potion(
             &mut self.rng,
             &mut self.potion_blizzard,
             elite,
-            boss || darklings,
+            !event_room && (boss || darklings),
             self.character,
             self.rewards.len(),
         ) {
-            self.rewards.push(Reward {
-                kind: RewardKind::Potion(p),
-                taken: false,
-            });
+            self.rewards.push(Reward::new(RewardKind::Potion(p)));
         }
         self.rewards.push(Reward {
             kind: RewardKind::Card,
             taken: false,
+            relic_link: None,
         });
         self.generate_card_reward();
         self.combat = None;
         self.screen = Screen::CombatReward;
+    }
+
+    /// AbstractRoom.addGoldToRewards: merge into an existing GOLD item.
+    fn add_gold_to_rewards(&mut self, gold: i32) {
+        if let Some(existing) = self.rewards.iter_mut().find_map(|r| match &mut r.kind {
+            RewardKind::Gold(g) => Some(g),
+            _ => None,
+        }) {
+            *existing += gold;
+            return;
+        }
+        self.rewards.push(Reward {
+            kind: RewardKind::Gold(gold),
+            taken: false,
+            relic_link: None,
+        });
+    }
+
+    /// AbstractRoom.addStolenGoldToRewards: merge into an existing STOLEN_GOLD item.
+    fn add_stolen_gold_to_rewards(&mut self, gold: i32) {
+        if let Some(existing) = self.rewards.iter_mut().find_map(|r| match &mut r.kind {
+            RewardKind::StolenGold(g) => Some(g),
+            _ => None,
+        }) {
+            *existing += gold;
+            return;
+        }
+        self.rewards.push(Reward {
+            kind: RewardKind::StolenGold(gold),
+            taken: false,
+            relic_link: None,
+        });
+    }
+
+    fn add_relic_to_rewards(&mut self, id: RelicId) {
+        self.rewards.push(Reward::new(RewardKind::Relic(id)));
+    }
+
+    /// AbstractChest.open relic loop: Cursed Key then Matryoshka extra relic.
+    fn on_chest_open(&mut self, boss_chest: bool) {
+        let n = self.player.relics.len();
+        for i in 0..n {
+            match self.player.relics[i].id {
+                RelicId::Cursed_Key if !boss_chest => {
+                    // ExactTextSim delays ShowCardAndObtainEffect; consume cardRng only.
+                    if !self.dungeon.curse_cards.is_empty() {
+                        let n = self.dungeon.curse_cards.len() as i32;
+                        let _ = self.rng.card.random_int(n - 1);
+                    }
+                }
+                RelicId::Matryoshka if !boss_chest => {
+                    if self.player.relics[i].counter > 0 {
+                        self.player.relics[i].counter -= 1;
+                        if self.player.relics[i].counter == 0 {
+                            self.player.relics[i].counter = -2;
+                            self.player.relics[i].used_up = true;
+                        }
+                        let tier = if self.rng.relic.random_boolean_chance(0.75) {
+                            RelicTier::COMMON
+                        } else {
+                            RelicTier::UNCOMMON
+                        };
+                        if let Some(id) = self.take_relic(tier) {
+                            self.add_relic_to_rewards(id);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// NlothsMask.onChestOpenAfter: drop the first relic (and its sapphire link).
+    fn on_chest_open_after(&mut self, boss_chest: bool) {
+        if boss_chest {
+            return;
+        }
+        let n = self.player.relics.len();
+        for i in 0..n {
+            if self.player.relics[i].id != RelicId::NlothsMask {
+                continue;
+            }
+            if self.player.relics[i].counter > 0 {
+                self.player.relics[i].counter -= 1;
+                if self.player.relics[i].counter == 0 {
+                    self.player.relics[i].counter = -2;
+                    self.player.relics[i].used_up = true;
+                }
+                self.remove_one_relic_from_rewards();
+            }
+        }
+    }
+
+    fn remove_reward_at(&mut self, i: usize) {
+        self.rewards.remove(i);
+        for r in &mut self.rewards {
+            match r.relic_link {
+                Some(l) if l == i => r.relic_link = None,
+                Some(l) if l > i => r.relic_link = Some(l - 1),
+                _ => {}
+            }
+        }
+    }
+
+    fn remove_one_relic_from_rewards(&mut self) {
+        let Some(i) = self
+            .rewards
+            .iter()
+            .position(|r| matches!(r.kind, RewardKind::Relic(_)))
+        else {
+            return;
+        };
+        let remove_next = self.rewards[i].relic_link == Some(i + 1);
+        self.remove_reward_at(i);
+        if remove_next && i < self.rewards.len() {
+            self.remove_reward_at(i);
+        }
+    }
+
+    fn claim_reward_at(&mut self, real: usize) {
+        let Some(kind) = self.rewards.get(real).filter(|r| !r.taken).map(|r| r.kind.clone()) else {
+            return;
+        };
+        match kind {
+            RewardKind::Gold(g) => {
+                let gained = self.gold_gain(g);
+                self.player.gold += gained;
+            }
+            RewardKind::StolenGold(g) => {
+                self.player.gold += g;
+            }
+            RewardKind::Potion(p) => {
+                if !self.gain_potion(p) {
+                    return;
+                }
+            }
+            RewardKind::Relic(id) => self.gain_relic(id),
+            RewardKind::EmeraldKey => self.has_emerald_key = true,
+            RewardKind::SapphireKey => self.has_sapphire_key = true,
+            RewardKind::Card => {
+                self.open_card_reward();
+                return;
+            }
+        }
+        let link = self.rewards.get(real).and_then(|r| r.relic_link);
+        if let Some(reward) = self.rewards.get_mut(real) {
+            reward.taken = true;
+        }
+        // RewardItem.claimReward: taking a linked relic or sapphire key
+        // sets the other isDone + ignoreReward (no obtain).
+        if let Some(link) = link {
+            if let Some(r) = self.rewards.get_mut(link) {
+                r.taken = true;
+            }
+        }
     }
 
     fn random_potion(&mut self) -> Option<PotionId> {
@@ -1462,19 +1609,7 @@ impl Game {
                         self.claim_emerald_key();
                         return;
                     }
-                    if label == "SAPPHIRE_KEY" || label == "RUBY_KEY" {
-                        return;
-                    }
-                    if label == "RELIC" {
-                        if let Some(id) = self.rewards.iter().find_map(|r| match r.kind {
-                            RewardKind::Relic(id) if !r.taken => Some(id),
-                            _ => None,
-                        }) {
-                            self.gain_relic(id);
-                            if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::Relic(x) if x == id && !r.taken)) {
-                                r.taken = true;
-                            }
-                        }
+                    if label == "RUBY_KEY" {
                         return;
                     }
                     if label == "STOLEN_GOLD" {
@@ -1531,31 +1666,7 @@ impl Game {
                     .map(|(i, _)| i)
                     .collect();
                 if let Some(&real) = untaken.get(*index) {
-                    if let Some(kind) = self.rewards.get(real).map(|r| r.kind.clone()) {
-                        match kind {
-                            RewardKind::Gold(g) => {
-                                let gained = self.gold_gain(g);
-                                self.player.gold += gained;
-                            }
-                            RewardKind::StolenGold(g) => {
-                                self.player.gold += g;
-                            }
-                            RewardKind::Potion(p) => {
-                                if !self.gain_potion(p) {
-                                    return;
-                                }
-                            }
-                            RewardKind::Relic(id) => self.gain_relic(id),
-                            RewardKind::EmeraldKey => self.has_emerald_key = true,
-                            RewardKind::Card => {
-                                self.open_card_reward();
-                                return;
-                            }
-                        }
-                        if let Some(reward) = self.rewards.get_mut(real) {
-                            reward.taken = true;
-                        }
-                    }
+                    self.claim_reward_at(real);
                 }
             }
             _ => {}
@@ -2018,27 +2129,20 @@ impl Game {
             self.screen = Screen::BossRelic;
         } else {
             self.rewards.clear();
+            // AbstractChest.open(false): onChestOpen, gold, chest relic,
+            // sapphire key linked to the last reward, then onChestOpenAfter.
+            self.on_chest_open(false);
             if self.chest_gold {
                 let lo = self.chest_gold_amt as f32 * 0.9;
                 let hi = self.chest_gold_amt as f32 * 1.1;
                 let gold = self.rng.treasure.random_float_range(lo, hi).round() as i32;
-                self.rewards.push(Reward {
-                    kind: RewardKind::Gold(gold),
-                    taken: false,
-                });
+                self.add_gold_to_rewards(gold);
             }
             if let Some(id) = self.take_relic(self.chest_tier) {
-                self.rewards.push(Reward {
-                    kind: RewardKind::Relic(id),
-                    taken: false,
-                });
+                self.add_relic_to_rewards(id);
             }
-            // Cursed Key.onChestOpen: returnRandomCurse() via cardRng.
-            // ExactTextSim delays the obtain VFX, so only consume the roll here.
-            if self.player.has_relic(RelicId::Cursed_Key) && !self.dungeon.curse_cards.is_empty() {
-                let n = self.dungeon.curse_cards.len() as i32;
-                let _ = self.rng.card.random_int(n - 1);
-            }
+            self.add_sapphire_key_reward();
+            self.on_chest_open_after(false);
             self.screen = Screen::CombatReward;
         }
     }
@@ -2182,9 +2286,20 @@ impl Game {
         if !self.dungeon.map.node(x, y).emerald_key {
             return;
         }
+        self.rewards.push(Reward::new(RewardKind::EmeraldKey));
+    }
+
+    fn add_sapphire_key_reward(&mut self) {
+        // AbstractChest.open: Settings.isFinalActAvailable && !hasSapphireKey.
+        if !self.final_act_available || self.has_sapphire_key || self.rewards.is_empty() {
+            return;
+        }
+        let last = self.rewards.len() - 1;
+        self.rewards[last].relic_link = Some(last + 1);
         self.rewards.push(Reward {
-            kind: RewardKind::EmeraldKey,
+            kind: RewardKind::SapphireKey,
             taken: false,
+            relic_link: Some(last),
         });
     }
 
@@ -2515,6 +2630,16 @@ impl Game {
                 ]
             }
             "Bonfire Elementals" => vec!["[Continue]".into()],
+            "FaceTrader" => {
+                // FaceTrader: A15+ gold=50 else 75; damage = maxHp/10 (min 1).
+                let gold = if self.ascension >= 15 { 50 } else { 75 };
+                let mut dmg = self.player.max_hp / 10;
+                if dmg == 0 {
+                    dmg = 1;
+                }
+                data = vec![dmg, gold];
+                vec!["[Continue]".into()]
+            }
             _ => vec!["[Continue]".into(), "[Leave]".into()],
         };
         if id == "Falling" {
@@ -2535,6 +2660,28 @@ impl Game {
             data,
         });
         self.screen = Screen::Event;
+    }
+
+    /// FaceTrader.getRandomFace: shuffle missing face relics with `miscRng.randomLong()`.
+    fn face_trader_random_face(&mut self) -> Option<RelicId> {
+        let mut ids = Vec::new();
+        for id in [
+            RelicId::CultistMask,
+            RelicId::FaceOfCleric,
+            RelicId::GremlinMask,
+            RelicId::NlothsMask,
+            RelicId::SsserpentHead,
+        ] {
+            if !self.player.has_relic(id) {
+                ids.push(id);
+            }
+        }
+        if ids.is_empty() {
+            return RelicId::from_sts_id("Circlet");
+        }
+        let seed = self.rng.misc.random_long();
+        shuffle_java(&mut ids, seed);
+        ids.first().copied()
     }
 
     fn pick_deck_index_of_type(&mut self, card_type: crate::ids::CardType) -> Option<usize> {
@@ -2565,6 +2712,48 @@ impl Game {
                 return;
             }
         };
+        if id == "FaceTrader" {
+            // FaceTrader.buttonEffect: INTRO Continue → MAIN Touch/Trade/Leave → RESULT Leave.
+            match screen {
+                0 => {
+                    let dmg = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(1);
+                    let gold = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(75);
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec![
+                            format!("[Touch] #rLose #r{dmg} #rHP, #ggain #g{gold} #gGold."),
+                            "[Trade] #g50%: #gGood #gFace. #r50%: #rBad #rFace.".into(),
+                            "[Leave]".into(),
+                        ];
+                    }
+                }
+                1 => {
+                    match *index {
+                        0 => {
+                            let dmg = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(1);
+                            let gold = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(75);
+                            let dmg = combat::on_lose_hp_last(&self.player, dmg);
+                            self.player.hp = (self.player.hp - dmg).max(0);
+                            if !self.player.has_relic(RelicId::Ectoplasm) {
+                                self.player.gold += gold;
+                            }
+                        }
+                        1 => {
+                            if let Some(rid) = self.face_trader_random_face() {
+                                self.gain_relic(rid);
+                            }
+                        }
+                        _ => {}
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
         if label.as_deref().is_some_and(|l| l.contains("[Leave]") || l == "Leave") {
             // Tomb INTRO Leave opens the map; Mausoleum/Scrap Ooze-style Leave goes to RESULT first.
             if id == "Tomb of Lord Red Mask" || screen > 0 || option_count == 1 {
@@ -2586,6 +2775,7 @@ impl Game {
             if *index == 0 {
                 let dmg = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(3);
                 let chance = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(25);
+                let dmg = combat::on_lose_hp_last(&self.player, dmg);
                 self.player.hp = (self.player.hp - dmg).max(1);
                 let roll = self.rng.misc.random_range(0, 99);
                 if roll >= 99 - chance {
@@ -2615,7 +2805,8 @@ impl Game {
             if screen == 0 {
                 match *index {
                     0 => {
-                        self.player.hp = (self.player.hp - 11).max(1);
+                        let dmg = combat::on_lose_hp_last(&self.player, 11);
+                        self.player.hp = (self.player.hp - dmg).max(1);
                         self.player.gold += 75;
                     }
                     _ => {
@@ -2667,6 +2858,7 @@ impl Game {
                     match *index {
                         0 => self.player.deck.push(Card::new(CardId::Injury)),
                         1 => {
+                            let dmg = combat::on_lose_hp_last(&self.player, dmg);
                             self.player.hp = (self.player.hp - dmg).max(1);
                         }
                         _ => {
@@ -2790,6 +2982,7 @@ impl Game {
                             .as_ref()
                             .and_then(|e| e.data.first().copied())
                             .unwrap_or(0);
+                        let damage = combat::on_lose_hp_last(&self.player, damage);
                         self.player.hp = (self.player.hp - damage).max(0);
                         let seed = self.rng.misc.random_long();
                         let mut idxs: Vec<usize> = self
@@ -2827,6 +3020,14 @@ impl Game {
                     EncounterId::SlimeBoss,
                 ];
                 shuffle_java(&mut bosses, seed);
+                // MindBloom.buttonEffect INTRO/0: rewards.clear, addGoldToRewards
+                // (A13+ 25 else 50), addRelicToRewards(RARE), then enterCombatFromImage.
+                self.rewards.clear();
+                let gold = if self.ascension >= 13 { 25 } else { 50 };
+                self.add_gold_to_rewards(gold);
+                if let Some(id) = self.take_relic(RelicTier::RARE) {
+                    self.add_relic_to_rewards(id);
+                }
                 self.start_combat_encounter(bosses[0]);
             }
             return;
@@ -2848,9 +3049,11 @@ impl Game {
                     let _ = self.rng.misc.random_long();
                     let n = (*index as i32 + 1).clamp(1, 3);
                     if *index == 1 {
-                        self.player.hp = (self.player.hp - 5).max(0);
+                        let dmg = combat::on_lose_hp_last(&self.player, 5);
+                        self.player.hp = (self.player.hp - dmg).max(0);
                     } else if *index == 2 {
-                        self.player.hp = (self.player.hp - 10).max(0);
+                        let dmg = combat::on_lose_hp_last(&self.player, 10);
+                        self.player.hp = (self.player.hp - dmg).max(0);
                     }
                     self.rewards.clear();
                     self.card_reward = crate::rewards::colorless_reward_cards(
@@ -2860,10 +3063,7 @@ impl Game {
                         3,
                         0.3,
                     );
-                    self.rewards.push(Reward {
-                        kind: RewardKind::Card,
-                        taken: false,
-                    });
+                    self.rewards.push(Reward::new(RewardKind::Card));
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
                         event.options = vec!["[Leave]".into()];
@@ -2926,16 +3126,13 @@ impl Game {
                     }
                 }
                 2 => {
+                    // Mushrooms.buttonEffect screen 2: addGoldToRewards(miscRng.random(20,30))
+                    // then addRelicToRewards(OddMushroom) before enterCombat. EventRoom
+                    // combat does not replace these with hallway gold.
                     let gold = self.rng.misc.random_range(20, 30);
                     self.rewards.clear();
-                    self.rewards.push(Reward {
-                        kind: RewardKind::Gold(gold),
-                        taken: false,
-                    });
-                    self.rewards.push(Reward {
-                        kind: RewardKind::Relic(RelicId::Odd_Mushroom),
-                        taken: false,
-                    });
+                    self.add_gold_to_rewards(gold);
+                    self.add_relic_to_rewards(RelicId::Odd_Mushroom);
                     self.start_combat_encounter(EncounterId::MushroomLair);
                 }
                 _ => self.open_map(),
@@ -3265,7 +3462,12 @@ impl Game {
         }
         self.player.relics.push(RelicInstance {
             id,
-            counter: if id == RelicId::Happy_Flower { 0 } else { -1 },
+            counter: match id {
+                RelicId::Happy_Flower | RelicId::Pen_Nib => 0,
+                RelicId::Matryoshka => 2,
+                RelicId::NlothsMask => 1,
+                _ => -1,
+            },
             used_up: false,
         });
         if id == RelicId::Whetstone || id == RelicId::War_Paint {

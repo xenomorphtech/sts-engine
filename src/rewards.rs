@@ -457,6 +457,8 @@ fn truly_random_combat_card(
     if let Some(typ) = typ {
         list.retain(|id| id.def().card_type == typ);
     }
+    // AbstractDungeon.returnTrulyRandomCardInCombat(type) skips HEALING.
+    list.retain(|id| !id.has_healing_tag());
     if list.is_empty() {
         return None;
     }

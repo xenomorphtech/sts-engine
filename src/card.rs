@@ -116,6 +116,20 @@ impl CardId {
                 | CardId::WindmillStrike
         )
     }
+
+    /// Java `AbstractCard.hasTag(CardTags.HEALING)`.
+    pub fn has_healing_tag(self) -> bool {
+        matches!(
+            self,
+            CardId::Feed
+                | CardId::Reaper
+                | CardId::Self_Repair
+                | CardId::Bandage_Up
+                | CardId::Bite
+                | CardId::Wish
+                | CardId::LessonLearned
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
