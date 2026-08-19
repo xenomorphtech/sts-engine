@@ -296,11 +296,10 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
             mismatched.push("act");
         }
         if rust.deck != java.deck {
-            // Combat-reward picks flush immediately (FastCardObtainEffect is
-            // done before the next stable boundary). Other obtains (Neow
-            // transform, some relics) still sit in pending_cards until the
-            // matching VFX completes; ExactTextSim waits, so java.deck may
-            // already include them.
+            // Combat-reward picks and Neow ShowCardAndObtain / FastCardObtain
+            // effects land before the next stable boundary. Other obtains
+            // (some relics) may still sit in pending_cards; ExactTextSim waits,
+            // so java.deck may already include them.
             let mut landed = rust.deck.clone();
             landed.extend(rust.pending.iter().cloned());
             if landed != java.deck {
@@ -415,6 +414,7 @@ fn rust_side(game: &Game) -> Side {
                     RewardKind::Potion(p) => format!("POTION({}){taken}", p.sts_id()),
                     RewardKind::Relic(id) => format!("RELIC({}){taken}", id.sts_id()),
                     RewardKind::Card => format!("CARD{taken}"),
+                    RewardKind::EmeraldKey => format!("EMERALD_KEY{taken}"),
                 }
             })
             .collect(),

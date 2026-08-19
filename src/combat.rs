@@ -15,6 +15,8 @@ pub struct Combat {
     pub attacks_this_turn: i32,
     pub need_exhaust_select: bool,
     pub need_put_on_deck: bool,
+    /// BetterDiscardPileToHandAction GRID (Hologram).
+    pub need_discard_to_hand: bool,
     pub pending_exhaust: Option<Card>,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
@@ -56,6 +58,9 @@ impl Combat {
         }
         for (i, monster) in monsters.iter_mut().enumerate() {
             monster.roll_move_group(rng, 0, ally_count, i as i32);
+            // BattleStartEffect.showIntent / MonsterGroup.showIntent:
+            // createIntent before the first player action.
+            monster.create_intent();
         }
 
         player.block = 0;
@@ -114,6 +119,15 @@ impl Combat {
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
             r.counter = 0;
         }
+        // CentennialPuzzle.atPreBattle: usedThisCombat = false.
+        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Centennial_Puzzle) {
+            r.used_up = false;
+        }
+        // BloodVial.atBattleStart: HealAction(player, player, 2). addToTop, so
+        // Red Skull's addToBot bloodied check sees post-heal HP.
+        if player.has_relic(RelicId::Blood_Vial) {
+            player.hp = (player.hp + 2).min(player.max_hp);
+        }
         red_skull_at_battle_start(player);
         // AbstractPlayer.preBattlePrep: maxOrbs=0, orbs.clear, then
         // increaseMaxOrbSlots(masterMaxOrbs, false). Capacitor / Consume must not
@@ -145,6 +159,7 @@ impl Combat {
             attacks_this_turn: 0,
             need_exhaust_select: false,
             need_put_on_deck: false,
+            need_discard_to_hand: false,
             pending_exhaust: None,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
@@ -238,8 +253,16 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
         }
         MonsterId::JawWorm => {
             if monster.extra == 1 {
-                monster.add_power(PowerId::Strength, 3);
-                monster.block += 6;
+                // hardMode usePreBattleAction: bellowStr / bellowBlock.
+                let (str_amt, block_amt) = if monster.ascension >= 17 {
+                    (5, 9)
+                } else if monster.ascension >= 2 {
+                    (4, 6)
+                } else {
+                    (3, 6)
+                };
+                monster.add_power(PowerId::Strength, str_amt);
+                monster.block += block_amt;
             }
         }
         MonsterId::AwakenedOne => {
@@ -637,9 +660,11 @@ impl Monster {
                 }
             }
             MonsterId::JawWorm => {
+                // A0 chomp 11, A2/A17 chomp 12. Thrash is 7 at all ascensions.
+                let chomp = if self.ascension >= 2 { 12 } else { 11 };
                 if self.first_move {
                     self.first_move = false;
-                    self.set_move(1, Intent::Attack, 11, 1);
+                    self.set_move(1, Intent::Attack, chomp, 1);
                 } else if num < 25 {
                     if self.last_move(1) {
                         if rng.ai.random_boolean_chance(0.5625) {
@@ -648,12 +673,12 @@ impl Monster {
                             self.set_move(3, Intent::AttackDefend, 7, 1);
                         }
                     } else {
-                        self.set_move(1, Intent::Attack, 11, 1);
+                        self.set_move(1, Intent::Attack, chomp, 1);
                     }
                 } else if num < 55 {
                     if self.last_two(3) {
                         if rng.ai.random_boolean_chance(0.357) {
-                            self.set_move(1, Intent::Attack, 11, 1);
+                            self.set_move(1, Intent::Attack, chomp, 1);
                         } else {
                             self.set_move(2, Intent::DefendBuff, 0, 1);
                         }
@@ -662,7 +687,7 @@ impl Monster {
                     }
                 } else if self.last_move(2) {
                     if rng.ai.random_boolean_chance(0.416) {
-                        self.set_move(1, Intent::Attack, 11, 1);
+                        self.set_move(1, Intent::Attack, chomp, 1);
                     } else {
                         self.set_move(3, Intent::AttackDefend, 7, 1);
                     }
@@ -1254,7 +1279,7 @@ impl Monster {
         }
         match (self.id, self.next_move) {
             (MonsterId::LouseNormal | MonsterId::LouseDefensive, 3) => {
-                let _ = hit_player(player, self, self.extra.max(5), 1);
+                let _ = hit_player(player, self, rng, self.extra.max(5), 1);
             }
             (MonsterId::LouseNormal, 4) => {
                 self.add_power(PowerId::Strength, if ascension >= 17 { 4 } else { 3 });
@@ -1274,21 +1299,21 @@ impl Monster {
                 self.add_power(PowerId::Ritual, ritual);
             }
             (MonsterId::Cultist, 1) => {
-                let _ = hit_player(player, self, 6, 1);
+                let _ = hit_player(player, self, rng, 6, 1);
             }
             (MonsterId::GremlinFat, 2) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 5 } else { 4 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 5 } else { 4 }, 1);
                 player.add_power_from_monster(PowerId::Weak, 1);
                 if ascension >= 17 {
                     player.add_power_from_monster(PowerId::Frail, 1);
                 }
             }
             (MonsterId::GremlinWarrior, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 5 } else { 4 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 5 } else { 4 }, 1);
             }
             (MonsterId::GremlinWizard, 1) => {
                 self.extra = 0;
-                let _ = hit_player(player, self, if ascension >= 2 { 30 } else { 25 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 30 } else { 25 }, 1);
             }
             (MonsterId::GremlinWizard, 2) => {
                 self.extra += 1;
@@ -1301,7 +1326,7 @@ impl Monster {
                 }
             }
             (MonsterId::Lagavulin, 3) => {
-                let _ = hit_player(player, self, if ascension >= 3 { 20 } else { 18 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 3 { 20 } else { 18 }, 1);
                 if self.extra >= 3 {
                     self.extra += 1;
                 }
@@ -1315,10 +1340,10 @@ impl Monster {
                 }
             }
             (MonsterId::GremlinNob, 1) => {
-                let _ = hit_player(player, self, if ascension >= 3 { 16 } else { 14 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 3 { 16 } else { 14 }, 1);
             }
             (MonsterId::GremlinNob, 2) => {
-                let _ = hit_player(player, self, if ascension >= 3 { 8 } else { 6 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 3 { 8 } else { 6 }, 1);
                 player.add_power_from_monster(PowerId::Vulnerable, 2);
             }
             (MonsterId::GremlinNob, 3) => {
@@ -1326,7 +1351,7 @@ impl Monster {
             }
             (MonsterId::JawWorm, 1) => {
                 // A0 chomp 11, A2/A17 chomp 12.
-                let _ = hit_player(player, self, if ascension >= 2 { 12 } else { 11 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 12 } else { 11 }, 1);
             }
             (MonsterId::JawWorm, 2) => {
                 // A0 bellow 3 str / 6 block; A2 4/6; A17 5/9.
@@ -1341,14 +1366,14 @@ impl Monster {
                 self.add_power(PowerId::Strength, str_amt);
             }
             (MonsterId::JawWorm, 3) => {
-                hit_player(player, self, 7, 1);
+                hit_player(player, self, rng, 7, 1);
                 self.block += 5;
             }
             (MonsterId::AwakenedOne, 1) => {
-                let _ = hit_player(player, self, 20, 1);
+                let _ = hit_player(player, self, rng, 20, 1);
             }
             (MonsterId::AwakenedOne, 2) => {
-                let _ = hit_player(player, self, 6, 4);
+                let _ = hit_player(player, self, rng, 6, 4);
             }
             (MonsterId::AwakenedOne, 3) => {
                 self.half_dead = false;
@@ -1369,31 +1394,31 @@ impl Monster {
             }
             (MonsterId::AwakenedOne, 5) => {
                 self.first_move = false;
-                let _ = hit_player(player, self, 40, 1);
+                let _ = hit_player(player, self, rng, 40, 1);
             }
             (MonsterId::AwakenedOne, 6) => {
-                let _ = hit_player(player, self, 18, 1);
+                let _ = hit_player(player, self, rng, 18, 1);
                 add_to_random_spot(&mut player.draw, Card::new(CardId::Void), rng);
             }
             (MonsterId::AwakenedOne, 8) => {
-                let _ = hit_player(player, self, 10, 3);
+                let _ = hit_player(player, self, rng, 10, 3);
             }
             (MonsterId::SlaverBlue, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 13 } else { 12 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 13 } else { 12 }, 1);
             }
             (MonsterId::SlaverBlue, 4) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 8 } else { 7 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 8 } else { 7 }, 1);
                 player.add_power_from_monster(PowerId::Weak, if ascension >= 17 { 2 } else { 1 });
             }
             (MonsterId::SlaverRed, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 14 } else { 13 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 14 } else { 13 }, 1);
             }
             (MonsterId::SlaverRed, 2) => {
                 player.add_power_from_monster(PowerId::Entangled, 1);
                 self.extra = 1;
             }
             (MonsterId::SlaverRed, 3) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 9 } else { 8 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 9 } else { 8 }, 1);
                 player.add_power_from_monster(PowerId::Vulnerable, if ascension >= 17 { 2 } else { 1 });
             }
             (MonsterId::Looter, 1) => {
@@ -1402,10 +1427,12 @@ impl Monster {
                 }
                 let steal = if ascension >= 17 { 20 } else { 15 };
                 looter_steal(self, player, steal);
-                let _ = hit_player(player, self, if ascension >= 2 { 11 } else { 10 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 11 } else { 10 }, 1);
                 self.extra += 1;
                 if self.extra == 2 {
-                    if rng.ai.random_boolean() {
+                    // Looter.takeTurn: aiRng.randomBoolean(0.5F) is nextFloat()<0.5,
+                    // not Random.nextBoolean().
+                    if rng.ai.random_boolean_chance(0.5) {
                         self.set_move(2, Intent::Defend, 0, 1);
                     } else {
                         self.set_move(4, Intent::Attack, if ascension >= 2 { 14 } else { 12 }, 1);
@@ -1425,16 +1452,16 @@ impl Monster {
             (MonsterId::Looter, 4) => {
                 let steal = if ascension >= 17 { 20 } else { 15 };
                 looter_steal(self, player, steal);
-                let _ = hit_player(player, self, if ascension >= 2 { 14 } else { 12 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 14 } else { 12 }, 1);
                 self.extra += 1;
                 self.set_move(2, Intent::Defend, 0, 1);
             }
             (MonsterId::SpikeSlimeS, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 6 } else { 5 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 6 } else { 5 }, 1);
             }
             (MonsterId::AcidSlimeS, 1) => {
                 let dmg = if ascension >= 2 { 4 } else { 3 };
-                let _ = hit_player(player, self, dmg, 1);
+                let _ = hit_player(player, self, rng, dmg, 1);
                 self.set_move(2, Intent::Debuff, 0, 1);
             }
             (MonsterId::AcidSlimeS, 2) => {
@@ -1442,25 +1469,25 @@ impl Monster {
                 self.set_move(1, Intent::Attack, if ascension >= 2 { 4 } else { 3 }, 1);
             }
             (MonsterId::SpikeSlimeM, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 10 } else { 8 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 10 } else { 8 }, 1);
                 player.discard.push(Card::new(CardId::Slimed));
             }
             (MonsterId::SpikeSlimeM, 4) => player.add_power_from_monster(PowerId::Frail, 1),
             (MonsterId::AcidSlimeM, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 8 } else { 7 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 8 } else { 7 }, 1);
                 player.discard.push(Card::new(CardId::Slimed));
             }
             (MonsterId::AcidSlimeM, 2) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 12 } else { 10 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 12 } else { 10 }, 1);
             }
             (MonsterId::AcidSlimeM, 4) => player.add_power_from_monster(PowerId::Weak, 1),
             (MonsterId::AcidSlimeL, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 12 } else { 11 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 12 } else { 11 }, 1);
                 player.discard.push(Card::new(CardId::Slimed));
                 player.discard.push(Card::new(CardId::Slimed));
             }
             (MonsterId::AcidSlimeL, 2) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 18 } else { 16 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
             }
             (MonsterId::AcidSlimeL, 4) => player.add_power_from_monster(PowerId::Weak, 2),
             (MonsterId::AcidSlimeL, 3) => {
@@ -1471,7 +1498,7 @@ impl Monster {
                 return Some(split_into(MonsterId::AcidSlimeM, hp, rng));
             }
             (MonsterId::SpikeSlimeL, 1) => {
-                let _ = hit_player(player, self, if ascension >= 2 { 18 } else { 16 }, 1);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
                 player.discard.push(Card::new(CardId::Slimed));
                 player.discard.push(Card::new(CardId::Slimed));
             }
@@ -1485,78 +1512,78 @@ impl Monster {
             }
 
             (MonsterId::SphericGuardian, 1) => {
-                let _ = hit_player(player, self, 10, 2);
+                let _ = hit_player(player, self, rng, 10, 2);
             }
             (MonsterId::SphericGuardian, 2) => {
                 self.block += 25;
             }
             (MonsterId::SphericGuardian, 3) => {
                 self.block += 15;
-                let _ = hit_player(player, self, 10, 1);
+                let _ = hit_player(player, self, rng, 10, 1);
             }
             (MonsterId::SphericGuardian, 4) => {
-                let _ = hit_player(player, self, 10, 1);
+                let _ = hit_player(player, self, rng, 10, 1);
                 player.add_power_from_monster(PowerId::Frail, 5);
             }
             (MonsterId::Chosen, 5) => {
-                let _ = hit_player(player, self, 5, 2);
+                let _ = hit_player(player, self, rng, 5, 2);
             }
             (MonsterId::Chosen, 1) => {
-                let _ = hit_player(player, self, 18, 1);
+                let _ = hit_player(player, self, rng, 18, 1);
             }
             (MonsterId::Chosen, 2) => {
                 player.add_power_from_monster(PowerId::Weak, 3);
                 self.add_power(PowerId::Strength, 3);
             }
             (MonsterId::Chosen, 3) => {
-                let _ = hit_player(player, self, 10, 1);
+                let _ = hit_player(player, self, rng, 10, 1);
                 player.add_power_from_monster(PowerId::Vulnerable, 2);
             }
             (MonsterId::Chosen, 4) => {
                 player.add_power(PowerId::Hex, 1);
             }
             (MonsterId::SnakePlant, 1) => {
-                let _ = hit_player(player, self, 7, 3);
+                let _ = hit_player(player, self, rng, 7, 3);
             }
             (MonsterId::SnakePlant, 2) => {
                 player.add_power_from_monster(PowerId::Frail, 2);
                 player.add_power_from_monster(PowerId::Weak, 2);
             }
             (MonsterId::Centurion, 1) => {
-                let _ = hit_player(player, self, 12, 1);
+                let _ = hit_player(player, self, rng, 12, 1);
             }
             (MonsterId::Centurion, 2) => {}
             (MonsterId::Centurion, 3) => {
-                let _ = hit_player(player, self, 6, 3);
+                let _ = hit_player(player, self, rng, 6, 3);
             }
             (MonsterId::Healer, 1) => {
-                let _ = hit_player(player, self, 8, 1);
+                let _ = hit_player(player, self, rng, 8, 1);
                 player.add_power_from_monster(PowerId::Frail, 2);
             }
             (MonsterId::Healer, 2) => {}
             (MonsterId::Healer, 3) => {}
             (MonsterId::BookOfStabbing, 1) => {
                 let hits = self.intent_hits.max(1);
-                let _ = hit_player(player, self, 6, hits);
+                let _ = hit_player(player, self, rng, 6, hits);
             }
             (MonsterId::BookOfStabbing, 2) => {
-                let _ = hit_player(player, self, 21, 1);
+                let _ = hit_player(player, self, rng, 21, 1);
             }
             (MonsterId::ShelledParasite, 1) => {
-                let _ = hit_player(player, self, 18, 1);
+                let _ = hit_player(player, self, rng, 18, 1);
                 player.add_power_from_monster(PowerId::Frail, 2);
             }
             (MonsterId::ShelledParasite, 2) => {
-                let _ = hit_player(player, self, 6, 2);
+                let _ = hit_player(player, self, rng, 6, 2);
             }
             (MonsterId::ShelledParasite, 3) => {
-                let dealt = hit_player(player, self, 10, 1);
+                let dealt = hit_player(player, self, rng, 10, 1);
                 if dealt > 0 {
                     self.hp = (self.hp + dealt).min(self.max_hp);
                 }
             }
             (MonsterId::FungiBeast, 1) => {
-                let _ = hit_player(player, self, 6, 1);
+                let _ = hit_player(player, self, rng, 6, 1);
             }
             (MonsterId::FungiBeast, 2) => {
                 // A0 grow 3; A2 4; A17 5.
@@ -1570,10 +1597,10 @@ impl Monster {
                 self.add_power(PowerId::Strength, amt);
             }
             (MonsterId::BronzeAutomaton, 1) => {
-                let _ = hit_player(player, self, 7, 2);
+                let _ = hit_player(player, self, rng, 7, 2);
             }
             (MonsterId::BronzeAutomaton, 2) => {
-                let _ = hit_player(player, self, 45, 1);
+                let _ = hit_player(player, self, rng, 45, 1);
             }
             (MonsterId::BronzeAutomaton, 3) => {}
             (MonsterId::BronzeAutomaton, 4) => {
@@ -1588,26 +1615,26 @@ impl Monster {
                 self.add_power(PowerId::Strength, 3);
             }
             (MonsterId::BronzeOrb, 1) => {
-                let _ = hit_player(player, self, 8, 1);
+                let _ = hit_player(player, self, rng, 8, 1);
             }
             (MonsterId::BronzeOrb, 2) => {}
             (MonsterId::BronzeOrb, 3) => {
                 self.stasis_card = steal_stasis_card(player, rng);
             }
             (MonsterId::SpireShield, 1) => {
-                let _ = hit_player(player, self, 12, 1);
+                let _ = hit_player(player, self, rng, 12, 1);
             }
             (MonsterId::SpireShield, 2) => {
                 self.block += 30;
             }
             (MonsterId::SpireSpear, 1) => {
-                let _ = hit_player(player, self, 5, 2);
+                let _ = hit_player(player, self, rng, 5, 2);
             }
             (MonsterId::SpireSpear, 2) => {
                 player.add_power_from_monster(PowerId::Vulnerable, 2);
             }
             (MonsterId::Spiker, 1) => {
-                let _ = hit_player(player, self, 7, 1);
+                let _ = hit_player(player, self, rng, 7, 1);
             }
             (MonsterId::Spiker, 2) => {
                 self.extra += 1;
@@ -1615,7 +1642,7 @@ impl Monster {
             }
             (MonsterId::Exploder, 1) => {
                 self.extra += 1;
-                let _ = hit_player(player, self, 9, 1);
+                let _ = hit_player(player, self, rng, 9, 1);
             }
             (MonsterId::Exploder, 2) => {
                 self.extra += 1;
@@ -1626,7 +1653,7 @@ impl Monster {
                 }
             }
             (MonsterId::Repulsor, 2) => {
-                let _ = hit_player(player, self, 11, 1);
+                let _ = hit_player(player, self, rng, 11, 1);
             }
             (MonsterId::Sentry, 3) => {
                 // BOLT: MakeTempCardInDiscardAction(Dazed, A18+ 3 else 2).
@@ -1637,16 +1664,16 @@ impl Monster {
             }
             (MonsterId::Sentry, 4) => {
                 let dmg = if ascension >= 3 { 10 } else { 9 };
-                let _ = hit_player(player, self, dmg, 1);
+                let _ = hit_player(player, self, rng, dmg, 1);
             }
             (MonsterId::Darkling, 1) => {
-                let _ = hit_player(player, self, 8, 2);
+                let _ = hit_player(player, self, rng, 8, 2);
             }
             (MonsterId::Darkling, 2) => {
                 self.block += 12;
             }
             (MonsterId::Darkling, 3) => {
-                let _ = hit_player(player, self, self.extra.max(7), 1);
+                let _ = hit_player(player, self, rng, self.extra.max(7), 1);
             }
             (MonsterId::Darkling, 4) => {}
             (MonsterId::Darkling, 5) => {
@@ -1654,12 +1681,12 @@ impl Monster {
                 self.half_dead = false;
             }
             (MonsterId::Transient, 1) => {
-                let _ = hit_player(player, self, 30 + self.extra * 10, 1);
+                let _ = hit_player(player, self, rng, 30 + self.extra * 10, 1);
                 self.extra += 1;
                 self.set_move(1, Intent::Attack, 30 + self.extra * 10, 1);
             }
             (MonsterId::SlimeBoss, 1) => {
-                let _ = hit_player(player, self, 35, 1);
+                let _ = hit_player(player, self, rng, 35, 1);
                 self.set_move(4, Intent::StrongDebuff, 0, 1);
             }
             (MonsterId::SlimeBoss, 2) => {
@@ -1685,10 +1712,10 @@ impl Monster {
                 player.add_power_from_monster(PowerId::Weak, 1);
             }
             (MonsterId::GiantHead, 2) => {
-                let _ = hit_player(player, self, 30 - self.extra * 5, 1);
+                let _ = hit_player(player, self, rng, 30 - self.extra * 5, 1);
             }
             (MonsterId::GiantHead, 3) => {
-                let _ = hit_player(player, self, 13, 1);
+                let _ = hit_player(player, self, rng, 13, 1);
             }
             (MonsterId::CorruptHeart, 3) => {
                 player.add_power_from_monster(PowerId::Vulnerable, 2);
@@ -1697,11 +1724,11 @@ impl Monster {
                 self.extra = 1;
             }
             (MonsterId::CorruptHeart, 1) => {
-                let _ = hit_player(player, self, 2, 12);
+                let _ = hit_player(player, self, rng, 2, 12);
                 self.extra += 1;
             }
             (MonsterId::CorruptHeart, 2) => {
-                let _ = hit_player(player, self, 40, 1);
+                let _ = hit_player(player, self, rng, 40, 1);
                 self.extra += 1;
             }
             (MonsterId::CorruptHeart, 4) => {
@@ -1719,12 +1746,12 @@ impl Monster {
                 } else {
                     player.hp / 12 + 1
                 };
-                let _ = hit_player(player, self, d, 6);
+                let _ = hit_player(player, self, rng, d, 6);
                 self.extra = 0;
             }
             (MonsterId::Hexaghost, 2) => {
                 let dmg = if self.ascension >= 4 { 6 } else { 5 };
-                let _ = hit_player(player, self, dmg, 2);
+                let _ = hit_player(player, self, rng, dmg, 2);
                 self.extra += 1;
             }
             (MonsterId::Hexaghost, 3) => {
@@ -1734,7 +1761,7 @@ impl Monster {
                 self.extra += 1;
             }
             (MonsterId::Hexaghost, 4) => {
-                let _ = hit_player(player, self, 6, 1);
+                let _ = hit_player(player, self, rng, 6, 1);
                 let n = if self.ascension >= 19 { 2 } else { 1 };
                 for _ in 0..n {
                     let mut burn = Card::new(CardId::Burn);
@@ -1747,7 +1774,7 @@ impl Monster {
             }
             (MonsterId::Hexaghost, 6) => {
                 let dmg = if self.ascension >= 4 { 3 } else { 2 };
-                let _ = hit_player(player, self, dmg, 6);
+                let _ = hit_player(player, self, rng, dmg, 6);
                 self.extra = 0;
                 self.split_triggered = true;
                 for pile in [&mut player.draw, &mut player.discard] {
@@ -1765,7 +1792,7 @@ impl Monster {
             }
             _ => {
                 if self.intent_damage > 0 {
-                    hit_player(player, self, self.intent_damage, self.intent_hits.max(1));
+                    hit_player(player, self, rng, self.intent_damage, self.intent_hits.max(1));
                 }
             }
         }
@@ -1902,7 +1929,7 @@ fn buffer_absorb(player: &mut Player, dmg: i32) -> i32 {
     0
 }
 
-fn hit_player(player: &mut Player, monster: &Monster, base: i32, hits: i32) -> i32 {
+fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base: i32, hits: i32) -> i32 {
     let mut total = 0;
     for _ in 0..hits {
         let mut dmg = base + monster.power_amount(PowerId::Strength);
@@ -1930,9 +1957,15 @@ fn hit_player(player: &mut Player, monster: &Monster, base: i32, hits: i32) -> i
                 player.discard.push(Card::new(CardId::Wound));
             }
         }
+        // ThornsPower.onAttacked: Attack-type hits bounce even if fully blocked.
+        let thorns = player.power_amount(PowerId::Thorns);
+        if thorns > 0 {
+            deal_thorns(monster, thorns);
+        }
     }
     if total > 0 {
         red_skull_on_hp_change(player);
+        centennial_puzzle_was_hp_lost(player, rng);
     }
     total
 }
@@ -1945,6 +1978,21 @@ fn red_skull_at_battle_start(player: &mut Player) {
             player.add_power(PowerId::Strength, 3);
         }
     }
+}
+
+/// CentennialPuzzle.wasHPLost: first unblocked HP loss each combat
+/// `addToTop(new DrawCardAction(player, 3))`, so the draw resolves immediately
+/// (during the enemy turn if the hit was a monster attack; those 3 cards then
+/// sit under the next turn's 5-draw).
+fn centennial_puzzle_was_hp_lost(player: &mut Player, rng: &mut RngSet) {
+    let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Centennial_Puzzle) else {
+        return;
+    };
+    if r.used_up {
+        return;
+    }
+    r.used_up = true;
+    let _ = draw_cards_rng(player, 3, Some(rng));
 }
 
 pub fn red_skull_on_hp_change(player: &mut Player) {
@@ -1974,7 +2022,7 @@ pub fn apply_block(block: &mut i32, mut damage: i32) -> i32 {
     damage
 }
 
-pub fn damage_monster(monster: &mut Monster, player: &mut Player, base: i32, hits: i32) {
+pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngSet, base: i32, hits: i32) {
     // CurlUpPower: addToBot GainBlock after the unblocked hit, so multi-hit
     // cards (Barrage) land every hit before the block appears.
     let mut pending_curl = 0;
@@ -2003,6 +2051,7 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, base: i32, hit
                     player.hp = 0;
                 }
                 red_skull_on_hp_change(player);
+                centennial_puzzle_was_hp_lost(player, rng);
             }
         }
         if dmg > 0 && monster.id == MonsterId::Transient {
@@ -2014,11 +2063,7 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, base: i32, hit
             if angry > 0 {
                 monster.add_power(PowerId::Strength, angry);
             }
-            if monster.id == MonsterId::Lagavulin && monster.extra < 3 {
-                monster.extra = 3;
-                monster.powers.retain(|p| p.id != PowerId::Metallicize);
-                monster.set_move(4, Intent::Stun, 0, 1);
-            }
+            wake_asleep_lagavulin(monster);
             let lethal = dmg >= monster.hp;
             monster.hp -= dmg;
             if monster.hp <= 0 {
@@ -2082,6 +2127,15 @@ fn maybe_split(monster: &mut Monster) {
     }
 }
 
+/// Lagavulin.damage: any HP loss while asleep (including THORNS / lightning) stuns and sheds Metallicize.
+fn wake_asleep_lagavulin(monster: &mut Monster) {
+    if monster.id == MonsterId::Lagavulin && monster.extra < 3 {
+        monster.extra = 3;
+        monster.powers.retain(|p| p.id != PowerId::Metallicize);
+        monster.set_move(4, Intent::Stun, 0, 1);
+    }
+}
+
 pub fn deal_thorns(monster: &mut Monster, amount: i32) {
     if amount <= 0 || !monster.alive() {
         return;
@@ -2092,6 +2146,7 @@ pub fn deal_thorns(monster: &mut Monster, amount: i32) {
             monster.add_power(PowerId::Strength, -dmg);
             monster.add_power(PowerId::Shackled, dmg);
         }
+        wake_asleep_lagavulin(monster);
         monster.hp -= dmg;
         if monster.hp <= 0 {
             monster.hp = 0;
@@ -2108,8 +2163,8 @@ pub fn deal_thorns(monster: &mut Monster, amount: i32) {
     maybe_split(monster);
 }
 
-fn deal_card_damage(monster: &mut Monster, player: &mut Player, card: &Card, hits: i32) {
-    damage_monster(monster, player, card.base_damage as i32, hits);
+fn deal_card_damage(monster: &mut Monster, player: &mut Player, rng: &mut RngSet, card: &Card, hits: i32) {
+    damage_monster(monster, player, rng, card.base_damage as i32, hits);
 }
 
 pub fn derived_damage(card: &Card, player: &Player) -> i32 {
@@ -2227,6 +2282,15 @@ pub fn flush_dark_embrace(player: &mut Player, combat: &mut Combat, rng: &mut Rn
     }
 }
 
+/// BetterDiscardPileToHandAction: move discard[index] to hand if there is room.
+pub fn discard_pile_to_hand(player: &mut Player, index: usize) {
+    if index >= player.discard.len() || player.hand.len() >= 10 {
+        return;
+    }
+    let c = player.discard.remove(index);
+    player.hand.push(c);
+}
+
 pub fn apply_fire_breathing(player: &Player, monsters: &mut [Monster], statuses: i32) {
     let dmg = player.power_amount(PowerId::FireBreathing);
     if dmg <= 0 || statuses <= 0 {
@@ -2266,11 +2330,13 @@ pub fn play_card(
     };
     combat.need_exhaust_select = false;
     combat.need_put_on_deck = false;
+    combat.need_discard_to_hand = false;
     combat.draw_after_exhaust = 0;
     let needs_select = (card.id == CardId::Armaments && !card.upgraded && !player.hand.is_empty())
         || (card.id == CardId::True_Grit && card.upgraded && !player.hand.is_empty())
         || card.id == CardId::Thinking_Ahead
-        || (card.id == CardId::Burning_Pact && player.hand.len() > 1);
+        || (card.id == CardId::Burning_Pact && player.hand.len() > 1)
+        || (card.id == CardId::Hologram && player.discard.len() > 1);
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
@@ -2332,7 +2398,11 @@ pub fn play_card(
     for monster in combat.monsters.iter_mut() {
         monster.create_intent();
     }
-    if card.id == CardId::Thinking_Ahead && card.exhaust {
+    if (card.id == CardId::Thinking_Ahead && card.exhaust)
+        || (card.id == CardId::Hologram && combat.need_discard_to_hand)
+    {
+        // UseCardAction runs after BetterDiscardPileToHandAction, so the played
+        // card is still in limbo while GRID is open.
         combat.pending_exhaust = Some(card);
     } else if card.exhaust {
         exhaust_card(player, combat, card, rng);
@@ -2394,7 +2464,7 @@ fn apply_card_effect(
             let perfected = card.base_damage as i32 + card.base_magic as i32 * strike_count;
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, perfected, 1);
+                    damage_monster(m, player, rng, perfected, 1);
                 }
             }
         }
@@ -2402,10 +2472,11 @@ fn apply_card_effect(
             if card.id == CardId::Hemokinesis {
                 player.hp -= card.base_magic as i32;
                 red_skull_on_hp_change(player);
+                centennial_puzzle_was_hp_lost(player, rng);
             }
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                     if card.id == CardId::Bash {
                         m.add_power(PowerId::Vulnerable, card.base_magic as i32);
                     }
@@ -2431,7 +2502,7 @@ fn apply_card_effect(
                 let pick = rng.card_random.random_range(0, alive.len() as i32 - 1) as usize;
                 let idx = alive[pick];
                 if let Some(m) = combat.monsters.get_mut(idx) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                 }
             }
         }
@@ -2442,7 +2513,7 @@ fn apply_card_effect(
                 1
             };
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                damage_monster(monster, player, dmg, hits);
+                damage_monster(monster, player, rng, dmg, hits);
                 if card.id == CardId::Thunderclap {
                     monster.add_power(PowerId::Vulnerable, 1);
                 }
@@ -2479,7 +2550,7 @@ fn apply_card_effect(
         CardId::Ball_Lightning => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                 }
             }
             for _ in 0..card.base_magic.max(1) {
@@ -2489,7 +2560,7 @@ fn apply_card_effect(
         CardId::Cold_Snap => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                 }
             }
             for _ in 0..card.base_magic.max(1) {
@@ -2499,7 +2570,7 @@ fn apply_card_effect(
         CardId::Beam_Cell => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                     m.add_power(PowerId::Vulnerable, card.base_magic.max(1) as i32);
                 }
             }
@@ -2507,7 +2578,7 @@ fn apply_card_effect(
         CardId::Go_for_the_Eyes => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                     // ForTheEyesAction: getIntentBaseDmg() >= 0. Unpublished until createIntent.
                     if m.intent_base_damage >= 0 {
                         m.add_power(PowerId::Weak, card.base_magic.max(1) as i32);
@@ -2522,7 +2593,7 @@ fn apply_card_effect(
             }
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                 }
             }
         }
@@ -2547,13 +2618,13 @@ fn apply_card_effect(
             let per = frost * card.base_magic.max(2) as i32;
             if per > 0 {
                 for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    damage_monster(monster, player, per, 1);
+                    damage_monster(monster, player, rng, per, 1);
                 }
             }
         }
         CardId::Sweeping_Beam => {
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                damage_monster(monster, player, dmg, 1);
+                damage_monster(monster, player, rng, dmg, 1);
             }
             let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
             apply_fire_breathing(player, &mut combat.monsters, n);
@@ -2561,7 +2632,7 @@ fn apply_card_effect(
         CardId::Compile_Driver => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                 }
             }
             let mut kinds = Vec::new();
@@ -2587,6 +2658,20 @@ fn apply_card_effect(
         CardId::Leap | CardId::BootSequence => {
             if block > 0 {
                 player.block += block;
+            }
+        }
+        CardId::Hologram => {
+            if block > 0 {
+                player.block += block;
+            }
+            // BetterDiscardPileToHandAction(1): auto-move if discard.size <= 1.
+            if player.discard.len() <= 1 {
+                while !player.discard.is_empty() && player.hand.len() < 10 {
+                    let c = player.discard.remove(0);
+                    player.hand.push(c);
+                }
+            } else {
+                combat.need_discard_to_hand = true;
             }
         }
         CardId::Stack => {
@@ -2647,14 +2732,14 @@ fn apply_card_effect(
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
                     m.block = 0;
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                 }
             }
         }
         CardId::Streamline => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, 1);
+                    damage_monster(m, player, rng, dmg, 1);
                 }
             }
             let reduce = card.base_magic.max(1);
@@ -2665,7 +2750,7 @@ fn apply_card_effect(
             let hits = if card.id == CardId::Rip_and_Tear { 2 } else { 1 };
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, hits);
+                    damage_monster(m, player, rng, dmg, hits);
                 }
             }
         }
@@ -2674,14 +2759,14 @@ fn apply_card_effect(
             if hits > 0 {
                 if let Some(i) = target {
                     if let Some(m) = combat.monsters.get_mut(i) {
-                        damage_monster(m, player, dmg, hits);
+                        damage_monster(m, player, rng, dmg, hits);
                     }
                 }
             }
         }
         CardId::Doom_and_Gloom => {
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                damage_monster(monster, player, dmg, 1);
+                damage_monster(monster, player, rng, dmg, 1);
             }
             for _ in 0..card.base_magic.max(1) {
                 channel_orb(player, combat, rng, OrbKind::Dark);
@@ -2790,7 +2875,7 @@ fn apply_card_effect(
             let hits = if card.id == CardId::Twin_Strike { 2 } else { 1 };
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, dmg, hits);
+                    damage_monster(m, player, rng, dmg, hits);
                     if card.id == CardId::Clothesline {
                         m.add_power(PowerId::Weak, card.base_magic as i32);
                     }
@@ -2805,6 +2890,8 @@ fn apply_card_effect(
         CardId::Bloodletting => player.energy += card.base_magic as i32,
         CardId::Offering => {
             player.hp -= 6;
+            red_skull_on_hp_change(player);
+            centennial_puzzle_was_hp_lost(player, rng);
             player.energy += 2;
             reshuffle_if_needed(player, rng);
             let n = draw_cards_rng(player, card.base_magic as i32, Some(rng));
@@ -2814,11 +2901,11 @@ fn apply_card_effect(
             if dmg > 0 {
                 if let Some(i) = target {
                     if let Some(m) = combat.monsters.get_mut(i) {
-                        damage_monster(m, player, dmg, 1);
+                        damage_monster(m, player, rng, dmg, 1);
                     }
                 } else {
                     for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                        damage_monster(monster, player, dmg, 1);
+                        damage_monster(monster, player, rng, dmg, 1);
                     }
                 }
             }
@@ -2859,6 +2946,8 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         let dmg = buffer_absorb(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
+            red_skull_on_hp_change(player);
+            centennial_puzzle_was_hp_lost(player, rng);
         }
     }
     // Discard remaining hand right-to-left (DiscardAtEndOfTurnAction).
@@ -2967,6 +3056,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
                         player.hp = 0;
                     }
                     red_skull_on_hp_change(player);
+                    centennial_puzzle_was_hp_lost(player, rng);
                 }
                 combat.monsters[i].hp = 0;
                 combat.monsters[i].dead = true;
@@ -3073,6 +3163,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         let n = player.power_amount(PowerId::Brutality);
         player.hp -= n;
         red_skull_on_hp_change(player);
+        centennial_puzzle_was_hp_lost(player, rng);
         reshuffle_if_needed(player, rng);
         let statuses = draw_cards_rng(player, n, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, statuses);

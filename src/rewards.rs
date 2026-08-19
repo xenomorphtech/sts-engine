@@ -65,11 +65,16 @@ pub fn roll_potion(
     _elite: bool,
     boss: bool,
     character: Character,
+    reward_count: usize,
 ) -> Option<PotionId> {
     // MonsterRoomBoss still calls addPotionToRewards, but observed oracles
     // never drop a boss potion: chance stays 0 so the roll always misses
     // and blizzard ticks +10 (one potionRng call).
-    let chance = if boss { 0 } else { 40 + *blizzard };
+    let mut chance = if boss { 0 } else { 40 + *blizzard };
+    // AbstractRoom.addPotionToRewards: rewards.size() >= 4 forces miss.
+    if reward_count >= 4 {
+        chance = 0;
+    }
     let roll = rng.potion.random_range(0, 99);
     if roll >= chance {
         *blizzard += 10;

@@ -16,6 +16,7 @@ fn ending_game() -> Game {
         &game.unlocks,
         Character::Ironclad,
         0,
+        true,
     );
     game.screen = Screen::Map;
     game

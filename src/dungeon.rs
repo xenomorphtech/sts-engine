@@ -87,6 +87,7 @@ impl Dungeon {
         unlocks: &Unlocks,
         character: Character,
         ascension: i32,
+        place_emerald: bool,
     ) {
         self.act = act;
         self.path_x.clear();
@@ -246,7 +247,8 @@ impl Dungeon {
         }
         self.initialize_card_pools(character, unlocks);
         // Relic pools persist across acts; only Exordium shuffles them.
-        self.generate_map(&mut rng.map, ascension, true);
+        // AbstractDungeon.setEmeraldElite: only if isFinalActAvailable && !hasEmeraldKey.
+        self.generate_map(&mut rng.map, ascension, place_emerald);
         let _ = rng.misc.random_int(1);
     }
 

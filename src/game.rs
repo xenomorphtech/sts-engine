@@ -39,6 +39,7 @@ pub enum RewardKind {
     Potion(PotionId),
     Relic(RelicId),
     Card,
+    EmeraldKey,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +94,7 @@ pub struct Game {
     rest_smith_picked: bool,
     rest_selected: bool,
     has_ruby_key: bool,
+    has_emerald_key: bool,
     final_act_available: bool,
     grid: Option<GridSelect>,
     exhaust_select: bool,
@@ -204,6 +206,8 @@ enum GridKind {
     Purge,
     Upgrade,
     Transform,
+    /// Combat CardGroup select over the discard pile (Hologram).
+    DiscardToHand,
 }
 
 #[derive(Clone, Debug)]
@@ -273,6 +277,7 @@ impl Game {
             rest_smith_picked: false,
             rest_selected: false,
             has_ruby_key: false,
+            has_emerald_key: false,
             final_act_available: true,
             grid: None,
             exhaust_select: false,
@@ -408,8 +413,13 @@ impl Game {
                         actions.push(Action::Skip);
                     } else {
                         let cards = self.grid_card_indices(grid.kind);
-                        for (i, &deck_i) in cards.iter().enumerate() {
-                            let label = self.player.deck.get(deck_i).map(|c| c.sts_id().to_string());
+                        for (i, &pile_i) in cards.iter().enumerate() {
+                            let label = match grid.kind {
+                                GridKind::DiscardToHand => {
+                                    self.player.discard.get(pile_i).map(|c| c.sts_id().to_string())
+                                }
+                                _ => self.player.deck.get(pile_i).map(|c| c.sts_id().to_string()),
+                            };
                             actions.push(Action::Choose {
                                 index: i,
                                 label,
@@ -431,6 +441,7 @@ impl Game {
                             RewardKind::Potion(_) => "POTION",
                             RewardKind::Relic(_) => "RELIC",
                             RewardKind::Card => "CARD",
+                            RewardKind::EmeraldKey => "EMERALD_KEY",
                         };
                         actions.push(Action::Choose {
                             index: compact,
@@ -582,20 +593,30 @@ impl Game {
             if let Some(opt) = self.neow_options.get(*index).cloned() {
                 self.apply_neow(opt.kind);
             }
-            self.neow_screen = 99;
             if matches!(
                 self.screen,
                 Screen::CombatReward | Screen::CardReward | Screen::Grid
             ) {
+                self.neow_screen = 99;
                 return;
             }
-            self.neow_options = vec![NeowOption {
-                label: "[Leave]".into(),
-                kind: NeowKind::ThreeCards,
-            }];
+            self.present_neow_leave();
             return;
         }
         self.open_map();
+    }
+
+    /// ExactTextSim waits for ShowCardAndObtainEffect / FastCardObtainEffect
+    /// before publishing Neow Leave, so pending obtains are already in
+    /// masterDeck at that snapshot.
+    fn present_neow_leave(&mut self) {
+        self.flush_pending_cards();
+        self.neow_options = vec![NeowOption {
+            label: "[Leave]".into(),
+            kind: NeowKind::ThreeCards,
+        }];
+        self.neow_screen = 99;
+        self.screen = Screen::Neow;
     }
 
     fn blessing(&mut self) {
@@ -780,6 +801,9 @@ impl Game {
     }
 
     fn grid_card_indices(&self, kind: GridKind) -> Vec<usize> {
+        if kind == GridKind::DiscardToHand {
+            return (0..self.player.discard.len()).collect();
+        }
         self.player
             .deck
             .iter()
@@ -790,6 +814,7 @@ impl Game {
                     c.id,
                     CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane
                 ),
+                GridKind::DiscardToHand => true,
             })
             .map(|(i, _)| i)
             .collect()
@@ -806,16 +831,21 @@ impl Game {
         match action {
             Action::Choose { index, .. } if !confirm => {
                 let cards = self.grid_card_indices(kind);
-                let Some(&deck_i) = cards.get(*index) else {
+                let Some(&pile_i) = cards.get(*index) else {
                     return;
                 };
+                // ChoiceDriver.chooseGrid: non-purge/upgrade/transform closes immediately.
+                if kind == GridKind::DiscardToHand {
+                    self.apply_grid(kind, &[pile_i]);
+                    return;
+                }
                 if let Some(grid) = self.grid.as_mut() {
                     if needed == 1 {
-                        grid.hovered = Some(deck_i);
+                        grid.hovered = Some(pile_i);
                         grid.confirm = true;
                     } else {
-                        if !grid.picked.contains(&deck_i) {
-                            grid.picked.push(deck_i);
+                        if !grid.picked.contains(&pile_i) {
+                            grid.picked.push(pile_i);
                         }
                         if grid.picked.len() >= needed {
                             let picked = grid.picked.clone();
@@ -882,14 +912,24 @@ impl Game {
                 }
             }
             GridKind::Transform => {
-                // Java: transformCard via NeowEvent.rng, remove immediately,
-                // ShowCardAndObtainEffect is VFX-gated and must not land yet.
+                // Java NeowReward.update TRANSFORM_*: transformCard via
+                // NeowEvent.rng, remove immediately, then queue
+                // ShowCardAndObtainEffect. ExactTextSim waits for that VFX
+                // before publishing Leave, so the replacement is flushed there.
                 for i in idxs.into_iter().rev() {
                     if i < self.player.deck.len() {
                         let old = self.player.deck[i].id;
-                        let _ = self.neow_transform_roll(old);
+                        let rolled = self.neow_transform_roll(old);
                         self.player.deck.remove(i);
+                        if let Some(id) = rolled {
+                            self.pending_cards.push(Card::new(id));
+                        }
                     }
+                }
+            }
+            GridKind::DiscardToHand => {
+                for i in idxs.into_iter().rev() {
+                    combat::discard_pile_to_hand(&mut self.player, i);
                 }
             }
         }
@@ -935,14 +975,23 @@ impl Game {
     }
 
     fn finish_grid(&mut self) {
+        let back_to_combat = self
+            .grid
+            .as_ref()
+            .is_some_and(|g| g.kind == GridKind::DiscardToHand);
         let back_to_event = self.grid.as_ref().is_some_and(|g| g.return_event);
         let back_to_shop = self.grid.as_ref().is_some_and(|g| g.return_shop);
         self.grid = None;
+        if back_to_combat {
+            self.finish_discard_to_hand();
+            return;
+        }
         if back_to_shop {
             self.screen = Screen::Shop;
             return;
         }
         if back_to_event {
+            self.flush_pending_cards();
             if self.event.as_ref().is_some_and(|e| e.id == "Bonfire Elementals") {
                 self.screen = Screen::Event;
                 return;
@@ -953,12 +1002,7 @@ impl Game {
             }
             self.screen = Screen::Event;
         } else {
-            self.neow_options = vec![NeowOption {
-                label: "[Leave]".into(),
-                kind: NeowKind::ThreeCards,
-            }];
-            self.neow_screen = 99;
-            self.screen = Screen::Neow;
+            self.present_neow_leave();
         }
     }
 
@@ -1143,6 +1187,8 @@ impl Game {
                             self.begin_put_on_deck_select();
                         } else if combat.need_exhaust_select {
                             self.begin_exhaust_select();
+                        } else if combat.need_discard_to_hand {
+                            self.begin_discard_to_hand_select();
                         } else {
                             self.begin_armaments_select();
                         }
@@ -1193,6 +1239,7 @@ impl Game {
                         }
                     }
                 }
+                PotionId::LiquidBronze => self.player.add_power(crate::ids::PowerId::Thorns, 3),
                 PotionId::Duplication => {
                     self.player.duplication += 1;
                 }
@@ -1275,10 +1322,18 @@ impl Game {
     }
 
     fn finish_combat(&mut self) {
+        // Looter.die / Mugger.die call addStolenGoldToRewards; EscapeAction
+        // only sets room.mugged and keeps the gold.
         let stolen: i32 = self
             .combat
             .as_ref()
-            .map(|c| c.monsters.iter().map(|m| m.stolen_gold).sum())
+            .map(|c| {
+                c.monsters
+                    .iter()
+                    .filter(|m| !m.escaped)
+                    .map(|m| m.stolen_gold)
+                    .sum()
+            })
             .unwrap_or(0);
         after_combat_relics(&mut self.player);
         if self.event.as_ref().is_some_and(|e| e.id == "MindBloom") {
@@ -1332,6 +1387,8 @@ impl Game {
                     taken: false,
                 });
             }
+            // MonsterRoomElite.addEmeraldKey: after relic(s), before potion/CARD.
+            self.add_emerald_key_reward();
         }
         let darklings = self
             .combat
@@ -1345,6 +1402,7 @@ impl Game {
             elite,
             boss || darklings,
             self.character,
+            self.rewards.len(),
         ) {
             self.rewards.push(Reward {
                 kind: RewardKind::Potion(p),
@@ -1400,7 +1458,11 @@ impl Game {
             }
             Action::Choose { index, label, .. } => {
                 if let Some(label) = label {
-                    if label == "SAPPHIRE_KEY" || label == "EMERALD_KEY" || label == "RUBY_KEY" {
+                    if label == "EMERALD_KEY" {
+                        self.claim_emerald_key();
+                        return;
+                    }
+                    if label == "SAPPHIRE_KEY" || label == "RUBY_KEY" {
                         return;
                     }
                     if label == "RELIC" {
@@ -1484,6 +1546,7 @@ impl Game {
                                 }
                             }
                             RewardKind::Relic(id) => self.gain_relic(id),
+                            RewardKind::EmeraldKey => self.has_emerald_key = true,
                             RewardKind::Card => {
                                 self.open_card_reward();
                                 return;
@@ -1515,11 +1578,20 @@ impl Game {
             crate::ids::Act::City => 0.125,
             crate::ids::Act::Beyond | crate::ids::Act::Ending => 0.25,
         };
+        // AbstractDungeon.getRewardCards: relic.changeNumberOfCardsInReward.
+        let mut n = 3i32;
+        for r in &self.player.relics {
+            n = match r.id {
+                RelicId::Question_Card => n + 1,
+                RelicId::Busted_Crown => n - 2,
+                _ => n,
+            };
+        }
         self.card_reward = crate::rewards::reward_cards(
             &self.dungeon,
             &mut self.rng,
             &mut self.card_blizz,
-            3,
+            n.max(0) as usize,
             boss,
             elite,
             upgrade_chance,
@@ -1611,12 +1683,7 @@ impl Game {
         // FastCardObtainEffect lands before the next stable boundary.
         self.flush_pending_cards();
         if self.current_room == RoomType::Neow {
-            self.screen = Screen::Neow;
-            self.neow_screen = 99;
-            self.neow_options = vec![NeowOption {
-                label: "[Leave]".into(),
-                kind: NeowKind::ThreeCards,
-            }];
+            self.present_neow_leave();
             return;
         }
         self.screen = Screen::CombatReward;
@@ -2021,6 +2088,7 @@ impl Game {
             &self.unlocks,
             self.character,
             self.ascension,
+            self.final_act_available && !self.has_emerald_key,
         );
         self.screen = Screen::Map;
         self.done = next == crate::ids::Act::Ending && self.dungeon.act == crate::ids::Act::Ending;
@@ -2063,6 +2131,10 @@ impl Game {
     }
 
     fn apply_emerald_elite_buff(&mut self) {
+        // AbstractPlayer.applyStartOfCombat + MonsterRoomElite.applyEmeraldEliteBuff
+        if !self.final_act_available {
+            return;
+        }
         let (x, y) = (self.current_x, self.current_y);
         if y < 0 || x < 0 || y as usize >= self.dungeon.map.height() {
             return;
@@ -2095,6 +2167,35 @@ impl Game {
             _ => {
                 // Regen: approximate as unused for this seed (Strength 4 observed).
             }
+        }
+    }
+
+    fn add_emerald_key_reward(&mut self) {
+        // MonsterRoomElite.addEmeraldKey
+        if !self.final_act_available || self.has_emerald_key || self.rewards.is_empty() {
+            return;
+        }
+        let (x, y) = (self.current_x, self.current_y);
+        if y < 0 || x < 0 || y as usize >= self.dungeon.map.height() {
+            return;
+        }
+        if !self.dungeon.map.node(x, y).emerald_key {
+            return;
+        }
+        self.rewards.push(Reward {
+            kind: RewardKind::EmeraldKey,
+            taken: false,
+        });
+    }
+
+    fn claim_emerald_key(&mut self) {
+        if let Some(r) = self
+            .rewards
+            .iter_mut()
+            .find(|r| matches!(r.kind, RewardKind::EmeraldKey) && !r.taken)
+        {
+            r.taken = true;
+            self.has_emerald_key = true;
         }
     }
 
@@ -2933,6 +3034,46 @@ impl Game {
             event.screen = 1;
             event.options = vec!["[Leave]".into()];
         }
+    }
+
+    fn begin_discard_to_hand_select(&mut self) {
+        if self.player.discard.len() <= 1 {
+            while !self.player.discard.is_empty() && self.player.hand.len() < 10 {
+                let c = self.player.discard.remove(0);
+                self.player.hand.push(c);
+            }
+            self.finish_discard_to_hand();
+            return;
+        }
+        self.grid = Some(GridSelect {
+            kind: GridKind::DiscardToHand,
+            needed: 1,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: false,
+        });
+        self.screen = Screen::Grid;
+    }
+
+    fn finish_discard_to_hand(&mut self) {
+        if let Some(combat) = self.combat.as_mut() {
+            if let Some(card) = combat.pending_exhaust.take() {
+                if card.exhaust {
+                    crate::combat::exhaust_card(&mut self.player, combat, card, &mut self.rng);
+                } else if card.card_type() != crate::ids::CardType::POWER {
+                    self.player.discard.push(card);
+                }
+            }
+            crate::combat::flush_dark_embrace(&mut self.player, combat, &mut self.rng);
+            combat.need_discard_to_hand = false;
+            if combat.all_dead() {
+                self.finish_combat();
+                return;
+            }
+        }
+        self.screen = Screen::Combat;
     }
 
     fn begin_put_on_deck_select(&mut self) {
