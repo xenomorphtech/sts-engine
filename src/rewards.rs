@@ -49,13 +49,24 @@ const POTION_POOL: &[PotionDef] = &[
     PotionDef { id: "EntropicBrew", rarity: PotionRarity::RARE },
 ];
 
-pub fn roll_monster_gold(rng: &mut RngSet, boss: bool, elite: bool) -> i32 {
+pub fn roll_monster_gold(rng: &mut RngSet, boss: bool, elite: bool, ascension: i32) -> i32 {
     if boss {
-        100 + rng.misc.random_range(-5, 5)
+        // AbstractRoom.endBattle MonsterRoomBoss: 100 + miscRng(-5, 5), then
+        // A13+ MathUtils.round(tmp * 0.75F).
+        let tmp = 100 + rng.misc.random_range(-5, 5);
+        boss_gold_after_ascension(tmp, ascension)
     } else if elite {
         rng.treasure.random_range(25, 35)
     } else {
         rng.treasure.random_range(10, 20)
+    }
+}
+
+fn boss_gold_after_ascension(tmp: i32, ascension: i32) -> i32 {
+    if ascension >= 13 {
+        gdx_round(tmp as f32 * 0.75)
+    } else {
+        tmp
     }
 }
 
@@ -320,7 +331,7 @@ pub struct ShopStock {
 
 /// libGDX `MathUtils.round` from desktop-1.0.jar: `(int)(value + 16384.5d) - 16384`.
 /// ShopScreen.applyDiscount uses this (A16 1.1x, Courier 0.8, Membership 0.5).
-fn gdx_round(value: f32) -> i32 {
+pub(crate) fn gdx_round(value: f32) -> i32 {
     (value as f64 + 16384.5) as i32 - 16384
 }
 
@@ -661,5 +672,21 @@ mod tests {
         assert_eq!(gdx_round(45.0 * 1.1), 50);
         assert_eq!(gdx_round(55.0 * 1.1), 61);
         assert_eq!(gdx_round(75.0 * 1.1), 83);
+    }
+
+    #[test]
+    fn a13_boss_gold_is_three_quarters_gdx_round() {
+        // 606190 Hexaghost: misc rolled tmp=96, Java GOLD 72 not 96.
+        assert_eq!(super::boss_gold_after_ascension(96, 20), 72);
+        assert_eq!(super::boss_gold_after_ascension(100, 13), 75);
+        assert_eq!(super::boss_gold_after_ascension(95, 20), 71);
+        assert_eq!(super::boss_gold_after_ascension(100, 12), 100);
+    }
+
+    #[test]
+    fn a5_act_transition_heals_three_quarters_of_missing() {
+        // 606190 / 958546: 35/71 → +gdx_round(36*0.75)=27 → 62.
+        assert_eq!(gdx_round((71 - 35) as f32 * 0.75), 27);
+        assert_eq!(gdx_round(36.0 * 0.75), 27);
     }
 }

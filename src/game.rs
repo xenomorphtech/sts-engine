@@ -1491,7 +1491,7 @@ impl Game {
             }
             let boss = self.current_room == RoomType::Boss;
             let elite = self.current_room == RoomType::Elite;
-            let gold = crate::rewards::roll_monster_gold(&mut self.rng, boss, elite);
+            let gold = crate::rewards::roll_monster_gold(&mut self.rng, boss, elite, self.ascension);
             self.add_gold_to_rewards(gold);
             if elite {
                 // MonsterRoomElite.returnRandomRelicTier: <50 common, >82 rare, else uncommon.
@@ -2325,7 +2325,14 @@ impl Game {
         } else if self.rng.card.counter > 500 && self.rng.card.counter < 750 {
             self.rng.card.set_counter(750);
         }
-        self.player.hp = self.player.max_hp;
+        // AbstractDungeon between acts: A5+ heal 75% of missing HP (MathUtils.round).
+        if self.ascension >= 5 {
+            let missing = (self.player.max_hp - self.player.hp).max(0);
+            self.heal_player(crate::rewards::gdx_round(missing as f32 * 0.75));
+        } else {
+            self.heal_player(self.player.max_hp);
+        }
+        self.potion_blizzard = 0;
         self.event_elite_chance = 0.1;
         self.event_monster_chance = 0.1;
         self.event_shop_chance = 0.03;
@@ -3960,7 +3967,7 @@ impl Game {
     }
 
     fn gain_relic(&mut self, id: RelicId) {
-        if id == RelicId::Cursed_Key {
+        if id == RelicId::Cursed_Key || id == RelicId::Coffee_Dripper {
             self.player.energy_master += 1;
         }
         if id == RelicId::Old_Coin {
@@ -3981,7 +3988,7 @@ impl Game {
             }
             _ => {}
         }
-        self.player.relics.push(RelicInstance {
+        let inst = RelicInstance {
             id,
             counter: match id {
                 RelicId::Happy_Flower | RelicId::Pen_Nib | RelicId::InkBottle => 0,
@@ -3990,7 +3997,14 @@ impl Game {
                 _ => -1,
             },
             used_up: false,
-        });
+        };
+        // BossRelicSelectScreen: Black Blood / FrozenCore / Ring of the Serpent /
+        // HolyWater instantObtain at slot 0, replacing the starter relic.
+        if matches!(id, RelicId::FrozenCore | RelicId::Black_Blood) && !self.player.relics.is_empty() {
+            self.player.relics[0] = inst;
+        } else {
+            self.player.relics.push(inst);
+        }
         if id == RelicId::Whetstone || id == RelicId::War_Paint {
             // ShowRelicObtainEffect: onEquip after the current room, like Old Coin.
             self.pending_equip.push(id);
