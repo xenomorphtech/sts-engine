@@ -91,6 +91,14 @@ impl Combat {
         if player.has_relic(RelicId::Lantern) {
             player.energy += 1;
         }
+        // AncientTeaSet.atTurnStart: first turn after RestRoom.onPlayerEntry (counter == -2)
+        // GainEnergyAction(2) only. No extra draw.
+        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ancient_Tea_Set) {
+            if r.counter == -2 {
+                r.counter = -1;
+                player.energy += 2;
+            }
+        }
         let _ = draw_cards_rng(player, 5, Some(rng));
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::HornCleat) {
             r.counter = 0;
@@ -253,6 +261,19 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
         }
         MonsterId::Sentry => {
             monster.add_power(PowerId::Artifact, 1);
+        }
+        MonsterId::TheGuardian => {
+            // TheGuardian.usePreBattleAction: ModeShiftPower(dmgThreshold).
+            // A19: 40, A9: 35, else 30. extra stores the current threshold.
+            let thresh = if monster.ascension >= 19 {
+                40
+            } else if monster.ascension >= 9 {
+                35
+            } else {
+                30
+            };
+            monster.extra = thresh;
+            monster.add_power(PowerId::ModeShift, thresh);
         }
         MonsterId::GremlinWarrior => {
             monster.add_power(PowerId::Angry, if monster.ascension >= 17 { 2 } else { 1 });
@@ -1314,6 +1335,16 @@ impl Monster {
                     self.get_move(reroll, rng, missing_hp, allies, index);
                 }
             }
+            MonsterId::TheGuardian => {
+                // TheGuardian.getMove: isOpen -> CHARGE_UP else ROLL_ATTACK.
+                // split_triggered is closeUpTriggered / !isOpen.
+                if !self.split_triggered {
+                    self.set_move(6, Intent::Defend, 0, 1);
+                } else {
+                    let roll = if self.ascension >= 4 { 10 } else { 9 };
+                    self.set_move(3, Intent::Attack, roll, 1);
+                }
+            }
             _ => self.set_move(1, Intent::Attack, 6, 1),
         }
     }
@@ -1360,6 +1391,8 @@ impl Monster {
         )
             || (self.id == MonsterId::Hexaghost && self.next_move == 5)
             || (matches!(self.id, MonsterId::AcidSlimeL) && self.next_move == 3)
+            // TheGuardian.takeTurn setMoves the next intent; no RollMoveAction.
+            || self.id == MonsterId::TheGuardian
     }
 
     pub fn take_turn(&mut self, player: &mut Player, rng: &mut RngSet, ascension: i32) -> Option<Vec<Monster>> {
@@ -1801,11 +1834,14 @@ impl Monster {
                 self.set_move(1, Intent::Attack, 30 + self.extra * 10, 1);
             }
             (MonsterId::SlimeBoss, 1) => {
-                let _ = hit_player(player, self, rng, 35, 1);
+                // A4+: slam 38, else 35.
+                let slam = if self.ascension >= 4 { 38 } else { 35 };
+                let _ = hit_player(player, self, rng, slam, 1);
                 self.set_move(4, Intent::StrongDebuff, 0, 1);
             }
             (MonsterId::SlimeBoss, 2) => {
-                self.set_move(1, Intent::Attack, 35, 1);
+                let slam = if self.ascension >= 4 { 38 } else { 35 };
+                self.set_move(1, Intent::Attack, slam, 1);
             }
             (MonsterId::SlimeBoss, 3) => {
                 let hp = self.hp.max(1);
@@ -1818,7 +1854,9 @@ impl Monster {
                 return Some(vec![spike, acid]);
             }
             (MonsterId::SlimeBoss, 4) => {
-                for _ in 0..3 {
+                // A19+: MakeTempCardInDiscardAction(Slimed, 5) else 3.
+                let n = if self.ascension >= 19 { 5 } else { 3 };
+                for _ in 0..n {
                     player.discard.push(Card::new(CardId::Slimed));
                 }
                 self.set_move(2, Intent::Unknown, 0, 1);
@@ -1904,6 +1942,46 @@ impl Monster {
                     burn.upgrade();
                     player.discard.push(burn);
                 }
+            }
+            (MonsterId::TheGuardian, 1) => {
+                // CLOSE_UP: SharpHide A19 4 else 3, then ROLL_ATTACK.
+                let hide = if ascension >= 19 { 4 } else { 3 };
+                self.add_power(PowerId::SharpHide, hide);
+                let roll = if self.ascension >= 4 { 10 } else { 9 };
+                self.set_move(3, Intent::Attack, roll, 1);
+            }
+            (MonsterId::TheGuardian, 2) => {
+                let dmg = if self.ascension >= 4 { 36 } else { 32 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+                self.set_move(7, Intent::StrongDebuff, 0, 1);
+            }
+            (MonsterId::TheGuardian, 3) => {
+                let dmg = if self.ascension >= 4 { 10 } else { 9 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+                self.set_move(4, Intent::AttackBuff, 8, 2);
+            }
+            (MonsterId::TheGuardian, 4) => {
+                // Twin Slam: Offensive Mode first (Mode Shift + lose block), then 8x2.
+                self.split_triggered = false;
+                self.add_power(PowerId::ModeShift, self.extra);
+                self.block = 0;
+                let _ = hit_player(player, self, rng, 8, 2);
+                self.powers.retain(|p| p.id != PowerId::SharpHide);
+                self.set_move(5, Intent::Attack, 5, 4);
+            }
+            (MonsterId::TheGuardian, 5) => {
+                let _ = hit_player(player, self, rng, 5, 4);
+                self.set_move(6, Intent::Defend, 0, 1);
+            }
+            (MonsterId::TheGuardian, 6) => {
+                self.block += 9;
+                let bash = if self.ascension >= 4 { 36 } else { 32 };
+                self.set_move(2, Intent::Attack, bash, 1);
+            }
+            (MonsterId::TheGuardian, 7) => {
+                player.add_power_from_monster(PowerId::Weak, 2);
+                player.add_power_from_monster(PowerId::Vulnerable, 2);
+                self.set_move(5, Intent::Attack, 5, 4);
             }
             _ => {
                 if self.intent_damage > 0 {
@@ -2210,6 +2288,9 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
                 }
             }
             if !lethal {
+                guardian_mode_shift_on_hp_loss(monster, dmg);
+            }
+            if !lethal {
                 let malleable = monster.power_amount(PowerId::Malleable);
                 if malleable > 0 {
                     monster.block += malleable;
@@ -2268,6 +2349,36 @@ fn wake_asleep_lagavulin(monster: &mut Monster) {
     }
 }
 
+/// TheGuardian.damage: HP loss while isOpen counts toward Mode Shift (THORNS included).
+fn guardian_mode_shift_on_hp_loss(monster: &mut Monster, lost: i32) {
+    if monster.id != MonsterId::TheGuardian || lost <= 0 || monster.split_triggered || !monster.alive() {
+        return;
+    }
+    let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::ModeShift) else {
+        return;
+    };
+    p.amount -= lost;
+    if p.amount <= 0 {
+        monster.powers.retain(|p| p.id != PowerId::ModeShift);
+        // ChangeStateAction("Defensive Mode") is addToBottom, so the +20
+        // block lands after already-queued lightning DamageActions.
+        monster.stolen_gold = 20;
+        monster.extra += 10;
+        monster.split_triggered = true;
+        monster.set_move(1, Intent::Buff, 0, 1);
+        monster.create_intent();
+    }
+}
+
+fn flush_guardian_defensive_block(combat: &mut Combat) {
+    for m in combat.monsters.iter_mut() {
+        if m.id == MonsterId::TheGuardian && m.stolen_gold > 0 {
+            m.block += m.stolen_gold;
+            m.stolen_gold = 0;
+        }
+    }
+}
+
 pub fn deal_thorns(monster: &mut Monster, amount: i32) {
     if amount <= 0 || !monster.alive() {
         return;
@@ -2290,6 +2401,8 @@ pub fn deal_thorns(monster: &mut Monster, amount: i32) {
             } else {
                 monster.dead = true;
             }
+        } else {
+            guardian_mode_shift_on_hp_loss(monster, dmg);
         }
     }
     maybe_split(monster);
@@ -2501,6 +2614,7 @@ pub fn play_card(
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
         apply_card_effect(player, combat, &mut card, target, rng);
+        flush_guardian_defensive_block(combat);
         flush_ink_bottle(player, combat, rng);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
             let spores = monster.power_amount(PowerId::SporeCloud);
@@ -2520,6 +2634,26 @@ pub fn play_card(
             let rage = player.power_amount(PowerId::Rage);
             if rage > 0 {
                 player.block += rage;
+            }
+            // SharpHidePower.onUseCard: THORNS hit after the attack lands.
+            let hide: i32 = combat
+                .monsters
+                .iter()
+                .filter(|m| m.alive())
+                .map(|m| m.power_amount(PowerId::SharpHide))
+                .sum();
+            if hide > 0 {
+                let dmg = apply_block(&mut player.block, hide);
+                let dmg = buffer_absorb(player, dmg);
+                let dmg = on_lose_hp_last(player, dmg);
+                if dmg > 0 {
+                    player.hp -= dmg;
+                    if player.hp < 0 {
+                        player.hp = 0;
+                    }
+                    red_skull_on_hp_change(player);
+                    centennial_puzzle_was_hp_lost(player, rng);
+                }
             }
         }
         combat.cards_played_this_turn += 1;
@@ -2842,6 +2976,26 @@ fn apply_card_effect(
             let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
             apply_fire_breathing(player, &mut combat.monsters, n);
         }
+        CardId::Tempest => {
+            // TempestAction: effect = energyOnUse, +2 Chemical X, +1 if upgraded.
+            // If effect > 0: ChannelAction(Lightning) * effect, then energy.use(total)
+            // unless freeToPlayOnce. X=0 unupgraded is a no-op besides exhaust.
+            let mut effect = player.energy;
+            if player.has_relic(RelicId::Chemical_X) {
+                effect += 2;
+            }
+            if card.upgraded {
+                effect += 1;
+            }
+            if effect > 0 {
+                for _ in 0..effect {
+                    channel_orb(player, combat, rng, OrbKind::Lightning);
+                }
+                if !card.free_to_play_once {
+                    player.energy = 0;
+                }
+            }
+        }
         CardId::Conserve_Battery => {
             if block > 0 {
                 player.block += block;
@@ -3118,6 +3272,13 @@ fn apply_card_effect(
     }
 }
 
+fn is_end_turn_autoplay(id: CardId) -> bool {
+    matches!(
+        id,
+        CardId::Burn | CardId::Decay | CardId::Doubt | CardId::Shame | CardId::Regret
+    )
+}
+
 pub fn reshuffle_if_needed(player: &mut Player, rng: &mut RngSet) {
     if player.draw.is_empty() && !player.discard.is_empty() {
         player.draw.append(&mut player.discard);
@@ -3127,6 +3288,12 @@ pub fn reshuffle_if_needed(player: &mut Player, rng: &mut RngSet) {
 }
 
 pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
+    // GameActionManager.callEndOfTurnActions: applyEndOfTurnRelics then
+    // applyEndOfTurnPreCardPowers. Orichalcum.onPlayerEndTurn addToTop GainBlock 6
+    // if currentBlock==0, so it resolves before PlatedArmor/Metallicize addToBot.
+    if player.has_relic(RelicId::Orichalcum) && player.block == 0 {
+        player.block += 6;
+    }
     let metal = player.power_amount(PowerId::Metallicize);
     if metal > 0 {
         player.block += metal;
@@ -3136,7 +3303,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         player.block += plated;
     }
     crate::creature::end_of_turn(&mut player.powers);
-    // Burns in hand deal damage before discard.
+    // GameActionManager.callEndOfTurnActions iterates hand left-to-right and
+    // triggerOnEndOfTurnForPlayingCard (Burn.java:47, Decay/Doubt/Shame/Regret).
+    // Those cards queue themselves, play with dontTriggerOnUseCard, then
+    // UseCardAction.moveToDiscardPile *before* DiscardAtEndOfTurnAction.
     let mut burn_dmg = 0;
     for card in &player.hand {
         if card.id == CardId::Burn {
@@ -3153,21 +3323,23 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
             centennial_puzzle_was_hp_lost(player, rng);
         }
     }
-    // Discard remaining hand right-to-left (DiscardAtEndOfTurnAction).
-    // Ethereal cards exhaust first via triggerOnEndOfPlayerTurn.
-    player.hand.reverse();
+    let mut rest = Vec::new();
     for card in player.hand.drain(..) {
+        if is_end_turn_autoplay(card.id) {
+            player.discard.push(card);
+        } else {
+            rest.push(card);
+        }
+    }
+    // DiscardAtEndOfTurnAction: ethereal ExhaustSpecificCardAction first
+    // (AbstractCard.triggerOnEndOfPlayerTurn), then remaining cards via
+    // getTopCard / right-to-left.
+    for card in rest.into_iter().rev() {
         if card.ethereal {
             player.exhaust.push(card);
         } else {
             player.discard.push(card);
         }
-    }
-
-    // AbstractRoom.applyEndOfTurnRelics before TriggerEndOfTurnOrbsAction.
-    // Orichalcum.onPlayerEndTurn: if currentBlock==0, GainBlock 6 (addToTop).
-    if player.has_relic(RelicId::Orichalcum) && player.block == 0 {
-        player.block += 6;
     }
 
     apply_orb_passives(player, combat, rng);
@@ -3333,6 +3505,14 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     if player.power_amount(PowerId::Barricade) == 0 {
         player.block = 0;
     }
+    // LoopPower.atStartOfTurn calls orb onEndOfTurn while BiasPower still
+    // only has an addToBot Focus-1 queued, so lightning/frost/dark snapshot
+    // the pre-Bias amount. Apply Loop before Bias.
+    let loops = player.power_amount(PowerId::Loop);
+    for _ in 0..loops {
+        apply_front_orb_passive(player, combat, rng);
+    }
+    flush_guardian_defensive_block(combat);
     let bias = player.power_amount(PowerId::Bias);
     if bias > 0 {
         player.add_power(PowerId::Focus, -bias);
@@ -3342,10 +3522,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     if energized > 0 {
         player.energy += energized;
         player.powers.retain(|p| p.id != PowerId::Energized);
-    }
-    let loops = player.power_amount(PowerId::Loop);
-    for _ in 0..loops {
-        apply_front_orb_passive(player, combat, rng);
     }
     if player.has_relic(RelicId::Happy_Flower) {
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Happy_Flower) {
@@ -3467,6 +3643,17 @@ fn impulse_dark_orbs(player: &mut Player) {
     }
 }
 
+/// AbstractPlayer.increaseMaxOrbSlots: combat `maxOrbs` only, no-op at 10.
+/// IncreaseMaxOrbAction calls this with 1 per potency point.
+pub fn increase_max_orb_slots(player: &mut Player, amount: i32) {
+    for _ in 0..amount {
+        if player.max_orbs == 10 {
+            break;
+        }
+        player.max_orbs += 1;
+    }
+}
+
 /// AbstractPlayer.decreaseMaxOrbSlots: drop the last slot (empty or filled) without evoking.
 fn decrease_max_orb_slots(player: &mut Player, amount: i32) {
     for _ in 0..amount {
@@ -3559,6 +3746,7 @@ fn apply_orb_passives(player: &mut Player, combat: &mut Combat, rng: &mut RngSet
     if player.has_relic(RelicId::Cables) {
         apply_front_orb_passive(player, combat, rng);
     }
+    flush_guardian_defensive_block(combat);
 }
 
 fn lightning_hit(combat: &mut Combat, rng: &mut RngSet, amount: i32) {

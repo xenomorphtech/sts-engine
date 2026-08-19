@@ -11,6 +11,7 @@ pub struct Unlocks {
 
 impl Unlocks {
     /// Profile captured by ExactTextSim: Ironclad unlock level 0, Guardian seen.
+    /// Hexaghost is the unseen Act 1 boss. Do not mark GHOST/SLIME seen.
     pub fn fixture() -> Self {
         Self {
             locked_relics: DEFAULT_LOCKED_RELICS.iter().map(|s| (*s).to_string()).collect(),

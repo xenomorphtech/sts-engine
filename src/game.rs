@@ -62,6 +62,19 @@ pub struct EventState {
     pub options: Vec<String>,
     /// Event-specific deck indices or counters (Falling: skill/power/attack).
     pub data: Vec<i32>,
+    /// GremlinMatchGame cards in shuffled table order.
+    match_cards: Vec<MatchCard>,
+    match_chosen: Option<usize>,
+    match_attempts: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MatchCard {
+    id: CardId,
+    /// `AbstractCard.isFlipped`: face-down and still in the clickable set.
+    flipped: bool,
+    /// Revealed at least once; ExactTextSim labels these by `cardID`.
+    revealed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +150,20 @@ enum ShopKind {
     Card(usize),
     Relic(usize),
     Potion(usize),
+}
+
+fn match_play_options(cards: &[MatchCard]) -> Vec<String> {
+    cards
+        .iter()
+        .filter(|c| c.flipped)
+        .map(|c| {
+            if c.revealed {
+                c.id.sts_id().to_string()
+            } else {
+                "hidden card".into()
+            }
+        })
+        .collect()
 }
 
 fn purgeable_card(c: &Card) -> bool {
@@ -1216,6 +1243,16 @@ impl Game {
                 self.rest_smithing = false;
                 self.rest_smith_picked = false;
                 self.rest_selected = false;
+                // RestRoom.onPlayerEntry: every relic.onEnterRestRoom.
+                // AncientTeaSet sets counter = -2 (armed for the next fight).
+                if let Some(r) = self
+                    .player
+                    .relics
+                    .iter_mut()
+                    .find(|r| r.id == RelicId::Ancient_Tea_Set)
+                {
+                    r.counter = -2;
+                }
                 self.screen = Screen::Rest;
             }
             RoomType::Treasure => {
@@ -1316,6 +1353,14 @@ impl Game {
                         }
                     }
                 }
+                PotionId::Explosive => {
+                    // ExplosivePotion.use: DamageAllEnemiesAction(createDamageMatrix(10, true), NORMAL).
+                    if let Some(combat) = self.combat.as_mut() {
+                        for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                            combat::deal_thorns(m, 10);
+                        }
+                    }
+                }
                 PotionId::LiquidBronze => self.player.add_power(crate::ids::PowerId::Thorns, 3),
                 PotionId::Duplication => {
                     self.player.duplication += 1;
@@ -1332,6 +1377,11 @@ impl Game {
                 }
                 PotionId::EssenceOfSteel => {
                     self.player.add_power(crate::ids::PowerId::PlatedArmor, 4);
+                }
+                PotionId::Focus => self.player.add_power(crate::ids::PowerId::Focus, 2),
+                PotionId::PotionOfCapacity => {
+                    // PotionOfCapacity.use -> IncreaseMaxOrbAction(getPotency()=2).
+                    combat::increase_max_orb_slots(&mut self.player, 2);
                 }
                 PotionId::LiquidMemories => {
                     self.begin_memories_select();
@@ -2353,7 +2403,11 @@ impl Game {
                 }
             }
             _ => {
-                // Regen: approximate as unused for this seed (Strength 4 observed).
+                // MonsterRoomElite.applyEmeraldEliteBuff case 3:
+                // RegenerateMonsterPower(1 + actNum * 2).
+                for m in combat.monsters.iter_mut() {
+                    m.add_power(crate::ids::PowerId::Regen, 1 + act * 2);
+                }
             }
         }
     }
@@ -2464,7 +2518,13 @@ impl Game {
         } else {
             self.event_elite_chance += 0.1;
         }
+        // EventHelper.roll: Juzu converts MONSTER → EVENT after the chance
+        // reset, so monsterChance still drops to 0.1.
+        let mut choice = choice;
         if matches!(choice, Some(RoomType::Monster)) {
+            if self.player.has_relic(RelicId::Juzu_Bracelet) {
+                choice = None;
+            }
             self.event_monster_chance = 0.1;
         } else {
             self.event_monster_chance += 0.1;
@@ -2713,6 +2773,7 @@ impl Game {
                     format!("[Eat] #gHeal #g{heal} #gHP. #rBecome #rCursed #r- #rParasite."),
                 ]
             }
+            "Lab" => vec!["[Search] #gFind #gsome #gPotions!".into()],
             "Bonfire Elementals" => vec!["[Continue]".into()],
             "FaceTrader" => {
                 // FaceTrader: A15+ gold=50 else 75; damage = maxHp/10 (min 1).
@@ -2729,6 +2790,7 @@ impl Game {
                 data = vec![self.wheel_gold_amount(), 0, 0];
                 vec!["[Play]".into()]
             }
+            "Match and Keep!" => vec!["[Continue]".into()],
             _ => vec!["[Continue]".into(), "[Leave]".into()],
         };
         if id == "Falling" {
@@ -2742,11 +2804,19 @@ impl Game {
                 attack.map(|i| i as i32).unwrap_or(-1),
             ];
         }
+        let (match_cards, match_attempts) = if id == "Match and Keep!" {
+            (self.initialize_match_cards(), 5)
+        } else {
+            (Vec::new(), 0)
+        };
         self.event = Some(EventState {
             id,
             screen: 0,
             options,
             data,
+            match_cards,
+            match_chosen: None,
+            match_attempts,
         });
         self.screen = Screen::Event;
     }
@@ -2815,6 +2885,178 @@ impl Game {
                 self.player.hp = (self.player.hp - dmg).max(0);
             }
         }
+    }
+
+    /// `GremlinMatchGame.initializeCards` then `Collections.shuffle(..., miscRng.randomLong())`.
+    fn initialize_match_cards(&mut self) -> Vec<MatchCard> {
+        let mut ids = Vec::new();
+        ids.push(self.random_card(CardRarity::RARE, false));
+        ids.push(self.random_card(CardRarity::UNCOMMON, false));
+        ids.push(self.random_card(CardRarity::COMMON, false));
+        if self.ascension >= 15 {
+            ids.push(Some(self.return_random_curse()));
+            ids.push(Some(self.return_random_curse()));
+        } else {
+            ids.push(Some(self.return_colorless_uncommon()));
+            ids.push(Some(self.return_random_curse()));
+        }
+        ids.push(Some(self.start_card_for_event()));
+        let ids: Vec<CardId> = ids.into_iter().flatten().collect();
+        let mut cards: Vec<MatchCard> = ids
+            .iter()
+            .chain(ids.iter())
+            .copied()
+            .map(|id| MatchCard {
+                id,
+                flipped: false,
+                revealed: false,
+            })
+            .collect();
+        let seed = self.rng.misc.random_long();
+        shuffle_java(&mut cards, seed);
+        cards
+    }
+
+    /// `CardLibrary.getCurse`: `curses` HashMap iteration, skip specials, `cardRng`.
+    fn return_random_curse(&mut self) -> CardId {
+        const CURSES: &[CardId] = &[
+            CardId::Regret,
+            CardId::Injury,
+            CardId::Shame,
+            CardId::Parasite,
+            CardId::Normality,
+            CardId::Doubt,
+            CardId::Writhe,
+            CardId::Pain,
+            CardId::Decay,
+            CardId::Clumsy,
+        ];
+        let i = self.rng.card.random_range(0, CURSES.len() as i32 - 1) as usize;
+        CURSES[i]
+    }
+
+    /// `AbstractDungeon.returnColorlessCard(UNCOMMON)`: shuffle `colorlessCardPool` in place.
+    fn return_colorless_uncommon(&mut self) -> CardId {
+        let seed = self.rng.shuffle.random_long();
+        shuffle_java(&mut self.dungeon.colorless_cards, seed);
+        self.dungeon
+            .colorless_cards
+            .iter()
+            .copied()
+            .find(|id| id.def().rarity == CardRarity::UNCOMMON)
+            .unwrap_or(CardId::Swift_Strike)
+    }
+
+    fn start_card_for_event(&self) -> CardId {
+        match self.character {
+            Character::Ironclad => CardId::Bash,
+            Character::Silent => CardId::Neutralize,
+            Character::Defect => CardId::Zap,
+            Character::Watcher => CardId::Eruption,
+        }
+    }
+
+    fn step_gremlin_match(&mut self, index: usize) {
+        let screen = self.event.as_ref().map(|e| e.screen).unwrap_or(0);
+        match screen {
+            0 => {
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Play]".into()];
+                }
+            }
+            1 => {
+                if let Some(event) = self.event.as_mut() {
+                    for card in &mut event.match_cards {
+                        card.flipped = true;
+                    }
+                    event.screen = 2;
+                    event.options = match_play_options(&event.match_cards);
+                }
+            }
+            2 => self.flip_match_card(index),
+            _ => self.open_map(),
+        }
+    }
+
+    fn flip_match_card(&mut self, index: usize) {
+        let mut obtain = None;
+        if let Some(event) = self.event.as_mut() {
+            let flipped: Vec<usize> = event
+                .match_cards
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.flipped)
+                .map(|(i, _)| i)
+                .collect();
+            let Some(&pick) = flipped.get(index) else {
+                return;
+            };
+            event.match_cards[pick].flipped = false;
+            event.match_cards[pick].revealed = true;
+            if let Some(chosen) = event.match_chosen.take() {
+                let matched = event.match_cards[chosen].id == event.match_cards[pick].id;
+                if matched {
+                    obtain = Some(event.match_cards[chosen].id);
+                    let (lo, hi) = if chosen < pick {
+                        (chosen, pick)
+                    } else {
+                        (pick, chosen)
+                    };
+                    event.match_cards.remove(hi);
+                    event.match_cards.remove(lo);
+                } else {
+                    event.match_cards[chosen].flipped = true;
+                    event.match_cards[pick].flipped = true;
+                }
+                event.match_attempts -= 1;
+                if event.match_attempts == 0 {
+                    event.screen = 3;
+                    event.options = vec!["[Leave]".into()];
+                } else {
+                    event.options = match_play_options(&event.match_cards);
+                }
+            } else {
+                event.match_chosen = Some(pick);
+                event.options = match_play_options(&event.match_cards);
+            }
+        }
+        if let Some(id) = obtain {
+            self.obtain_master_deck_card(id);
+        }
+    }
+
+    /// `ShowCardAndObtainEffect` after the match waitTimer: `makeCopy`, then
+    /// Omamori / `onObtainCard` / `souls.obtain` before the next snapshot.
+    fn obtain_master_deck_card(&mut self, id: CardId) {
+        let mut card = Card::new(id);
+        if card.card_type() == crate::ids::CardType::CURSE {
+            if let Some(oma) = self
+                .player
+                .relics
+                .iter_mut()
+                .find(|r| r.id == RelicId::Omamori)
+            {
+                if oma.counter != 0 {
+                    oma.counter -= 1;
+                    if oma.counter == 0 {
+                        oma.used_up = true;
+                    }
+                    return;
+                }
+            }
+        }
+        crate::rewards::preview_obtain(&self.player, &mut card);
+        if card.card_type() == crate::ids::CardType::CURSE
+            && self.player.has_relic(RelicId::Darkstone_Periapt)
+        {
+            self.increase_max_hp(6);
+        }
+        if self.player.has_relic(RelicId::CeramicFish) && !self.player.has_relic(RelicId::Ectoplasm)
+        {
+            self.player.gold += 9;
+        }
+        self.player.deck.push(card);
     }
 
     /// FaceTrader.getRandomFace: shuffle missing face relics with `miscRng.randomLong()`.
@@ -2924,6 +3166,15 @@ impl Game {
                 }
                 _ => self.open_map(),
             }
+            return;
+        }
+        if id == "Match and Keep!" {
+            // GremlinMatchGame.buttonEffect: INTRO Continue → RULE Play → PLAY
+            // flips. The private waitTimer blocks ExactTextSim after the
+            // second flip of an attempt, so the next published boundary is
+            // already resolved (match obtain or both cards face-down again).
+            // Five attempts then CLEAN_UP/COMPLETE Leave.
+            self.step_gremlin_match(*index);
             return;
         }
         if id == "FaceTrader" {
@@ -3353,6 +3604,27 @@ impl Game {
             }
             return;
         }
+        if id == "Lab" {
+            // Lab.buttonEffect INTRO: noCardsInRewards, 2 potions (3 below A15),
+            // then CombatRewardScreen.open(). COMPLETE is the reward Proceed.
+            match screen {
+                0 => {
+                    self.rewards.clear();
+                    self.card_reward.clear();
+                    let n = if self.ascension < 15 { 3 } else { 2 };
+                    for _ in 0..n {
+                        let p = crate::rewards::get_random_potion_for(&mut self.rng, self.character);
+                        self.rewards.push(Reward::new(RewardKind::Potion(p)));
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                    }
+                    self.screen = Screen::CombatReward;
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
         if id == "Bonfire Elementals" {
             match screen {
                 0 => {
@@ -3692,7 +3964,7 @@ impl Game {
             id,
             counter: match id {
                 RelicId::Happy_Flower | RelicId::Pen_Nib | RelicId::InkBottle => 0,
-                RelicId::Matryoshka => 2,
+                RelicId::Matryoshka | RelicId::Omamori => 2,
                 RelicId::NlothsMask => 1,
                 _ => -1,
             },

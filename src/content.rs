@@ -267,6 +267,15 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Conserve_Battery, true) => CardStats::skill(1, 10, -1),
         (CardId::Leap, false) => CardStats::skill(1, 9, -1),
         (CardId::Leap, true) => CardStats::skill(1, 12, -1),
+        (CardId::Tempest, _) => CardStats {
+            cost: -1,
+            damage: -1,
+            block: -1,
+            magic: -1,
+            exhaust: true,
+            ethereal: false,
+            innate: false,
+        },
         (CardId::Hologram, false) => CardStats {
             cost: 1, damage: -1, block: 3, magic: -1, exhaust: true, ethereal: false, innate: false,
         },
