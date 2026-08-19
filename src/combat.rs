@@ -3339,18 +3339,20 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         player.block += plated;
     }
     crate::creature::end_of_turn(&mut player.powers);
-    // GameActionManager.callEndOfTurnActions iterates hand left-to-right and
-    // triggerOnEndOfTurnForPlayingCard (Burn.java:47, Decay/Doubt/Shame/Regret).
-    // Those cards queue themselves, play with dontTriggerOnUseCard, then
-    // UseCardAction.moveToDiscardPile *before* DiscardAtEndOfTurnAction.
-    let mut burn_dmg = 0;
-    for card in &player.hand {
-        if card.id == CardId::Burn {
-            burn_dmg += if card.upgraded { 4 } else { 2 };
-        }
-    }
-    if burn_dmg > 0 {
-        let dmg = apply_block(&mut player.block, burn_dmg);
+    // GameActionManager.callEndOfTurnActions: addToBottom(TriggerEndOfTurnOrbsAction)
+    // *then* hand.triggerOnEndOfTurnForPlayingCard. Burn.use queues DamageAction
+    // addToBot, so Frost block resolves before each Burn hit. Apply orbs first,
+    // then each Burn L-to-R so Fairy/Lizard Tail can revive mid-sequence.
+    apply_orb_passives(player, combat, rng);
+    let burn_upgraded: Vec<bool> = player
+        .hand
+        .iter()
+        .filter(|c| c.id == CardId::Burn)
+        .map(|c| c.upgraded)
+        .collect();
+    for upgraded in burn_upgraded {
+        let raw = if upgraded { 4 } else { 2 };
+        let dmg = apply_block(&mut player.block, raw);
         let dmg = buffer_absorb(player, dmg);
         let dmg = on_lose_hp_last(player, dmg);
         if dmg > 0 {
@@ -3382,7 +3384,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         }
     }
 
-    apply_orb_passives(player, combat, rng);
     if combat.all_dead() {
         return;
     }
