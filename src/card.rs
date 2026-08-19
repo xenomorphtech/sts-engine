@@ -17,6 +17,8 @@ pub struct Card {
     pub ethereal: bool,
     pub retain: bool,
     pub innate: bool,
+    /// `AbstractCard.inBottleFlame` / `inBottleLightning` / `inBottleTornado`.
+    pub in_bottle: bool,
 }
 
 impl Card {
@@ -38,6 +40,7 @@ impl Card {
             ethereal: stats.ethereal,
             retain: false,
             innate: stats.innate,
+            in_bottle: false,
         }
     }
 

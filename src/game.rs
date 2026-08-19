@@ -3,7 +3,7 @@ use crate::card::Card;
 use crate::combat::{self, after_combat_relics, Combat};
 use crate::creature::{Player, PotionInstance, RelicInstance};
 use crate::dungeon::Dungeon;
-use crate::ids::{CardId, CardRarity, Character, EncounterId, PotionId, RelicId, RelicTier, RoomType};
+use crate::ids::{CardId, CardRarity, CardType, Character, EncounterId, PotionId, RelicId, RelicTier, RoomType};
 use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
@@ -139,6 +139,13 @@ enum ShopKind {
     Potion(usize),
 }
 
+fn purgeable_card(c: &Card) -> bool {
+    !matches!(
+        c.id,
+        CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane
+    )
+}
+
 fn shop_card_matches(card: &Card, label: &str) -> bool {
     let id = card.sts_id();
     label == id
@@ -222,6 +229,8 @@ enum GridKind {
     Transform,
     /// Combat CardGroup select over the discard pile (Hologram).
     DiscardToHand,
+    /// Bottled Flame / Lightning / Tornado: one purgeable card of this type.
+    Bottle(CardType),
 }
 
 #[derive(Clone, Debug)]
@@ -233,6 +242,7 @@ struct GridSelect {
     picked: Vec<usize>,
     return_event: bool,
     return_shop: bool,
+    return_screen: Option<Screen>,
 }
 
 impl Game {
@@ -775,6 +785,30 @@ impl Game {
             picked: Vec::new(),
             return_event,
             return_shop: false,
+            return_screen: None,
+        });
+        self.screen = Screen::Grid;
+    }
+
+    fn open_bottle_grid(&mut self, typ: CardType) {
+        let any = self
+            .player
+            .deck
+            .iter()
+            .any(|c| purgeable_card(c) && c.card_type() == typ);
+        if !any {
+            return;
+        }
+        let prev = self.screen;
+        self.grid = Some(GridSelect {
+            kind: GridKind::Bottle(typ),
+            needed: 1,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: prev == Screen::Shop,
+            return_screen: Some(prev),
         });
         self.screen = Screen::Grid;
     }
@@ -817,17 +851,32 @@ impl Game {
         if kind == GridKind::DiscardToHand {
             return (0..self.player.discard.len()).collect();
         }
+        if let GridKind::Bottle(typ) = kind {
+            // CardGroup.getCardsOfType uses addToBottom (insert at 0), reversing
+            // master-deck order. getPurgeableCards then getSkills/Attacks/Powers.
+            let mut idxs: Vec<usize> = self
+                .player
+                .deck
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| purgeable_card(c) && c.card_type() == typ)
+                .map(|(i, _)| i)
+                .collect();
+            idxs.reverse();
+            return idxs;
+        }
         self.player
             .deck
             .iter()
             .enumerate()
             .filter(|(_, c)| match kind {
                 GridKind::Upgrade => c.can_upgrade(),
-                GridKind::Purge | GridKind::Transform => !matches!(
-                    c.id,
-                    CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane
-                ),
-                GridKind::DiscardToHand => true,
+                GridKind::Purge => {
+                    purgeable_card(c)
+                        && !(c.in_bottle && self.grid.as_ref().is_some_and(|g| g.return_shop))
+                }
+                GridKind::Transform => purgeable_card(c),
+                GridKind::DiscardToHand | GridKind::Bottle(_) => true,
             })
             .map(|(i, _)| i)
             .collect()
@@ -848,7 +897,7 @@ impl Game {
                     return;
                 };
                 // ChoiceDriver.chooseGrid: non-purge/upgrade/transform closes immediately.
-                if kind == GridKind::DiscardToHand {
+                if matches!(kind, GridKind::DiscardToHand | GridKind::Bottle(_)) {
                     self.apply_grid(kind, &[pile_i]);
                     return;
                 }
@@ -945,6 +994,13 @@ impl Game {
                     combat::discard_pile_to_hand(&mut self.player, i);
                 }
             }
+            GridKind::Bottle(_) => {
+                for i in idxs {
+                    if let Some(c) = self.player.deck.get_mut(i) {
+                        c.in_bottle = true;
+                    }
+                }
+            }
         }
         self.finish_grid();
     }
@@ -994,10 +1050,17 @@ impl Game {
             .is_some_and(|g| g.kind == GridKind::DiscardToHand);
         let back_to_event = self.grid.as_ref().is_some_and(|g| g.return_event);
         let back_to_shop = self.grid.as_ref().is_some_and(|g| g.return_shop);
+        let return_screen = self.grid.as_ref().and_then(|g| g.return_screen);
         self.grid = None;
         if back_to_combat {
             self.finish_discard_to_hand();
             return;
+        }
+        if let Some(screen) = return_screen {
+            if screen != Screen::Grid {
+                self.screen = screen;
+                return;
+            }
         }
         if back_to_shop {
             self.screen = Screen::Shop;
@@ -1010,7 +1073,8 @@ impl Game {
                 return;
             }
             if let Some(event) = self.event.as_mut() {
-                event.screen = 1;
+                // Wheel applyResult already moved to LEAVE before opening GRID.
+                event.screen = if event.id == "Wheel of Change" { 3 } else { 1 };
                 event.options = vec!["[Leave]".into()];
             }
             self.screen = Screen::Event;
@@ -1593,11 +1657,10 @@ impl Game {
                     self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
                     self.screen = Screen::Treasure;
                     self.current_room = RoomType::BossTreasure;
-                } else if self
-                    .event
-                    .as_ref()
-                    .is_some_and(|e| e.id == "SensoryStone" && e.screen == 2)
-                {
+                } else if self.event.as_ref().is_some_and(|e| {
+                    (e.id == "SensoryStone" && e.screen == 2)
+                        || (e.id == "Wheel of Change" && e.screen == 3)
+                }) {
                     self.screen = Screen::Event;
                 } else {
                     self.open_map();
@@ -1717,6 +1780,18 @@ impl Game {
         self.screen = Screen::CardReward;
     }
 
+    /// CampfireSleepEffect: after Rest heal, Dream Catcher rolls `getRewardCards`
+    /// and opens CardRewardScreen with a null RewardItem.
+    fn open_dream_catcher_reward(&mut self) {
+        if !self.player.has_relic(RelicId::Dream_Catcher) {
+            return;
+        }
+        self.generate_card_reward();
+        if !self.card_reward.is_empty() {
+            self.screen = Screen::CardReward;
+        }
+    }
+
     fn pick_card(&mut self, rarity: CardRarity) -> Option<CardId> {
         let pool = match rarity {
             CardRarity::RARE => &self.dungeon.rare_cards,
@@ -1795,6 +1870,13 @@ impl Game {
         self.flush_pending_cards();
         if self.current_room == RoomType::Neow {
             self.present_neow_leave();
+            return;
+        }
+        // CampfireSleepEffect opens CardRewardScreen with rItem=null; close
+        // returns to RestRoom COMPLETE, not CombatReward.
+        if self.current_room == RoomType::Rest {
+            self.card_reward.clear();
+            self.screen = Screen::Rest;
             return;
         }
         self.screen = Screen::CombatReward;
@@ -1880,6 +1962,7 @@ impl Game {
                         } else {
                             self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
                             self.rest_selected = true;
+                            self.open_dream_catcher_reward();
                         }
                     }
                     Some("Smith") => {
@@ -1971,6 +2054,7 @@ impl Game {
                     picked: Vec::new(),
                     return_event: false,
                     return_shop: true,
+                    return_screen: None,
                 });
                 self.screen = Screen::Grid;
             }
@@ -2640,6 +2724,11 @@ impl Game {
                 data = vec![dmg, gold];
                 vec!["[Continue]".into()]
             }
+            "Wheel of Change" => {
+                // GremlinWheelGame: gold by act; A15+ hpLoss 0.15 else 0.1.
+                data = vec![self.wheel_gold_amount(), 0, 0];
+                vec!["[Play]".into()]
+            }
             _ => vec!["[Continue]".into(), "[Leave]".into()],
         };
         if id == "Falling" {
@@ -2660,6 +2749,72 @@ impl Game {
             data,
         });
         self.screen = Screen::Event;
+    }
+
+    /// GremlinWheelGame.setGold: Exordium 100, City 200, Beyond 300.
+    fn wheel_gold_amount(&self) -> i32 {
+        match self.dungeon.act {
+            crate::ids::Act::Exordium => 100,
+            crate::ids::Act::City => 200,
+            crate::ids::Act::Beyond | crate::ids::Act::Ending => 300,
+        }
+    }
+
+    fn wheel_hp_loss_percent(&self) -> f32 {
+        if self.ascension >= 15 {
+            0.15
+        } else {
+            0.1
+        }
+    }
+
+    fn wheel_prize_option(&self, result: i32) -> String {
+        match result {
+            0 => "[Prize!] YAY!!!!".into(),
+            1 => "[Prize!] #gObtain #ga #gRelic.".into(),
+            2 => "[Prize!] #gHeal #gto #gfull #ghealth.".into(),
+            3 => "[Prize?] #rCurse #r- #rDecay.".into(),
+            4 => "[Prize!] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into(),
+            _ => {
+                let dmg = (self.player.max_hp as f32 * self.wheel_hp_loss_percent()) as i32;
+                format!("[Prize?] #rLose #r{dmg} #rHP.")
+            }
+        }
+    }
+
+    /// GremlinWheelGame.preApplyResult: gold is granted when the COMPLETE
+    /// dialog appears, before the prize button.
+    fn wheel_pre_apply(&mut self, result: i32, gold: i32) {
+        if result == 0 && !self.player.has_relic(RelicId::Ectoplasm) {
+            self.player.gold += gold;
+        }
+    }
+
+    /// GremlinWheelGame.applyResult. Relic uses noCardsInRewards (relic only).
+    fn wheel_apply_result(&mut self, result: i32) {
+        match result {
+            0 => {}
+            1 => {
+                self.rewards.clear();
+                self.card_reward.clear();
+                if let Some(id) = self.next_screenless_relic() {
+                    self.add_relic_to_rewards(id);
+                }
+                self.screen = Screen::CombatReward;
+            }
+            2 => self.heal_player(self.player.max_hp),
+            3 => self.player.deck.push(Card::new(CardId::Decay)),
+            4 => {
+                if self.player.deck.iter().any(purgeable_card) {
+                    self.open_grid(GridKind::Purge, 1, true);
+                }
+            }
+            _ => {
+                let dmg = (self.player.max_hp as f32 * self.wheel_hp_loss_percent()) as i32;
+                let dmg = combat::on_lose_hp_last(&self.player, dmg);
+                self.player.hp = (self.player.hp - dmg).max(0);
+            }
+        }
     }
 
     /// FaceTrader.getRandomFace: shuffle missing face relics with `miscRng.randomLong()`.
@@ -2712,6 +2867,65 @@ impl Game {
                 return;
             }
         };
+        if id == "Wheel of Change" {
+            // GremlinWheelGame.buttonEffect: INTRO Play rolls miscRng.random(0,5)
+            // then hides the dialog. ExactTextSim then publishes one event
+            // boundary per discrete spin flag (buttonPressed, finishSpin,
+            // doneSpinning, bounceIn=false) and COMPLETE. Timers are not
+            // simulated; 5 chooses after Play land preApplyResult.
+            match screen {
+                0 => {
+                    let result = self.rng.misc.random_range(0, 5);
+                    if let Some(event) = self.event.as_mut() {
+                        if event.data.len() < 3 {
+                            event.data.resize(3, 0);
+                        }
+                        event.data[1] = result;
+                        event.data[2] = 0;
+                        event.screen = 1;
+                        event.options = vec!["spin".into()];
+                    }
+                }
+                1 => {
+                    let (gold, result, step) = {
+                        let e = self.event.as_ref();
+                        (
+                            e.and_then(|e| e.data.first().copied()).unwrap_or(100),
+                            e.and_then(|e| e.data.get(1).copied()).unwrap_or(0),
+                            e.and_then(|e| e.data.get(2).copied()).unwrap_or(0) + 1,
+                        )
+                    };
+                    if let Some(event) = self.event.as_mut() {
+                        if event.data.len() < 3 {
+                            event.data.resize(3, 0);
+                        }
+                        event.data[2] = step;
+                    }
+                    if step >= 5 {
+                        self.wheel_pre_apply(result, gold);
+                        let prize = self.wheel_prize_option(result);
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 2;
+                            event.options = vec![prize];
+                        }
+                    }
+                }
+                2 => {
+                    let result = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(1).copied())
+                        .unwrap_or(0);
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 3;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                    self.wheel_apply_result(result);
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
         if id == "FaceTrader" {
             // FaceTrader.buttonEffect: INTRO Continue → MAIN Touch/Trade/Leave → RESULT Leave.
             match screen {
@@ -3156,6 +3370,7 @@ impl Game {
                         picked: Vec::new(),
                         return_event: true,
                         return_shop: false,
+                        return_screen: None,
                     });
                     self.screen = Screen::Grid;
                 }
@@ -3250,6 +3465,7 @@ impl Game {
             picked: Vec::new(),
             return_event: false,
             return_shop: false,
+            return_screen: None,
         });
         self.screen = Screen::Grid;
     }
@@ -3460,10 +3676,22 @@ impl Game {
                 self.player.gold += 300;
             }
         }
+        // Fruit relics call increaseMaxHp(N, true): maxHealth += N, then heal(N).
+        // Lee's Waffle also heals to full after the +7.
+        match id {
+            RelicId::Strawberry => self.increase_max_hp(7),
+            RelicId::Pear => self.increase_max_hp(10),
+            RelicId::Mango => self.increase_max_hp(14),
+            RelicId::Lees_Waffle => {
+                self.increase_max_hp(7);
+                self.heal_player(self.player.max_hp);
+            }
+            _ => {}
+        }
         self.player.relics.push(RelicInstance {
             id,
             counter: match id {
-                RelicId::Happy_Flower | RelicId::Pen_Nib => 0,
+                RelicId::Happy_Flower | RelicId::Pen_Nib | RelicId::InkBottle => 0,
                 RelicId::Matryoshka => 2,
                 RelicId::NlothsMask => 1,
                 _ => -1,
@@ -3474,11 +3702,36 @@ impl Game {
             // ShowRelicObtainEffect: onEquip after the current room, like Old Coin.
             self.pending_equip.push(id);
         }
+        // Bottled*.onEquip: GRID of purgeable cards of that type. ChoiceDriver
+        // closes immediately (not upgrade/transform/purge). The picked card
+        // is flagged in_bottle and treated as innate at combat start.
+        match id {
+            RelicId::Bottled_Flame => self.open_bottle_grid(CardType::ATTACK),
+            RelicId::Bottled_Lightning => self.open_bottle_grid(CardType::SKILL),
+            RelicId::Bottled_Tornado => self.open_bottle_grid(CardType::POWER),
+            _ => {}
+        }
         if matches!(id, RelicId::Frozen_Egg_2 | RelicId::Molten_Egg_2 | RelicId::Toxic_Egg_2) {
             for card in &mut self.card_reward {
                 crate::rewards::preview_obtain(&self.player, card);
             }
         }
+    }
+
+    /// `AbstractCreature.increaseMaxHp`: raise max HP, then `heal(amount)`.
+    fn increase_max_hp(&mut self, amount: i32) {
+        self.player.max_hp += amount;
+        self.heal_player(amount);
+    }
+
+    /// `AbstractCreature.heal`: Mark of the Bloom zeros the heal.
+    fn heal_player(&mut self, amount: i32) {
+        let amount = if self.player.has_relic(RelicId::Mark_of_the_Bloom) {
+            0
+        } else {
+            amount
+        };
+        self.player.hp = (self.player.hp + amount).min(self.player.max_hp);
     }
 
     fn gold_with_idol(&self, amount: i32) -> i32 {

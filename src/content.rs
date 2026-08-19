@@ -334,6 +334,8 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Electrodynamics, true) => CardStats::skill(2, -1, 3),
         (CardId::Capacitor, false) => CardStats::skill(1, -1, 2),
         (CardId::Capacitor, true) => CardStats::skill(1, -1, 3),
+        (CardId::Heatsinks, false) => CardStats::skill(1, -1, 1),
+        (CardId::Heatsinks, true) => CardStats::skill(1, -1, 2),
         (CardId::Loop, false) => CardStats::skill(1, -1, 1),
         (CardId::Loop, true) => CardStats::skill(1, -1, 2),
         (CardId::Skim, false) => CardStats::skill(1, -1, 3),

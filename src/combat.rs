@@ -20,6 +20,8 @@ pub struct Combat {
     pub pending_exhaust: Option<Card>,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
+    /// InkBottle.onUseCard: addToBot(DrawCardAction) after the card's use() actions.
+    pub pending_ink_bottle: i32,
     pub ascension: i32,
     /// GameActionManager.orbsChanneledThisCombat (Blizzard / Thunder Strike).
     pub orbs_channeled_this_combat: Vec<OrbKind>,
@@ -77,7 +79,7 @@ impl Combat {
         let mut rest = Vec::new();
         let mut on_top = Vec::new();
         for card in player.draw.drain(..) {
-            if card.innate {
+            if card.innate || card.in_bottle {
                 on_top.push(card);
             } else {
                 rest.push(card);
@@ -102,6 +104,14 @@ impl Combat {
         if player.has_relic(RelicId::Vajra) {
             player.add_power(PowerId::Strength, 1);
         }
+        // OddlySmoothStone.atBattleStart: ApplyPowerAction Dexterity 1.
+        if player.has_relic(RelicId::Oddly_Smooth_Stone) {
+            player.add_power(PowerId::Dexterity, 1);
+        }
+        // ThreadAndNeedle.atBattleStart: ApplyPowerAction(player, PlatedArmorPower, 4).
+        if player.has_relic(RelicId::Thread_and_Needle) {
+            player.add_power(PowerId::PlatedArmor, 4);
+        }
         if player.has_relic(RelicId::Happy_Flower) {
             if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Happy_Flower) {
                 r.counter += 1;
@@ -119,6 +129,9 @@ impl Combat {
             r.counter = 0;
         }
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
+            r.counter = 0;
+        }
+        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
             r.counter = 0;
         }
         if player
@@ -172,6 +185,7 @@ impl Combat {
             pending_exhaust: None,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
+            pending_ink_bottle: 0,
             ascension,
             orbs_channeled_this_combat: Vec::new(),
         }
@@ -326,6 +340,37 @@ fn apply_group_move(combat: &mut Combat, idx: usize, id: MonsterId, used_move: i
                 auto.block += 12;
             }
         }
+        (MonsterId::GremlinTsundere, 1) => {
+            // GainBlockRandomMonsterAction: aiRng among living non-self, non-ESCAPE.
+            let block = if combat.ascension >= 17 {
+                11
+            } else if combat.ascension >= 7 {
+                8
+            } else {
+                7
+            };
+            let others: Vec<usize> = combat
+                .monsters
+                .iter()
+                .enumerate()
+                .filter(|(j, m)| *j != idx && m.alive() && m.intent != Intent::Escape)
+                .map(|(j, _)| j)
+                .collect();
+            let target = if others.is_empty() {
+                idx
+            } else {
+                others[rng.ai.random_int(others.len() as i32 - 1) as usize]
+            };
+            combat.monsters[target].block += block;
+            // takeTurn then SetMove: protect while another gremlin lives, else bash.
+            let alive = combat.monsters.iter().filter(|m| m.alive()).count();
+            if alive > 1 {
+                combat.monsters[idx].set_move(1, Intent::Defend, 0, 1);
+            } else {
+                let dmg = if combat.ascension >= 2 { 8 } else { 6 };
+                combat.monsters[idx].set_move(2, Intent::Attack, dmg, 1);
+            }
+        }
         _ => {}
     }
 }
@@ -424,6 +469,9 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
             rng.monster_hp.random_range(7, 11)
         } else if id == MonsterId::GiantHead {
             5
+        } else if id == MonsterId::GremlinWizard {
+            // GremlinWizard.currentCharge field initializer is 1, not 0.
+            1
         } else {
             0
         },
@@ -1136,12 +1184,16 @@ impl Monster {
                 let dmg = if self.ascension >= 2 { 5 } else { 4 };
                 self.set_move(1, Intent::Attack, dmg, 1);
             }
+            MonsterId::GremlinThief => {
+                let dmg = if self.ascension >= 2 { 10 } else { 9 };
+                self.set_move(1, Intent::Attack, dmg, 1);
+            }
+            MonsterId::GremlinTsundere => {
+                self.set_move(1, Intent::Defend, 0, 1);
+            }
             MonsterId::GremlinWizard => {
-                if self.extra >= 3 {
-                    self.set_move(1, Intent::Attack, if self.ascension >= 2 { 30 } else { 25 }, 1);
-                } else {
-                    self.set_move(2, Intent::Unknown, 0, 1);
-                }
+                // getMove always CHARGE; attack is only set from takeTurn.
+                self.set_move(2, Intent::Unknown, 0, 1);
             }
             MonsterId::Lagavulin => {
                 if self.extra < 3 {
@@ -1303,6 +1355,8 @@ impl Monster {
                 | MonsterId::SlimeBoss
                 | MonsterId::GremlinWarrior
                 | MonsterId::GremlinWizard
+                | MonsterId::GremlinThief
+                | MonsterId::GremlinTsundere
         )
             || (self.id == MonsterId::Hexaghost && self.next_move == 5)
             || (matches!(self.id, MonsterId::AcidSlimeL) && self.next_move == 3)
@@ -1346,12 +1400,35 @@ impl Monster {
             (MonsterId::GremlinWarrior, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 5 } else { 4 }, 1);
             }
+            (MonsterId::GremlinThief, 1) => {
+                let dmg = if ascension >= 2 { 10 } else { 9 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+                self.set_move(1, Intent::Attack, dmg, 1);
+            }
+            (MonsterId::GremlinTsundere, 2) => {
+                let dmg = if ascension >= 2 { 8 } else { 6 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+                self.set_move(2, Intent::Attack, dmg, 1);
+            }
             (MonsterId::GremlinWizard, 1) => {
                 self.extra = 0;
-                let _ = hit_player(player, self, rng, if ascension >= 2 { 30 } else { 25 }, 1);
+                let atk = if ascension >= 2 { 30 } else { 25 };
+                let _ = hit_player(player, self, rng, atk, 1);
+                // A17+: stay on DOPE_MAGIC. Below A17, resume CHARGE.
+                if ascension >= 17 {
+                    self.set_move(1, Intent::Attack, atk, 1);
+                } else {
+                    self.set_move(2, Intent::Unknown, 0, 1);
+                }
             }
             (MonsterId::GremlinWizard, 2) => {
                 self.extra += 1;
+                let atk = if ascension >= 2 { 30 } else { 25 };
+                if self.extra == 3 {
+                    self.set_move(1, Intent::Attack, atk, 1);
+                } else {
+                    self.set_move(2, Intent::Unknown, 0, 1);
+                }
             }
             (MonsterId::Lagavulin, 4) => {}
             (MonsterId::Lagavulin, 5) => {
@@ -2296,11 +2373,28 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
         }
     }
     if card.card_type() == CardType::POWER {
+        // HeatsinkPower.onUseCard: addToTop(DrawCardAction) for Power cards.
+        let n = player.power_amount(PowerId::Heatsink);
+        if n > 0 {
+            let drawn = draw_cards_rng(player, n, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, drawn);
+        }
         for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
             let curiosity = monster.power_amount(PowerId::Curiosity);
             if curiosity > 0 {
                 monster.add_power(PowerId::Strength, curiosity);
             }
+        }
+    }
+    // InkBottle.onUseCard: counter++ every play; at 10, addToBot(DrawCardAction(1)).
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::InkBottle) {
+        if r.counter < 0 {
+            r.counter = 0;
+        }
+        r.counter += 1;
+        if r.counter == 10 {
+            r.counter = 0;
+            combat.pending_ink_bottle += 1;
         }
     }
 }
@@ -2331,6 +2425,17 @@ pub fn exhaust_card(player: &mut Player, combat: &mut Combat, card: Card, rng: &
 pub fn flush_dark_embrace(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     let n = combat.pending_dark_embrace;
     combat.pending_dark_embrace = 0;
+    if n > 0 && !combat.all_dead() {
+        let drawn = draw_cards_rng(player, n, Some(rng));
+        apply_fire_breathing(player, &mut combat.monsters, drawn);
+    }
+}
+
+/// InkBottle DrawCardAction is addToBot from UseCardAction's ctor, after use()
+/// actions. DamageAction.clearPostCombatActions drops DRAW if the card kills.
+fn flush_ink_bottle(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
+    let n = combat.pending_ink_bottle;
+    combat.pending_ink_bottle = 0;
     if n > 0 && !combat.all_dead() {
         let drawn = draw_cards_rng(player, n, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, drawn);
@@ -2396,6 +2501,7 @@ pub fn play_card(
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
         apply_card_effect(player, combat, &mut card, target, rng);
+        flush_ink_bottle(player, combat, rng);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
             let spores = monster.power_amount(PowerId::SporeCloud);
             if spores > 0 {
@@ -2454,6 +2560,16 @@ pub fn play_card(
                     if r.counter >= 3 {
                         r.counter = 0;
                         player.add_power(PowerId::Dexterity, 1);
+                    }
+                }
+                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
+                    if r.counter < 0 {
+                        r.counter = 0;
+                    }
+                    r.counter += 1;
+                    if r.counter % 3 == 0 {
+                        r.counter = 0;
+                        player.block += 4;
                     }
                 }
             }
@@ -2870,6 +2986,9 @@ fn apply_card_effect(
             player.add_power(PowerId::Focus, card.base_magic.max(2) as i32);
             decrease_max_orb_slots(player, 1);
         }
+        CardId::Heatsinks => {
+            player.add_power(PowerId::Heatsink, card.base_magic.max(1) as i32);
+        }
         CardId::Loop => {
             player.add_power(PowerId::Loop, card.base_magic.max(1) as i32);
         }
@@ -3242,6 +3361,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         r.counter = 0;
     }
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
+        r.counter = 0;
+    }
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
         r.counter = 0;
     }
     if player.power_amount(PowerId::Brutality) > 0 {

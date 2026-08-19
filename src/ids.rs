@@ -216,6 +216,7 @@ pub enum PowerId {
     Electro,
     Loop,
     SelfRepair,
+    Heatsink,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
