@@ -16,7 +16,9 @@ fn walk_a20(seed: &str) -> Result<sts_engine::walk::WalkOk, sts_engine::walk::Wa
     walk_oracle(&cfg)
 }
 
-const KNOWN: &[&str] = &["617755", "620036", "649580", "524210", "155525", "840291"];
+const KNOWN: &[&str] = &[
+    "617755", "620036", "649580", "524210", "155525", "840291", "778899",
+];
 
 #[test]
 fn known_a20_greens_walk_and_are_recorded() {
