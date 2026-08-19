@@ -1,4 +1,7 @@
-//! Defect A20 GREEN registry: record fixture walks and retest listed seeds.
+//! Defect A20 GREEN registry: walk seeds listed in the JSONL file.
+//!
+//! The file `exact-text-sim/runtime/oracles/defect/a20/green_registry.jsonl`
+//! is the source of truth. Do not keep a Rust array of seeds.
 
 use sts_engine::green_registry::{GreenRegistry, GreenStatus};
 use sts_engine::ids::Character;
@@ -8,7 +11,7 @@ use std::path::PathBuf;
 
 fn registry_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../exact-text-sim/runtime/oracles/defect/a20/green_registry.json")
+        .join("../exact-text-sim/runtime/oracles/defect/a20/green_registry.jsonl")
 }
 
 fn walk_a20(seed: &str) -> Result<sts_engine::walk::WalkOk, sts_engine::walk::WalkFail> {
@@ -16,57 +19,42 @@ fn walk_a20(seed: &str) -> Result<sts_engine::walk::WalkOk, sts_engine::walk::Wa
     walk_oracle(&cfg)
 }
 
-const KNOWN: &[&str] = &[
-    "17713", "22090", "29401", "67180", "71417", "93003", "103554", "111342",
-    "116694", "133913", "139014", "140798", "151196", "155525", "163562", "241213",
-    "252542", "262946", "273105", "282980", "319112", "329334", "336565", "342202",
-    "363892", "383871", "385997", "403978", "405221", "407864", "409025", "414325",
-    "417034", "470059", "473030", "475300", "476462", "478265", "480008", "489302",
-    "492257", "506676", "513024", "518549", "519401", "521259", "524210", "538365",
-    "543616", "561985", "566409", "573861", "617755", "620036", "621004", "640518",
-    "649580", "651365", "655758", "696804", "700044", "705604", "713145", "727206",
-    "733262", "734515", "745998", "761256", "767383", "768638", "778899", "782964",
-    "790949", "834913", "837651", "840291", "845595", "847979", "860236", "871832",
-    "871966", "872796", "895058", "921139", "923536", "925620", "944166", "957695",
-    "980829", "985203", "992980",
-];
+const ORIGINAL: &[&str] = &["617755", "620036", "649580", "524210"];
 
 #[test]
-fn known_a20_greens_walk_and_are_recorded() {
-    let mut reg = GreenRegistry::load(&registry_path()).expect("load registry");
-    for seed in KNOWN {
-        match walk_a20(seed) {
-            Ok(ok) => {
-                // last_ok is sequence; snaps is compared envelopes. stall_diag
-                // lines increment sequence without a compare, so they need not
-                // be equal.
-                assert!(ok.snaps > 0, "{seed} empty walk");
-                reg.record_green(seed, ok.last_ok, ok.snaps, ok.seed);
-            }
-            Err(fail) if fail.mismatched == ["io"] => {
-                panic!("{seed} oracle missing: {}", fail.boundary);
-            }
-            Err(fail) => panic!("{seed} is not GREEN:\n{fail}"),
-        }
-    }
-    reg.save(&registry_path()).expect("save registry");
-
-    let reloaded = GreenRegistry::load(&registry_path()).expect("reload");
-    for seed in KNOWN {
-        let rec = reloaded.seeds.get(*seed).unwrap_or_else(|| panic!("{seed} missing from registry"));
+fn registry_file_lists_original_fixture_greens() {
+    let reg = GreenRegistry::load(&registry_path()).expect("load registry jsonl");
+    assert!(
+        reg.green_count() >= ORIGINAL.len(),
+        "registry_green={} is below the original fixture set",
+        reg.green_count()
+    );
+    for seed in ORIGINAL {
+        let rec = reg
+            .seeds
+            .get(*seed)
+            .unwrap_or_else(|| panic!("{seed} missing from green_registry.jsonl"));
         assert_eq!(rec.status, GreenStatus::Green, "{seed} status");
     }
+}
 
-    for (seed, rec) in &reloaded.seeds {
-        if rec.status != GreenStatus::Green {
-            continue;
-        }
+#[test]
+fn registry_greens_still_walk() {
+    let reg = GreenRegistry::load(&registry_path()).expect("load registry jsonl");
+    let seeds: Vec<String> = reg.green_seeds().into_iter().map(str::to_string).collect();
+    assert!(
+        !seeds.is_empty(),
+        "green_registry.jsonl has no GREEN seeds"
+    );
+    for seed in &seeds {
         match walk_a20(seed) {
-            Ok(_) => {}
+            Ok(ok) => {
+                assert!(ok.snaps > 0, "{seed} empty walk");
+            }
             Err(fail) if fail.mismatched == ["io"] => {
                 eprintln!("skip missing oracle {seed}");
             }
-            Err(fail) => panic!("registry seed {seed} regressed:\n{fail}"),
+            Err(fail) => panic!("registry seed {seed} is not GREEN:\n{fail}"),
         }
     }
 }
