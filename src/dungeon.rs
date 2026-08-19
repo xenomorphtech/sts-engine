@@ -2,7 +2,7 @@ use crate::generated::orders::{
     BLUE_RELIC_HASHMAP_ORDER, CARD_LIBRARY_HASHMAP_ORDER, RED_RELIC_HASHMAP_ORDER, SHARED_RELIC_HASHMAP_ORDER,
 };
 use crate::generated::relic_catalog::RELICS;
-use crate::ids::{Act, CardId, CardRarity, Character, EncounterId, RelicId, RelicTier, RoomType};
+use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, RelicId, RelicTier, RoomType};
 use crate::java_util::shuffle_java;
 use crate::map::{
     assign_row, distribute_rooms, generate_dungeon, generate_room_types, DungeonMap, MAP_DENSITY, MAP_HEIGHT,
@@ -521,12 +521,102 @@ impl Dungeon {
         }
     }
 
-    pub fn next_relic(&mut self, tier: RelicTier) -> Option<RelicId> {
-        self.pop_relic(tier, false)
+    pub fn next_relic(&mut self, tier: RelicTier, can_spawn: &dyn Fn(RelicId) -> bool) -> Option<RelicId> {
+        self.return_random_relic_key(tier, can_spawn)
     }
 
-    pub fn next_relic_end(&mut self, tier: RelicTier) -> Option<RelicId> {
-        self.pop_relic(tier, true)
+    pub fn next_relic_end(&mut self, tier: RelicTier, can_spawn: &dyn Fn(RelicId) -> bool) -> Option<RelicId> {
+        self.return_end_random_relic_key(tier, can_spawn)
+    }
+
+    /// `AbstractDungeon.returnRandomRelicKey`: pop front, `!canSpawn` retries from the end.
+    pub fn return_random_relic_key(
+        &mut self,
+        tier: RelicTier,
+        can_spawn: &dyn Fn(RelicId) -> bool,
+    ) -> Option<RelicId> {
+        let id = match tier {
+            RelicTier::COMMON => {
+                if self.common_relics.is_empty() {
+                    return self.return_random_relic_key(RelicTier::UNCOMMON, can_spawn);
+                }
+                self.pop_relic(RelicTier::COMMON, false)
+            }
+            RelicTier::UNCOMMON => {
+                if self.uncommon_relics.is_empty() {
+                    return self.return_random_relic_key(RelicTier::RARE, can_spawn);
+                }
+                self.pop_relic(RelicTier::UNCOMMON, false)
+            }
+            RelicTier::RARE => {
+                if self.rare_relics.is_empty() {
+                    return RelicId::from_sts_id("Circlet");
+                }
+                self.pop_relic(RelicTier::RARE, false)
+            }
+            RelicTier::SHOP => {
+                if self.shop_relics.is_empty() {
+                    return self.return_random_relic_key(RelicTier::UNCOMMON, can_spawn);
+                }
+                self.pop_relic(RelicTier::SHOP, false)
+            }
+            RelicTier::BOSS => {
+                if self.boss_relics.is_empty() {
+                    return RelicId::from_sts_id("Red Circlet");
+                }
+                self.pop_relic(RelicTier::BOSS, false)
+            }
+            _ => return None,
+        };
+        match id {
+            Some(id) if can_spawn(id) => Some(id),
+            _ => self.return_end_random_relic_key(tier, can_spawn),
+        }
+    }
+
+    /// `AbstractDungeon.returnEndRandomRelicKey`: pop end (boss still front).
+    pub fn return_end_random_relic_key(
+        &mut self,
+        tier: RelicTier,
+        can_spawn: &dyn Fn(RelicId) -> bool,
+    ) -> Option<RelicId> {
+        let id = match tier {
+            RelicTier::COMMON => {
+                if self.common_relics.is_empty() {
+                    return self.return_random_relic_key(RelicTier::UNCOMMON, can_spawn);
+                }
+                self.pop_relic(RelicTier::COMMON, true)
+            }
+            RelicTier::UNCOMMON => {
+                if self.uncommon_relics.is_empty() {
+                    return self.return_random_relic_key(RelicTier::RARE, can_spawn);
+                }
+                self.pop_relic(RelicTier::UNCOMMON, true)
+            }
+            RelicTier::RARE => {
+                if self.rare_relics.is_empty() {
+                    return RelicId::from_sts_id("Circlet");
+                }
+                self.pop_relic(RelicTier::RARE, true)
+            }
+            RelicTier::SHOP => {
+                if self.shop_relics.is_empty() {
+                    return self.return_random_relic_key(RelicTier::UNCOMMON, can_spawn);
+                }
+                self.pop_relic(RelicTier::SHOP, true)
+            }
+            RelicTier::BOSS => {
+                if self.boss_relics.is_empty() {
+                    return RelicId::from_sts_id("Red Circlet");
+                }
+                self.pop_relic(RelicTier::BOSS, false)
+            }
+            _ => return None,
+        };
+        match id {
+            Some(id) if can_spawn(id) => Some(id),
+            _ => self.return_end_random_relic_key(tier, can_spawn),
+        }
     }
 
     fn pop_relic(&mut self, tier: RelicTier, from_end: bool) -> Option<RelicId> {
@@ -539,10 +629,64 @@ impl Dungeon {
             _ => return None,
         };
         if pool.is_empty() {
-            return RelicId::from_sts_id("Circlet");
+            return None;
         }
         let idx = if from_end { pool.len() - 1 } else { 0 };
         RelicId::from_sts_id(&pool.remove(idx))
+    }
+}
+
+/// `AbstractRelic.canSpawn` overrides. Endless is not modeled (always false).
+pub fn relic_can_spawn(id: RelicId, floor: i32, act: Act, room: RoomType, player: &crate::creature::Player) -> bool {
+    let before_act4 = floor <= 48;
+    let not_in_shop = room != RoomType::Shop;
+    match id {
+        RelicId::Bottled_Flame => player
+            .deck
+            .iter()
+            .any(|c| c.card_type() == CardType::ATTACK && c.rarity() != CardRarity::BASIC),
+        RelicId::Bottled_Lightning => player
+            .deck
+            .iter()
+            .any(|c| c.card_type() == CardType::SKILL && c.rarity() != CardRarity::BASIC),
+        RelicId::Bottled_Tornado => player.deck.iter().any(|c| c.card_type() == CardType::POWER),
+        RelicId::Ectoplasm => act as i32 <= 1,
+        RelicId::Black_Blood => player.has_relic(RelicId::Burning_Blood),
+        RelicId::FrozenCore => player.has_relic(RelicId::Cracked_Core),
+        RelicId::Tiny_Chest => floor <= 35,
+        RelicId::Matryoshka | RelicId::WingedGreaves => floor <= 40,
+        RelicId::PreservedInsect => floor <= 52,
+        RelicId::The_Courier | RelicId::MawBank | RelicId::Old_Coin | RelicId::Smiling_Mask => {
+            before_act4 && not_in_shop
+        }
+        RelicId::Girya | RelicId::Peace_Pipe | RelicId::Shovel => {
+            if floor >= 48 {
+                return false;
+            }
+            let campfire = player
+                .relics
+                .iter()
+                .filter(|r| matches!(r.id, RelicId::Peace_Pipe | RelicId::Shovel | RelicId::Girya))
+                .count();
+            campfire < 2
+        }
+        RelicId::Ancient_Tea_Set
+        | RelicId::CeramicFish
+        | RelicId::Darkstone_Periapt
+        | RelicId::Dream_Catcher
+        | RelicId::Frozen_Egg_2
+        | RelicId::Juzu_Bracelet
+        | RelicId::MealTicket
+        | RelicId::Meat_on_the_Bone
+        | RelicId::Molten_Egg_2
+        | RelicId::Omamori
+        | RelicId::Potion_Belt
+        | RelicId::Prayer_Wheel
+        | RelicId::Question_Card
+        | RelicId::Regal_Pillow
+        | RelicId::Singing_Bowl
+        | RelicId::Toxic_Egg_2 => before_act4,
+        _ => true,
     }
 }
 

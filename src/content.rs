@@ -282,6 +282,8 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
             ethereal: false,
             innate: true,
         },
+        (CardId::Buffer, false) => CardStats::skill(2, -1, 1),
+        (CardId::Buffer, true) => CardStats::skill(2, -1, 2),
         (CardId::Defragment, false) => CardStats::skill(1, -1, 1),
         (CardId::Defragment, true) => CardStats::skill(1, -1, 2),
         (CardId::Biased_Cognition, false) => CardStats::skill(1, -1, 4),

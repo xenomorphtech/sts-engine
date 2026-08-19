@@ -2,7 +2,9 @@ use crate::card::Card;
 use crate::creature::Player;
 use crate::dungeon::Dungeon;
 use crate::generated::relic_catalog::RELICS;
-use crate::ids::{CardColor, CardId, CardRarity, CardType, Character, PotionId, PotionRarity, RelicId, RelicTier};
+use crate::ids::{
+    CardColor, CardId, CardRarity, CardType, Character, PotionId, PotionRarity, RelicId, RelicTier, RoomType,
+};
 use crate::rng::RngSet;
 
 #[derive(Clone, Copy)]
@@ -311,8 +313,10 @@ pub struct ShopStock {
     pub purge_cost: i32,
 }
 
+/// libGDX `MathUtils.round` from desktop-1.0.jar: `(int)(value + 16384.5d) - 16384`.
+/// ShopScreen.applyDiscount uses this (A16 1.1x, Courier 0.8, Membership 0.5).
 fn gdx_round(value: f32) -> i32 {
-    (value as f64 + 16384.499_999_999_996) as i32 - 16384
+    (value as f64 + 16384.5) as i32 - 16384
 }
 
 fn shop_roll_rarity(rng: &mut RngSet, card_blizz: i32) -> CardRarity {
@@ -516,6 +520,8 @@ pub fn generate_shop(
     player: &Player,
     card_blizz: i32,
     ascension: i32,
+    character: Character,
+    room: RoomType,
 ) -> ShopStock {
     let attack1 = shop_colored_card(dungeon, rng, card_blizz, CardType::ATTACK, None);
     let attack2 = shop_colored_card(dungeon, rng, card_blizz, CardType::ATTACK, Some(attack1.id));
@@ -562,6 +568,8 @@ pub fn generate_shop(
     }
 
     let mut relics = Vec::new();
+    let floor = dungeon.floor;
+    let act = dungeon.act;
     for i in 0..3 {
         let tier = if i == 2 {
             RelicTier::SHOP
@@ -575,7 +583,9 @@ pub fn generate_shop(
                 RelicTier::RARE
             }
         };
-        if let Some(id) = dungeon.next_relic_end(tier) {
+        if let Some(id) = dungeon.next_relic_end(tier, &|id| {
+            crate::dungeon::relic_can_spawn(id, floor, act, room, player)
+        }) {
             let price = gdx_round(relic_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05));
             relics.push(ShopOffer {
                 item: id,
@@ -587,7 +597,7 @@ pub fn generate_shop(
 
     let mut potions = Vec::new();
     for _ in 0..3 {
-        let id = return_random_potion(rng, Character::Ironclad, false);
+        let id = return_random_potion(rng, character, false);
         let price = gdx_round(potion_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05));
         potions.push(ShopOffer {
             item: id,
@@ -629,5 +639,20 @@ fn apply_shop_discount(
     }
     for offer in potions.iter_mut() {
         offer.price = gdx_round(offer.price as f32 * mult);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gdx_round;
+
+    #[test]
+    fn math_utils_round_half_away_matches_gdx() {
+        // Sale Glacier: (int)tmpPrice/2 == 35, then applyDiscount(1.1F) → 39, not 38.
+        assert_eq!(gdx_round(35.0 * 1.1), 39);
+        assert_eq!(gdx_round(38.5), 39);
+        assert_eq!(gdx_round(45.0 * 1.1), 50);
+        assert_eq!(gdx_round(55.0 * 1.1), 61);
+        assert_eq!(gdx_round(75.0 * 1.1), 83);
     }
 }

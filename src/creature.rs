@@ -56,7 +56,11 @@ pub struct Player {
     pub exhaust: Vec<crate::card::Card>,
     pub duplication: i32,
     pub orbs: Vec<Orb>,
+    /// Combat orb slots (`AbstractPlayer.maxOrbs`). Reset from `master_max_orbs` in
+    /// `preBattlePrep`; Capacitor / Consume mutate this only for the current fight.
     pub max_orbs: i32,
+    /// Persistent orb-slot cap (`AbstractPlayer.masterMaxOrbs`). Defect loadout is 3.
+    pub master_max_orbs: i32,
 }
 
 impl Player {
@@ -102,6 +106,7 @@ impl Player {
             duplication: 0,
             orbs: Vec::new(),
             max_orbs: 0,
+            master_max_orbs: 0,
         }
     }
 
@@ -147,6 +152,7 @@ impl Player {
             duplication: 0,
             orbs: Vec::new(),
             max_orbs: 3,
+            master_max_orbs: 3,
         }
     }
 

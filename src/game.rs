@@ -693,17 +693,17 @@ impl Game {
                 });
             }
             NeowKind::RandomCommonRelic => {
-                if let Some(id) = self.dungeon.next_relic(RelicTier::COMMON) {
+                if let Some(id) = self.take_relic(RelicTier::COMMON) {
                     self.gain_relic(id);
                 }
             }
             NeowKind::RareRelic => {
-                if let Some(id) = self.dungeon.next_relic(RelicTier::RARE) {
+                if let Some(id) = self.take_relic(RelicTier::RARE) {
                     self.gain_relic(id);
                 }
             }
             NeowKind::BossRelic => {
-                if let Some(id) = self.dungeon.next_relic(RelicTier::BOSS) {
+                if let Some(id) = self.take_relic(RelicTier::BOSS) {
                     if !self.player.relics.is_empty() {
                         self.player.relics.remove(0);
                     }
@@ -1287,7 +1287,7 @@ impl Game {
                 kind: RewardKind::Gold(50),
                 taken: false,
             });
-            if let Some(id) = self.dungeon.next_relic(RelicTier::RARE) {
+            if let Some(id) = self.take_relic(RelicTier::RARE) {
                 self.rewards.push(Reward {
                     kind: RewardKind::Relic(id),
                     taken: false,
@@ -1326,7 +1326,7 @@ impl Game {
             } else {
                 RelicTier::UNCOMMON
             };
-            if let Some(id) = self.dungeon.next_relic(tier) {
+            if let Some(id) = self.take_relic(tier) {
                 self.rewards.push(Reward {
                     kind: RewardKind::Relic(id),
                     taken: false,
@@ -1726,6 +1726,8 @@ impl Game {
             &self.player,
             self.card_blizz,
             self.ascension,
+            self.character,
+            self.current_room,
         );
         self.shop = ShopState {
             open: false,
@@ -1942,7 +1944,7 @@ impl Game {
         if self.current_room == RoomType::BossTreasure {
             self.boss_relics.clear();
             for _ in 0..3 {
-                if let Some(id) = self.dungeon.next_relic(RelicTier::BOSS) {
+                if let Some(id) = self.take_relic(RelicTier::BOSS) {
                     self.boss_relics.push(id);
                 }
             }
@@ -1958,7 +1960,7 @@ impl Game {
                     taken: false,
                 });
             }
-            if let Some(id) = self.dungeon.next_relic(self.chest_tier) {
+            if let Some(id) = self.take_relic(self.chest_tier) {
                 self.rewards.push(Reward {
                     kind: RewardKind::Relic(id),
                     taken: false,
@@ -3182,6 +3184,15 @@ impl Game {
         }
     }
 
+    fn take_relic(&mut self, tier: RelicTier) -> Option<RelicId> {
+        let floor = self.dungeon.floor;
+        let act = self.dungeon.act;
+        let room = self.current_room;
+        let player = &self.player;
+        self.dungeon
+            .next_relic(tier, &|id| crate::dungeon::relic_can_spawn(id, floor, act, room, player))
+    }
+
     /// `AbstractDungeon.returnRandomScreenlessRelic(returnRandomRelicTier())`.
     fn next_screenless_relic(&mut self) -> Option<RelicId> {
         let roll = self.rng.relic.random_range(0, 99);
@@ -3193,7 +3204,7 @@ impl Game {
             RelicTier::RARE
         };
         loop {
-            let id = self.dungeon.next_relic(tier)?;
+            let id = self.take_relic(tier)?;
             if !matches!(
                 id,
                 RelicId::Bottled_Flame

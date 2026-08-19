@@ -115,7 +115,11 @@ impl Combat {
             r.counter = 0;
         }
         red_skull_at_battle_start(player);
+        // AbstractPlayer.preBattlePrep: maxOrbs=0, orbs.clear, then
+        // increaseMaxOrbSlots(masterMaxOrbs, false). Capacitor / Consume must not
+        // leak slots into the next fight.
         player.orbs.clear();
+        player.max_orbs = player.master_max_orbs;
         if player.has_relic(RelicId::Cracked_Core) && player.max_orbs > 0 {
             player.orbs.push(Orb {
                 kind: OrbKind::Lightning,
@@ -667,12 +671,20 @@ impl Monster {
                 }
             }
             MonsterId::SlaverBlue => {
+                let stab = if self.ascension >= 2 { 13 } else { 12 };
+                let rake = if self.ascension >= 2 { 8 } else { 7 };
                 if num >= 40 && !self.last_two(1) {
-                    self.set_move(1, Intent::Attack, 12, 1);
+                    self.set_move(1, Intent::Attack, stab, 1);
+                } else if self.ascension >= 17 {
+                    if !self.last_move(4) {
+                        self.set_move(4, Intent::AttackDebuff, rake, 1);
+                    } else {
+                        self.set_move(1, Intent::Attack, stab, 1);
+                    }
                 } else if !self.last_two(4) {
-                    self.set_move(4, Intent::AttackDebuff, 7, 1);
+                    self.set_move(4, Intent::AttackDebuff, rake, 1);
                 } else {
-                    self.set_move(1, Intent::Attack, 12, 1);
+                    self.set_move(1, Intent::Attack, stab, 1);
                 }
             }
             MonsterId::SlaverRed => {
@@ -1872,6 +1884,24 @@ fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet) -> Vec<Monster> {
 
 
 
+/// BufferPower.onAttackedToChangeDamage after decrementBlock: consume 1 and return 0.
+fn buffer_absorb(player: &mut Player, dmg: i32) -> i32 {
+    if dmg <= 0 {
+        return 0;
+    }
+    let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::Buffer) else {
+        return dmg;
+    };
+    if p.amount <= 0 {
+        return dmg;
+    }
+    p.amount -= 1;
+    if p.amount <= 0 {
+        player.powers.retain(|x| x.id != PowerId::Buffer);
+    }
+    0
+}
+
 fn hit_player(player: &mut Player, monster: &Monster, base: i32, hits: i32) -> i32 {
     let mut total = 0;
     for _ in 0..hits {
@@ -1883,6 +1913,7 @@ fn hit_player(player: &mut Player, monster: &Monster, base: i32, hits: i32) -> i
             dmg = (dmg as f32 * 1.5).floor() as i32;
         }
         dmg = apply_block(&mut player.block, dmg);
+        dmg = buffer_absorb(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
             if let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::PlatedArmor) {
@@ -1965,6 +1996,7 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, base: i32, hit
         let thorns = monster.power_amount(PowerId::Thorns);
         if thorns > 0 {
             let bounced = apply_block(&mut player.block, thorns);
+            let bounced = buffer_absorb(player, bounced);
             if bounced > 0 {
                 player.hp -= bounced;
                 if player.hp < 0 {
@@ -2581,6 +2613,9 @@ fn apply_card_effect(
                 player.block += block;
             }
         }
+        CardId::Buffer => {
+            player.add_power(PowerId::Buffer, card.base_magic.max(1) as i32);
+        }
         CardId::Defragment => {
             player.add_power(PowerId::Focus, card.base_magic.max(1) as i32);
         }
@@ -2604,9 +2639,8 @@ fn apply_card_effect(
         CardId::Darkness => {
             channel_orb(player, combat, rng, OrbKind::Dark);
             if card.upgraded {
-                if let Some(front) = player.orbs.iter_mut().rev().find(|o| o.kind == OrbKind::Dark) {
-                    front.evoke += 6;
-                }
+                // DarkImpulseAction: each Dark onEndOfTurn (evoke += passive = 6+Focus).
+                impulse_dark_orbs(player);
             }
         }
         CardId::Melter => {
@@ -2663,6 +2697,7 @@ fn apply_card_effect(
             }
         }
         CardId::Capacitor => {
+            // IncreaseMaxOrbAction -> AbstractPlayer.increaseMaxOrbSlots (combat maxOrbs only).
             player.max_orbs += card.base_magic.max(2) as i32;
         }
         CardId::Consume => {
@@ -2821,6 +2856,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     }
     if burn_dmg > 0 {
         let dmg = apply_block(&mut player.block, burn_dmg);
+        let dmg = buffer_absorb(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
         }
@@ -2924,6 +2960,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         if explosive > 0 && combat.monsters[i].alive() {
             if explosive == 1 {
                 let dealt = apply_block(&mut player.block, 30);
+                let dealt = buffer_absorb(player, dealt);
                 if dealt > 0 {
                     player.hp -= dealt;
                     if player.hp < 0 {
@@ -3102,8 +3139,30 @@ fn orb_evoke_amount(orb: Orb, focus: i32) -> i32 {
     match orb.kind {
         OrbKind::Lightning => (8 + focus).max(0),
         OrbKind::Frost => (5 + focus).max(0),
-        OrbKind::Dark => orb.evoke.max(6 + focus).max(0),
+        // Dark.applyFocus only updates passiveAmount. onEvoke uses evokeAmount as stored.
+        OrbKind::Dark => orb.evoke.max(0),
         OrbKind::Plasma => 2,
+    }
+}
+
+fn dark_passive_gain(focus: i32) -> i32 {
+    (6 + focus).max(0)
+}
+
+/// DarkImpulseAction: every Dark orb onEndOfTurn, then Cables extra on the front Dark.
+fn impulse_dark_orbs(player: &mut Player) {
+    let gain = dark_passive_gain(focus_of(player));
+    for orb in player.orbs.iter_mut() {
+        if orb.kind == OrbKind::Dark {
+            orb.evoke += gain;
+        }
+    }
+    if player.has_relic(RelicId::Cables) {
+        if let Some(front) = player.orbs.first_mut() {
+            if front.kind == OrbKind::Dark {
+                front.evoke += gain;
+            }
+        }
     }
 }
 
@@ -3151,7 +3210,7 @@ fn apply_evoke(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, orb: 
     match orb.kind {
         OrbKind::Lightning => lightning_hit_player(Some(player), combat, rng, amt),
         OrbKind::Frost => player.block += amt,
-        OrbKind::Dark => lightning_hit_player(Some(player), combat, rng, amt),
+        OrbKind::Dark => dark_evoke_hit(combat, amt),
         OrbKind::Plasma => player.energy += amt,
     }
 }
@@ -3165,8 +3224,9 @@ fn apply_front_orb_passive(player: &mut Player, combat: &mut Combat, rng: &mut R
         OrbKind::Lightning => lightning_hit_player(Some(player), combat, rng, amt),
         OrbKind::Frost => player.block += amt,
         OrbKind::Dark => {
+            let gain = dark_passive_gain(focus_of(player));
             if let Some(front) = player.orbs.first_mut() {
-                front.evoke += 6;
+                front.evoke += gain;
             }
         }
         OrbKind::Plasma => {}
@@ -3176,10 +3236,11 @@ fn apply_front_orb_passive(player: &mut Player, combat: &mut Combat, rng: &mut R
 fn apply_orb_passives(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     let focus = focus_of(player);
     let electro = player.power_amount(PowerId::Electro) > 0;
-    let orbs: Vec<Orb> = player.orbs.clone();
-    for orb in orbs {
-        let amt = orb_passive_amount(orb.kind, focus);
-        match orb.kind {
+    let n = player.orbs.len();
+    for i in 0..n {
+        let kind = player.orbs[i].kind;
+        let amt = orb_passive_amount(kind, focus);
+        match kind {
             OrbKind::Lightning => {
                 if electro {
                     lightning_hit_player(Some(player), combat, rng, amt);
@@ -3188,18 +3249,44 @@ fn apply_orb_passives(player: &mut Player, combat: &mut Combat, rng: &mut RngSet
                 }
             }
             OrbKind::Frost => player.block += amt,
-            OrbKind::Dark => {
-                if let Some(front) = player.orbs.iter_mut().find(|o| o.kind == OrbKind::Dark) {
-                    front.evoke += 6;
-                }
-            }
+            // Dark.onEndOfTurn: this.evokeAmount += this.passiveAmount (6+Focus).
+            OrbKind::Dark => player.orbs[i].evoke += dark_passive_gain(focus),
             OrbKind::Plasma => {}
         }
+    }
+    // TriggerEndOfTurnOrbsAction: Cables extra onEndOfTurn on the front filled orb.
+    if player.has_relic(RelicId::Cables) {
+        apply_front_orb_passive(player, combat, rng);
     }
 }
 
 fn lightning_hit(combat: &mut Combat, rng: &mut RngSet, amount: i32) {
     lightning_hit_player(None, combat, rng, amount);
+}
+
+/// DarkOrbEvokeAction ctor: first `!isDeadOrEscaped` monster with lowest `currentHealth`.
+/// Ties keep the earlier monster. No cardRandomRng.
+fn dark_evoke_hit(combat: &mut Combat, amount: i32) {
+    if amount <= 0 {
+        return;
+    }
+    let mut best: Option<usize> = None;
+    for (i, m) in combat.monsters.iter().enumerate() {
+        // AbstractCreature.isDeadOrEscaped: isDying || halfDead || isEscaping
+        if m.dead || m.escaped || m.half_dead || m.hp <= 0 {
+            continue;
+        }
+        match best {
+            None => best = Some(i),
+            Some(b) if m.hp < combat.monsters[b].hp => best = Some(i),
+            _ => {}
+        }
+    }
+    if let Some(i) = best {
+        if let Some(m) = combat.monsters.get_mut(i) {
+            deal_thorns(m, amount);
+        }
+    }
 }
 
 fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut RngSet, amount: i32) {
