@@ -4,6 +4,7 @@ use sts_engine::game::Game;
 use sts_engine::htn::HtnAgent;
 use sts_engine::ids::{CardId, Character, RelicId};
 use sts_engine::rng::RngSet;
+use sts_engine::walk::{default_config, walk_oracle};
 use sts_engine::Unlocks;
 
 #[test]
@@ -83,5 +84,38 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
             game.step(&action);
         }
         assert!(game.dungeon.floor >= 1 || game.screen != sts_engine::game::Screen::Neow);
+    }
+}
+
+#[test]
+fn maw_bank_grants_gold_on_first_hallway() {
+    // 116441: Neow MawBank, Java gold=111 on floor 1. Missing onEnterRoom left rust at 99.
+    let cfg = default_config(Character::Defect, "116441", Unlocks::fixture(), 20);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 3,
+                "MawBank gold still desyncs at first hallway: {fail}"
+            );
+        }
+    }
+}
+
+#[test]
+fn neow_transform_uses_running_commons_and_src_uncommon_rare() {
+    // 463905: Java transformed Strike_B → Capacitor. Concatenating all three
+    // running pools picked Steam Power instead (src uncommon/rare are reversed).
+    let cfg = default_config(Character::Defect, "463905", Unlocks::fixture(), 20);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 3,
+                "neow transform still desyncs at Leave: {fail}"
+            );
+        }
     }
 }

@@ -978,7 +978,7 @@ impl Game {
                         self.finish_grid();
                         return;
                     }
-                    self.player.gold -= self.shop.purge_cost;
+                    self.spend_shop_gold(self.shop.purge_cost);
                     self.shop.purge_available = false;
                     self.shop.purge_cost += 25;
                 }
@@ -1033,10 +1033,17 @@ impl Game {
     }
 
     fn neow_transform_roll(&mut self, avoid: CardId) -> Option<CardId> {
-        let mut pool: Vec<CardId> = Vec::new();
-        pool.extend(self.dungeon.common_cards.iter().copied());
-        pool.extend(self.dungeon.uncommon_cards.iter().copied());
-        pool.extend(self.dungeon.rare_cards.iter().copied());
+        // AbstractDungeon.returnTrulyRandomCardFromAvailable (colored):
+        // commonCardPool (running, addToTop=append) then srcUncommonCardPool
+        // and srcRareCardPool. src pools are copied with addToBottom, which
+        // reverses each rarity relative to the running pools.
+        let mut pool: Vec<CardId> = self.dungeon.common_cards.clone();
+        let mut uncommons = self.dungeon.uncommon_cards.clone();
+        uncommons.reverse();
+        let mut rares = self.dungeon.rare_cards.clone();
+        rares.reverse();
+        pool.extend(uncommons);
+        pool.extend(rares);
         pool.retain(|id| *id != avoid);
         if pool.is_empty() {
             return None;
@@ -1234,6 +1241,7 @@ impl Game {
         self.dungeon.path_y.push(y);
         self.dungeon.floor += 1;
         self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
+        self.maw_bank_on_enter_room();
         if y >= 0 && y < self.dungeon.map.height() as i32 && x >= 0 {
             self.dungeon.map.node_mut(x, y).taken = true;
         }
@@ -2075,11 +2083,34 @@ impl Game {
         if self.player.gold < self.shop.purge_cost || !self.shop.purge_available {
             return;
         }
-        self.player.gold -= self.shop.purge_cost;
+        self.spend_shop_gold(self.shop.purge_cost);
         self.shop.purge_available = false;
         self.shop.purge_cost += 25;
         if i < self.player.deck.len() {
             self.player.deck.remove(i);
+        }
+    }
+
+    fn spend_shop_gold(&mut self, amount: i32) {
+        self.player.gold -= amount;
+        // ShopScreen: every relic.onSpendGold after loseGold.
+        if let Some(r) = self.player.relics.iter_mut().find(|r| r.id == RelicId::MawBank) {
+            if !r.used_up {
+                r.used_up = true;
+                r.counter = -2;
+            }
+        }
+    }
+
+    fn maw_bank_on_enter_room(&mut self) {
+        // MawBank.onEnterRoom: +12 gold until the relic is used up by spending.
+        let active = self
+            .player
+            .relics
+            .iter()
+            .any(|r| r.id == RelicId::MawBank && !r.used_up);
+        if active && !self.player.has_relic(RelicId::Ectoplasm) {
+            self.player.gold += 12;
         }
     }
 
@@ -2136,7 +2167,7 @@ impl Game {
             {
                 let price = self.shop.cards[i].price;
                 if self.player.gold >= price {
-                    self.player.gold -= price;
+                    self.spend_shop_gold(price);
                     let card = self.shop.cards[i].item.clone();
                     self.shop.cards[i].sold = true;
                     self.player.deck.push(card);
@@ -2151,7 +2182,7 @@ impl Game {
             {
                 let price = self.shop.relics[i].price;
                 if self.player.gold >= price {
-                    self.player.gold -= price;
+                    self.spend_shop_gold(price);
                     let id = self.shop.relics[i].item;
                     self.shop.relics[i].sold = true;
                     self.gain_relic(id);
@@ -2166,7 +2197,7 @@ impl Game {
             {
                 let price = self.shop.potions[i].price;
                 if self.player.gold >= price {
-                    self.player.gold -= price;
+                    self.spend_shop_gold(price);
                     let id = self.shop.potions[i].item;
                     self.shop.potions[i].sold = true;
                     self.gain_potion(id);
@@ -2213,18 +2244,20 @@ impl Game {
             ShopKind::Card(i) => {
                 if let Some(offer) = self.shop.cards.get_mut(i) {
                     if !offer.sold && self.player.gold >= offer.price {
-                        self.player.gold -= offer.price;
+                        let price = offer.price;
                         self.player.deck.push(offer.item.clone());
                         offer.sold = true;
+                        self.spend_shop_gold(price);
                     }
                 }
             }
             ShopKind::Relic(i) => {
                 if let Some(offer) = self.shop.relics.get_mut(i) {
                     if !offer.sold && self.player.gold >= offer.price {
-                        self.player.gold -= offer.price;
+                        let price = offer.price;
                         let id = offer.item;
                         offer.sold = true;
+                        self.spend_shop_gold(price);
                         self.gain_relic(id);
                     }
                 }
@@ -2232,9 +2265,10 @@ impl Game {
             ShopKind::Potion(i) => {
                 if let Some(offer) = self.shop.potions.get_mut(i) {
                     if !offer.sold && self.player.gold >= offer.price {
-                        self.player.gold -= offer.price;
+                        let price = offer.price;
                         let id = offer.item;
                         offer.sold = true;
+                        self.spend_shop_gold(price);
                         self.gain_potion(id);
                     }
                 }

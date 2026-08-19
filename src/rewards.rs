@@ -448,8 +448,8 @@ fn truly_random_combat_card(
     typ: Option<CardType>,
     colorless: bool,
 ) -> Option<CardId> {
-    // AbstractDungeon.initializeCardPools fills each rarity with addToTop, so
-    // src pools are HashMap order reversed per rarity.
+    // CardGroup.addToTop appends; src pools copy via addToBottom, reversing
+    // each rarity. returnTrulyRandomCardInCombat concatenates the src pools.
     let mut list: Vec<CardId> = if colorless {
         let mut v = dungeon.colorless_cards.clone();
         v.reverse();
