@@ -1,7 +1,7 @@
 use crate::card::Card;
 use crate::content::encounter_monsters;
 use crate::creature::{Intent, Monster, Orb, OrbKind, Player};
-use crate::ids::{CardId, CardRarity, CardType, EncounterId, MonsterId, PowerId, RelicId};
+use crate::ids::{CardId, CardRarity, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId};
 use crate::java_util::shuffle_java;
 use crate::rng::RngSet;
 
@@ -2117,6 +2117,39 @@ pub fn on_lose_hp_last(player: &Player, damage: i32) -> i32 {
 }
 
 /// BufferPower.onAttackedToChangeDamage after decrementBlock: consume 1 and return 0.
+/// AbstractPlayer.damage: if currentHealth < 1, FairyPotion then Lizard Tail
+/// (blocked by Mark of the Bloom). Returns true if death was prevented.
+fn try_cheat_death(player: &mut Player) -> bool {
+    if player.hp >= 1 {
+        return false;
+    }
+    player.hp = 0;
+    if player.has_relic(RelicId::Mark_of_the_Bloom) {
+        return false;
+    }
+    if let Some(slot) = player.potions.iter().position(|p| p.id == PotionId::Fairy) {
+        // FairyPotion.getPotency=30; healAmt = (int)(maxHealth * 0.30F)
+        let heal = (player.max_hp * 30) / 100;
+        player.hp = heal.max(1).min(player.max_hp);
+        player.potions[slot].id = PotionId::Slot;
+        red_skull_on_hp_change(player);
+        return true;
+    }
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Lizard_Tail && r.counter == -1)
+    {
+        r.counter = -2;
+        r.used_up = true;
+        let heal = player.max_hp / 2;
+        player.hp = heal.max(1).min(player.max_hp);
+        red_skull_on_hp_change(player);
+        return true;
+    }
+    false
+}
+
 fn buffer_absorb(player: &mut Player, dmg: i32) -> i32 {
     if dmg <= 0 {
         return 0;
@@ -2158,6 +2191,7 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
             if player.hp < 0 {
                 player.hp = 0;
             }
+            let _ = try_cheat_death(player);
             total += dmg;
             if monster.powers.iter().any(|p| p.id == PowerId::PainfulStabs) {
                 player.discard.push(Card::new(CardId::Wound));
@@ -2260,6 +2294,7 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
                 if player.hp < 0 {
                     player.hp = 0;
                 }
+                let _ = try_cheat_death(player);
                 red_skull_on_hp_change(player);
                 centennial_puzzle_was_hp_lost(player, rng);
             }
@@ -2651,6 +2686,7 @@ pub fn play_card(
                     if player.hp < 0 {
                         player.hp = 0;
                     }
+                    let _ = try_cheat_death(player);
                     red_skull_on_hp_change(player);
                     centennial_puzzle_was_hp_lost(player, rng);
                 }
@@ -3319,6 +3355,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         let dmg = on_lose_hp_last(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
+            if player.hp < 0 {
+                player.hp = 0;
+            }
+            let _ = try_cheat_death(player);
             red_skull_on_hp_change(player);
             centennial_puzzle_was_hp_lost(player, rng);
         }
@@ -3405,7 +3445,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         let used_move = combat.monsters[i].next_move;
         let spawned = combat.monsters[i].take_turn(player, rng, combat.ascension);
         apply_group_move(combat, i, id, used_move, rng);
-        if player.hp <= 0 {
+        if player.hp <= 0 && !try_cheat_death(player) {
             player.hp = 0;
             player.hand.clear();
             return;
@@ -3431,6 +3471,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
                     if player.hp < 0 {
                         player.hp = 0;
                     }
+                    let _ = try_cheat_death(player);
                     red_skull_on_hp_change(player);
                     centennial_puzzle_was_hp_lost(player, rng);
                 }
@@ -3479,7 +3520,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     }
     resolve_darklings(combat);
 
-    if player.hp <= 0 {
+    if player.hp <= 0 && !try_cheat_death(player) {
         player.hp = 0;
         player.hand.clear();
         return;

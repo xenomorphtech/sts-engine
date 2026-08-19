@@ -1378,6 +1378,23 @@ impl Game {
                 PotionId::EssenceOfSteel => {
                     self.player.add_power(crate::ids::PowerId::PlatedArmor, 4);
                 }
+                PotionId::BlessingOfTheForge => {
+                    // BlessingOfTheForge.use -> ArmamentsAction(true): upgrade every
+                    // upgradeable card in hand.
+                    if self.combat.is_some() {
+                        for c in self.player.hand.iter_mut() {
+                            if c.can_upgrade() {
+                                c.upgrade();
+                            }
+                        }
+                    }
+                }
+                PotionId::GamblersBrew => {
+                    // GamblingChipAction(player, true): discard any number, draw that many.
+                    if !self.player.hand.is_empty() {
+                        self.open_gambling_select();
+                    }
+                }
                 PotionId::Focus => self.player.add_power(crate::ids::PowerId::Focus, 2),
                 PotionId::PotionOfCapacity => {
                     // PotionOfCapacity.use -> IncreaseMaxOrbAction(getPotency()=2).
@@ -2474,6 +2491,10 @@ impl Game {
         if !self.player.has_relic(RelicId::Gambling_Chip) || self.player.hand.is_empty() {
             return;
         }
+        self.open_gambling_select();
+    }
+
+    fn open_gambling_select(&mut self) {
         self.gambling_select = true;
         self.exhaust_select = false;
         self.put_on_deck_select = false;
