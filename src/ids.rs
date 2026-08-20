@@ -223,6 +223,7 @@ pub enum PowerId {
     NoBlock,
     HelloWorld,
     StaticDischarge,
+    Confusion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -400,6 +401,8 @@ pub enum MonsterId {
     Transient,
     GiantHead,
     AwakenedOne,
+    Snecko,
+    Byrd,
     Unknown,
 }
 
@@ -451,6 +454,8 @@ impl MonsterId {
             MonsterId::Transient => "Transient",
             MonsterId::GiantHead => "GiantHead",
             MonsterId::AwakenedOne => "AwakenedOne",
+            MonsterId::Snecko => "Snecko",
+            MonsterId::Byrd => "Byrd",
             MonsterId::Unknown => "Unknown",
         }
     }
@@ -502,6 +507,9 @@ pub enum EncounterId {
     SentryAndSphere,
     CultistAndChosen,
     ThreeCultists,
+    Snecko,
+    ThreeByrds,
+    ChosenAndByrds,
 }
 
 impl EncounterId {
@@ -551,6 +559,9 @@ impl EncounterId {
             EncounterId::SentryAndSphere => "Sentry and Sphere",
             EncounterId::CultistAndChosen => "Cultist and Chosen",
             EncounterId::ThreeCultists => "3 Cultists",
+            EncounterId::Snecko => "Snecko",
+            EncounterId::ThreeByrds => "3 Byrds",
+            EncounterId::ChosenAndByrds => "Chosen and Byrds",
         }
     }
 
@@ -600,6 +611,9 @@ impl EncounterId {
             "Sentry and Sphere" => EncounterId::SentryAndSphere,
             "Cultist and Chosen" => EncounterId::CultistAndChosen,
             "3 Cultists" => EncounterId::ThreeCultists,
+            "Snecko" => EncounterId::Snecko,
+            "3 Byrds" => EncounterId::ThreeByrds,
+            "Chosen and Byrds" => EncounterId::ChosenAndByrds,
             _ => return None,
         })
     }

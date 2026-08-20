@@ -249,7 +249,8 @@ pub fn power_is_debuff(id: PowerId, amount: i32) -> bool {
         | PowerId::LoseStrength
         | PowerId::LoseDexterity
         | PowerId::NoBlock
-        | PowerId::Shackled => true,
+        | PowerId::Shackled
+        | PowerId::Confusion => true,
         PowerId::Strength | PowerId::Dexterity | PowerId::Focus => amount < 0,
         _ => false,
     }

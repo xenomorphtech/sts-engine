@@ -285,6 +285,11 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
         MonsterId::SnakePlant => {
             monster.add_power(PowerId::Malleable, 3);
         }
+        MonsterId::Byrd => {
+            let flight = if monster.ascension >= 17 { 4 } else { 3 };
+            monster.add_power(PowerId::Flight, flight);
+            monster.extra = 1;
+        }
         MonsterId::ShelledParasite => {
             monster.add_power(PowerId::PlatedArmor, 14);
             monster.block += 14;
@@ -767,6 +772,20 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
         MonsterId::Transient => (999, 999),
         MonsterId::GiantHead => (500, 500),
         MonsterId::AwakenedOne => (300, 300),
+        MonsterId::Snecko => {
+            if a7 {
+                (120, 125)
+            } else {
+                (114, 120)
+            }
+        }
+        MonsterId::Byrd => {
+            if a7 {
+                (26, 33)
+            } else {
+                (25, 31)
+            }
+        }
         _ => (40, 44),
     }
 }
@@ -1395,6 +1414,63 @@ impl Monster {
                     self.set_move(3, Intent::Attack, roll, 1);
                 }
             }
+            MonsterId::Snecko => {
+                let bite = if self.ascension >= 2 { 18 } else { 15 };
+                let tail = if self.ascension >= 2 { 10 } else { 8 };
+                if self.first_move {
+                    self.first_move = false;
+                    self.set_move(1, Intent::StrongDebuff, 0, 1);
+                } else if num < 40 {
+                    self.set_move(3, Intent::AttackDebuff, tail, 1);
+                } else if self.last_two(2) {
+                    self.set_move(3, Intent::AttackDebuff, tail, 1);
+                } else {
+                    self.set_move(2, Intent::Attack, bite, 1);
+                }
+            }
+            MonsterId::Byrd => {
+                let peck = 1;
+                let peck_n = if self.ascension >= 2 { 6 } else { 5 };
+                let swoop = if self.ascension >= 2 { 14 } else { 12 };
+                if self.extra == 0 {
+                    self.set_move(5, Intent::Attack, 3, 1);
+                } else if self.first_move {
+                    self.first_move = false;
+                    if rng.ai.random_boolean_chance(0.375) {
+                        self.set_move(6, Intent::Buff, 0, 1);
+                    } else {
+                        self.set_move(1, Intent::Attack, peck, peck_n);
+                    }
+                } else if num < 50 {
+                    if self.last_two(1) {
+                        if rng.ai.random_boolean_chance(0.4) {
+                            self.set_move(3, Intent::Attack, swoop, 1);
+                        } else {
+                            self.set_move(6, Intent::Buff, 0, 1);
+                        }
+                    } else {
+                        self.set_move(1, Intent::Attack, peck, peck_n);
+                    }
+                } else if num < 70 {
+                    if self.last_move(3) {
+                        if rng.ai.random_boolean_chance(0.375) {
+                            self.set_move(6, Intent::Buff, 0, 1);
+                        } else {
+                            self.set_move(1, Intent::Attack, peck, peck_n);
+                        }
+                    } else {
+                        self.set_move(3, Intent::Attack, swoop, 1);
+                    }
+                } else if self.last_move(6) {
+                    if rng.ai.random_boolean_chance(0.2857) {
+                        self.set_move(3, Intent::Attack, swoop, 1);
+                    } else {
+                        self.set_move(1, Intent::Attack, peck, peck_n);
+                    }
+                } else {
+                    self.set_move(6, Intent::Buff, 0, 1);
+                }
+            }
             _ => self.set_move(1, Intent::Attack, 6, 1),
         }
     }
@@ -1441,6 +1517,7 @@ impl Monster {
                 | MonsterId::GremlinTsundere
         )
             || (self.id == MonsterId::Hexaghost && self.next_move == 5)
+            || (self.id == MonsterId::Byrd && self.next_move == 5)
             || (matches!(self.id, MonsterId::AcidSlimeL) && self.next_move == 3)
             // TheGuardian.takeTurn setMoves the next intent; no RollMoveAction.
             || self.id == MonsterId::TheGuardian
@@ -1688,6 +1765,39 @@ impl Monster {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
                 self.extra += 1;
                 self.set_move(2, Intent::Defend, 0, 1);
+            }
+            (MonsterId::Snecko, 1) => {
+                player.add_power_from_monster(PowerId::Confusion, 1);
+            }
+            (MonsterId::Snecko, 2) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 15 }, 1);
+            }
+            (MonsterId::Snecko, 3) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 10 } else { 8 }, 1);
+                if ascension >= 17 {
+                    player.add_power_from_monster(PowerId::Weak, 2);
+                }
+                player.add_power_from_monster(PowerId::Vulnerable, 2);
+            }
+            (MonsterId::Byrd, 1) => {
+                let n = if ascension >= 2 { 6 } else { 5 };
+                let _ = hit_player(player, self, rng, 1, n);
+            }
+            (MonsterId::Byrd, 2) => {
+                self.extra = 1;
+                let flight = if ascension >= 17 { 4 } else { 3 };
+                self.add_power(PowerId::Flight, flight);
+            }
+            (MonsterId::Byrd, 3) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 14 } else { 12 }, 1);
+            }
+            (MonsterId::Byrd, 4) => {}
+            (MonsterId::Byrd, 5) => {
+                let _ = hit_player(player, self, rng, 3, 1);
+                self.set_move(2, Intent::Unknown, 0, 1);
+            }
+            (MonsterId::Byrd, 6) => {
+                self.add_power(PowerId::Strength, 1);
             }
             (MonsterId::SpikeSlimeS, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 6 } else { 5 }, 1);
@@ -2425,6 +2535,9 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
         if dmg < 0 {
             dmg = 0;
         }
+        if monster.power_amount(PowerId::Flight) > 0 {
+            dmg = (dmg as f32 / 2.0) as i32;
+        }
         dmg = apply_block(&mut monster.block, dmg);
         // Boot.onAttackToChangeDamage after decrementBlock: unblocked Attack 1–4 → 5.
         if dmg > 0 && dmg < 5 && player.has_relic(RelicId::Boot) {
@@ -2477,10 +2590,24 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             if !lethal {
                 guardian_mode_shift_on_hp_loss(monster, dmg);
             }
+            if dmg > 0 && !lethal {
+                if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Flight) {
+                    p.amount -= 1;
+                    if p.amount <= 0 {
+                        monster.powers.retain(|x| x.id != PowerId::Flight);
+                        monster.extra = 0;
+                        monster.set_move(4, Intent::Stun, 0, 1);
+                        monster.create_intent();
+                    }
+                }
+            }
             if !lethal {
+                // MalleablePower.onAttacked: monsters addToBot GainBlock, so
+                // later DamageActions / orb evokes of this card land first
+                // (Cold Snap then Dark evoke on Snake Plant).
                 let malleable = monster.power_amount(PowerId::Malleable);
                 if malleable > 0 {
-                    monster.block += malleable;
+                    pending_curl += malleable;
                     if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Malleable) {
                         p.amount += 1;
                     }
@@ -2682,13 +2809,24 @@ pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngS
             }
             continue;
         }
-        if let Some(card) = player.draw.pop() {
+        if let Some(mut card) = player.draw.pop() {
             if matches!(card.card_type(), CardType::STATUS | CardType::CURSE) {
                 statuses += 1;
             }
             // VoidCard.triggerWhenDrawn: LoseEnergyAction(1).
             if card.id == CardId::Void {
                 player.energy = (player.energy - 1).max(0);
+            }
+            // ConfusionPower.onCardDraw: cardRandomRng.random(3) when cost >= 0.
+            if player.power_amount(PowerId::Confusion) > 0 && card.cost >= 0 {
+                if let Some(rng) = rng.as_mut() {
+                    let new_cost = rng.card_random.random_int(3) as i16;
+                    if card.cost != new_cost {
+                        card.cost = new_cost;
+                        card.cost_for_turn = new_cost;
+                    }
+                    card.free_to_play_once = false;
+                }
             }
             player.hand.push(card);
         }

@@ -117,8 +117,8 @@ fn runic_pyramid_keeps_hand_at_end_of_turn() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 263,
-                "213 still fails at Runic Pyramid last_ok={} want > 263: {fail}",
+                fail.last_ok > 297,
+                "213 still fails at Snecko spawn last_ok={} want > 297: {fail}",
                 fail.last_ok
             );
         }
@@ -153,8 +153,8 @@ fn act1_boss_still_rolls_potion_chance() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 244,
-                "169 still fails at 2 Thieves last_ok={} want > 244: {fail}",
+                fail.last_ok > 303,
+                "169 still fails at Snake Plant Malleable last_ok={} want > 303: {fail}",
                 fail.last_ok
             );
         }
