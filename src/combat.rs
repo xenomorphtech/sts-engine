@@ -3425,7 +3425,8 @@ pub fn play_owned_card(
         || (card.id == CardId::Burning_Pact && player.hand.len() > 1)
         || (card.id == CardId::Hologram && player.discard.len() > 1)
         || (card.id == CardId::Seek && player.draw.len() > card.base_magic.max(1) as usize)
-        || card.id == CardId::Discovery;
+        || card.id == CardId::Discovery
+        || (card.id == CardId::Purity && !player.hand.is_empty());
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         // Storm channels are addToBot after this card's ApplyPower, so snapshot
@@ -4558,6 +4559,11 @@ fn apply_card_effect(
                 combat.need_put_on_deck = true;
             }
         }
+        CardId::Purity => {
+            if !player.hand.is_empty() {
+                combat.need_exhaust_select = true;
+            }
+        }
         CardId::True_Grit => {
             if block > 0 {
                 player.block += block;
@@ -5058,9 +5064,42 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if player.power_amount(PowerId::Barricade) == 0 {
         player.block = 0;
     }
+    // CreativeAI / Hello World roll cardRandomRng immediately in
+    // atStartOfTurn. Loop only queues LightningOrbPassiveAction, so the
+    // POWER pick must happen before Loop's lightning getRandomMonster
+    // (seed 937 Electrodynamics vs Machine Learning).
+    let ai = player.power_amount(PowerId::CreativeAI);
+    if ai > 0 {
+        if let Some(dungeon) = dungeon {
+            for _ in 0..ai {
+                if let Some(id) = crate::rewards::random_power_in_combat(dungeon, rng) {
+                    if player.hand.len() < 10 {
+                        player.hand.push(Card::new(id));
+                    }
+                }
+            }
+        }
+    }
+    let hello = player.power_amount(PowerId::HelloWorld);
+    if hello > 0 {
+        if let Some(dungeon) = dungeon {
+            for _ in 0..hello {
+                if dungeon.common_cards.is_empty() {
+                    break;
+                }
+                let i = rng.card_random.random_int(dungeon.common_cards.len() as i32 - 1) as usize;
+                let id = dungeon.common_cards[i];
+                if player.hand.len() < 10 {
+                    player.hand.push(Card::new(id));
+                } else {
+                    player.discard.push(Card::new(id));
+                }
+            }
+        }
+    }
     // LoopPower.atStartOfTurn calls orb onEndOfTurn while BiasPower still
     // only has an addToBot Focus-1 queued, so lightning/frost/dark snapshot
-    // the pre-Bias amount. Apply Loop before Bias.
+    // the pre-Bias amount. Apply Loop before Bias, after CreativeAI RNG.
     let loops = player.power_amount(PowerId::Loop);
     for _ in 0..loops {
         apply_front_orb_passive(player, combat, rng);
@@ -5120,38 +5159,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         reshuffle_if_needed(player, rng);
         let statuses = draw_cards_rng(player, n, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, statuses);
-    }
-    // CreativeAIPower.atStartOfTurn: MakeTempCardInHand of a random POWER, queued
-    // before the turn's DrawCardAction(5), so the generated card sits at hand[0].
-    let ai = player.power_amount(PowerId::CreativeAI);
-    if ai > 0 {
-        if let Some(dungeon) = dungeon {
-            for _ in 0..ai {
-                if let Some(id) = crate::rewards::random_power_in_combat(dungeon, rng) {
-                    if player.hand.len() < 10 {
-                        player.hand.push(Card::new(id));
-                    }
-                }
-            }
-        }
-    }
-    // HelloPower.atStartOfTurn: AbstractDungeon.getCard(COMMON, cardRandomRng).
-    let hello = player.power_amount(PowerId::HelloWorld);
-    if hello > 0 {
-        if let Some(dungeon) = dungeon {
-            for _ in 0..hello {
-                if dungeon.common_cards.is_empty() {
-                    break;
-                }
-                let i = rng.card_random.random_int(dungeon.common_cards.len() as i32 - 1) as usize;
-                let id = dungeon.common_cards[i];
-                if player.hand.len() < 10 {
-                    player.hand.push(Card::new(id));
-                } else {
-                    player.discard.push(Card::new(id));
-                }
-            }
-        }
     }
     // DrawPower (Machine Learning) bumps gameHandSize; DrawCardAction uses that.
     let draw_n = 5 + player.power_amount(PowerId::DrawCard);

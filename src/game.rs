@@ -1768,10 +1768,33 @@ impl Game {
             id: PotionId::Slot,
             slot: slot as i32,
         };
-        if let Some(combat) = &self.combat {
-            if combat.all_dead() {
-                self.finish_combat();
-            }
+        let (all_dead, disc_to_hand, draw_to_hand, discovery, put_on_deck, exhaust_sel) =
+            if let Some(c) = self.combat.as_ref() {
+                (
+                    c.all_dead(),
+                    c.need_discard_to_hand,
+                    c.need_draw_to_hand,
+                    c.need_discovery,
+                    c.need_put_on_deck,
+                    c.need_exhaust_select,
+                )
+            } else {
+                (false, false, false, false, false, false)
+            };
+        if all_dead {
+            self.finish_combat();
+        } else if disc_to_hand {
+            // Distilled Chaos autoplay Hologram: GRID after the 3 PlayTopCards
+            // (seed 610 Cold Snap from discard).
+            self.begin_discard_to_hand_select();
+        } else if draw_to_hand {
+            self.begin_draw_to_hand_select();
+        } else if discovery {
+            self.begin_discovery(None, false);
+        } else if put_on_deck {
+            self.begin_put_on_deck_select();
+        } else if exhaust_sel {
+            self.begin_exhaust_select();
         }
     }
 

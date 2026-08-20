@@ -905,6 +905,12 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Discovery, true) => CardStats {
             cost: 1, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: false,
         },
+        (CardId::Purity, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Purity, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 5, exhaust: true, ethereal: false, innate: false,
+        },
         _ => {
             let def = id.def();
             CardStats {

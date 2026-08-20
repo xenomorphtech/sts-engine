@@ -514,6 +514,59 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn distilled_chaos_hologram_opens_discard_grid() {
+    // 610: Distilled Chaos autoplays Hologram; GRID must open so Choose 1
+    // returns Cold Snap and exhausts Hologram.
+    let cfg = default_config(Character::Defect, "610", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 111,
+                "610 still fails at Distilled Chaos Hologram last_ok={} want > 111: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn creative_ai_rolls_before_loop_lightning() {
+    // 937: CreativeAI atStartOfTurn RNG is immediate; Loop only queues
+    // LightningOrbPassiveAction. Rust Loop roll stole the POWER pick.
+    let cfg = default_config(Character::Defect, "937", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 121,
+                "937 still fails at CreativeAI/Loop RNG last_ok={} want > 121: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn purity_opens_exhaust_hand_select() {
+    // 241: Colorless Potion Purity must HAND_SELECT (Choose 2 is Strike).
+    let cfg = default_config(Character::Defect, "241", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 122,
+                "241 still fails at Purity HAND_SELECT last_ok={} want > 122: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn toy_ornithopter_heals_after_discovery_overlay() {
     // 45: Colorless/typed potion DiscoveryAction is on the queue before
     // ToyOrnithopter HealAction, so the CARD_REWARD snapshot is still 56 HP.
