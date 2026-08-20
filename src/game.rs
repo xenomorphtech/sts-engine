@@ -4283,6 +4283,19 @@ impl Game {
                 self.player.gold += 300;
             }
         }
+        if id == RelicId::Potion_Belt {
+            // PotionBelt.onEquip: potionSlots += 2 and two empty PotionSlot entries.
+            self.player.potion_slots += 2;
+            let start = self.player.potions.len() as i32;
+            self.player.potions.push(crate::creature::PotionInstance {
+                id: crate::ids::PotionId::Slot,
+                slot: start,
+            });
+            self.player.potions.push(crate::creature::PotionInstance {
+                id: crate::ids::PotionId::Slot,
+                slot: start + 1,
+            });
+        }
         // Fruit relics call increaseMaxHp(N, true): maxHealth += N, then heal(N).
         // Lee's Waffle also heals to full after the +7.
         match id {
@@ -4298,7 +4311,7 @@ impl Game {
         let inst = RelicInstance {
             id,
             counter: match id {
-                RelicId::Happy_Flower | RelicId::Pen_Nib | RelicId::InkBottle => 0,
+                RelicId::Happy_Flower | RelicId::Pen_Nib | RelicId::InkBottle | RelicId::Nunchaku => 0,
                 RelicId::Matryoshka | RelicId::Omamori => 2,
                 RelicId::NlothsMask => 1,
                 _ => -1,

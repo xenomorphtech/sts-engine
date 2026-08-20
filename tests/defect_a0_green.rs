@@ -90,6 +90,23 @@ fn registry_greens_still_walk() {
 }
 
 #[test]
+fn monster_weak_vulnerable_floors_once() {
+    // 34: SlaverRed Weak * player Vulnerable must chain then floor (14, not 13).
+    let cfg = default_config(Character::Defect, "34", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 66,
+                "34 still fails at Weak+Vulnerable last_ok={} want > 66: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn golden_shrine_pray_is_100_gold_on_a0() {
     // 18: GoldShrine pray is 100 below A15 (rust had hardcoded 50).
     let cfg = default_config(Character::Defect, "18", Unlocks::fixture(), 0);
@@ -100,6 +117,57 @@ fn golden_shrine_pray_is_100_gold_on_a0() {
             assert!(
                 fail.last_ok > 21,
                 "18 still fails at Golden Shrine last_ok={} want > 21: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn bird_faced_urn_heals_on_power() {
+    // 12: Dualcast/Defragment/Electrodynamics with Bird Faced Urn; rust skipped the +2 heal.
+    let cfg = default_config(Character::Defect, "12", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 109,
+                "12 still fails at Bird Faced Urn last_ok={} want > 109: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn shuriken_gives_strength_every_third_attack() {
+    // 20: Shuriken leftover Strength 1, Melter hits SlaverBlue 11 not 12.
+    let cfg = default_config(Character::Defect, "20", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 107,
+                "20 still fails at Shuriken last_ok={} want > 107: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn potion_belt_adds_two_slots() {
+    // 41: Potion Belt onEquip +2 slots; Fruit Juice in slot 3 is +5 HP at the shop.
+    let cfg = default_config(Character::Defect, "41", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 138,
+                "41 still fails at Potion Belt last_ok={} want > 138: {fail}",
                 fail.last_ok
             );
         }

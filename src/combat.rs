@@ -158,6 +158,9 @@ impl Combat {
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
             r.counter = 0;
         }
+        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
+            r.counter = 0;
+        }
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
             r.counter = 0;
         }
@@ -2242,13 +2245,18 @@ fn buffer_absorb(player: &mut Player, dmg: i32) -> i32 {
 fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base: i32, hits: i32) -> i32 {
     let mut total = 0;
     for _ in 0..hits {
-        let mut dmg = base + monster.power_amount(PowerId::Strength);
+        // DamageInfo.applyPowers (monster → player): chain atDamageGive /
+        // atDamageReceive as floats, then MathUtils.floor once.
+        // Sequential floor(13*0.75)=9; floor(9*1.5)=13 misses 13*0.75*1.5=14.625→14
+        // (seed 34 AcidSlime_M+SlaverRed, rust hp 39 vs Java 38).
+        let mut dmg_f = (base + monster.power_amount(PowerId::Strength)) as f32;
         if monster.power_amount(PowerId::Weak) > 0 {
-            dmg = (dmg as f32 * 0.75).floor() as i32;
+            dmg_f *= 0.75;
         }
         if player.power_amount(PowerId::Vulnerable) > 0 {
-            dmg = (dmg as f32 * 1.5).floor() as i32;
+            dmg_f *= 1.5;
         }
+        let mut dmg = dmg_f.floor() as i32;
         if dmg < 0 {
             dmg = 0;
         }
@@ -2659,6 +2667,11 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
         }
     }
     if card.card_type() == CardType::POWER {
+        // BirdFacedUrn.onUseCard: HealAction(player, 2) addToTop for Power cards.
+        if player.has_relic(RelicId::Bird_Faced_Urn) {
+            player.hp = (player.hp + 2).min(player.max_hp);
+            red_skull_on_hp_change(player);
+        }
         // HeatsinkPower.onUseCard: addToTop(DrawCardAction) for Power cards.
         let n = player.power_amount(PowerId::Heatsink);
         if n > 0 {
@@ -2904,6 +2917,28 @@ pub fn play_owned_card(
                     if r.counter >= 3 {
                         r.counter = 0;
                         player.add_power(PowerId::Dexterity, 1);
+                    }
+                }
+                // Shuriken.onUseCard: every 3rd Attack, Strength 1. Counter resets each turn.
+                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
+                    if r.counter < 0 {
+                        r.counter = 0;
+                    }
+                    r.counter += 1;
+                    if r.counter % 3 == 0 {
+                        r.counter = 0;
+                        player.add_power(PowerId::Strength, 1);
+                    }
+                }
+                // Nunchaku.onUseCard: every 10th Attack, GainEnergyAction(1). Counter persists.
+                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Nunchaku) {
+                    if r.counter < 0 {
+                        r.counter = 0;
+                    }
+                    r.counter += 1;
+                    if r.counter % 10 == 0 {
+                        r.counter = 0;
+                        player.energy += 1;
                     }
                 }
                 if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
@@ -4249,6 +4284,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         r.counter = 0;
     }
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
+        r.counter = 0;
+    }
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
         r.counter = 0;
     }
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
