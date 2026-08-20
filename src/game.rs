@@ -272,6 +272,9 @@ struct GridSelect {
     return_event: bool,
     return_shop: bool,
     return_screen: Option<Screen>,
+    /// ChoiceDriver.chooseGrid: forUpgrade/forTransform/forPurge wait for
+    /// confirm; otherwise closeCurrentScreen after the click (BackToBasics).
+    immediate: bool,
 }
 
 impl Game {
@@ -817,6 +820,7 @@ impl Game {
             return_event,
             return_shop: false,
             return_screen: None,
+            immediate: false,
         });
         self.screen = Screen::Grid;
     }
@@ -840,6 +844,7 @@ impl Game {
             return_event: false,
             return_shop: prev == Screen::Shop,
             return_screen: Some(prev),
+            immediate: false,
         });
         self.screen = Screen::Grid;
     }
@@ -905,10 +910,7 @@ impl Game {
             .enumerate()
             .filter(|(_, c)| match kind {
                 GridKind::Upgrade => c.can_upgrade(),
-                GridKind::Purge => {
-                    purgeable_card(c)
-                        && !(c.in_bottle && self.grid.as_ref().is_some_and(|g| g.return_shop))
-                }
+                GridKind::Purge => purgeable_card(c) && !c.in_bottle,
                 GridKind::Transform => purgeable_card(c),
                 GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::Bottle(_) => true,
             })
@@ -930,8 +932,11 @@ impl Game {
                 let Some(&pile_i) = cards.get(*index) else {
                     return;
                 };
-                // ChoiceDriver.chooseGrid: non-purge/upgrade/transform closes immediately.
-                if matches!(kind, GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::Bottle(_)) {
+                // ChoiceDriver.chooseGrid: forUpgrade/forTransform/forPurge wait
+                // for confirm; otherwise closeCurrentScreen after the click.
+                if matches!(kind, GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::Bottle(_))
+                    || self.grid.as_ref().is_some_and(|g| g.immediate)
+                {
                     self.apply_grid(kind, &[pile_i]);
                     return;
                 }
@@ -2335,6 +2340,7 @@ impl Game {
                     return_event: false,
                     return_shop: true,
                     return_screen: None,
+                    immediate: false,
                 });
                 self.screen = Screen::Grid;
             }
@@ -3049,6 +3055,10 @@ impl Game {
                 // NoteForYourself ctor: one INTRO option, then CHOOSE take/leave.
                 vec!["[Continue]".into()]
             }
+            "Back to Basics" => vec![
+                "[Elegance] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into(),
+                "[Simplicity] #gUpgrade #gall #gStrikes #gand #gDefends.".into(),
+            ],
             "Bonfire Elementals" => vec!["[Continue]".into()],
             "FaceTrader" => {
                 // FaceTrader: A15+ gold=50 else 75; damage = maxHp/10 (min 1).
@@ -3765,6 +3775,36 @@ impl Game {
             }
             return;
         }
+        if id == "Back to Basics" {
+            match screen {
+                0 => {
+                    if *index == 0 {
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 1;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                        if self.player.deck.iter().any(|c| purgeable_card(c) && !c.in_bottle) {
+                            self.open_grid(GridKind::Purge, 1, true);
+                            if let Some(g) = self.grid.as_mut() {
+                                g.immediate = true;
+                            }
+                        }
+                    } else {
+                        for c in &mut self.player.deck {
+                            if c.id.has_starter_strike_or_defend_tag() && c.can_upgrade() {
+                                c.upgrade();
+                            }
+                        }
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 1;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                    }
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
         if id == "Shining Light" {
             match screen {
                 0 => {
@@ -4012,6 +4052,7 @@ impl Game {
                         return_event: true,
                         return_shop: false,
                         return_screen: None,
+                        immediate: false,
                     });
                     self.screen = Screen::Grid;
                 }
@@ -4094,6 +4135,7 @@ impl Game {
             return_event: false,
             return_shop: false,
             return_screen: None,
+            immediate: false,
         });
         self.screen = Screen::Grid;
     }
@@ -4142,6 +4184,7 @@ impl Game {
             return_event: false,
             return_shop: false,
             return_screen: None,
+            immediate: false,
         });
         self.screen = Screen::Grid;
     }

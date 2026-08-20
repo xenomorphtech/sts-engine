@@ -101,6 +101,21 @@ impl CardId {
         &CARDS[self as usize]
     }
 
+    /// Java `AbstractCard.hasTag(CardTags.STARTER_STRIKE)` / `STARTER_DEFEND`.
+    pub fn has_starter_strike_or_defend_tag(self) -> bool {
+        matches!(
+            self,
+            CardId::Strike_R
+                | CardId::Strike_G
+                | CardId::Strike_B
+                | CardId::Strike_P
+                | CardId::Defend_R
+                | CardId::Defend_G
+                | CardId::Defend_B
+                | CardId::Defend_P
+        )
+    }
+
     /// Java `AbstractCard.hasTag(CardTags.STRIKE)`.
     pub fn has_strike_tag(self) -> bool {
         matches!(
