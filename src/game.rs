@@ -2820,24 +2820,34 @@ impl Game {
     }
 
     fn pick_shrine(&mut self, rng: &mut StsRandom) -> String {
+        // AbstractDungeon.getShrine: shrineList plus specialOneTimeEventList
+        // with per-event filters (act / gold / HP / relics / curses).
         let mut tmp = self.dungeon.shrine_list.clone();
+        let dungeon_id = self.dungeon.id;
+        let cursed = self.player.deck.iter().any(|c| {
+            c.card_type() == crate::ids::CardType::CURSE
+                && !matches!(
+                    c.id,
+                    CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane
+                )
+        });
         for e in &self.dungeon.special_one_time {
-            match e.as_str() {
-                "Fountain of Cleansing" => {}
-                "Designer" | "Duplicator" | "Knowing Skull" | "N'loth" | "The Joust" | "SecretPortal" => {}
-                "FaceTrader" => tmp.push(e.clone()),
-                "The Woman in Blue" => {
-                    if self.player.gold >= 50 {
-                        tmp.push(e.clone());
-                    }
+            let include = match e.as_str() {
+                "Fountain of Cleansing" => cursed,
+                "Designer" => {
+                    matches!(dungeon_id, "TheCity" | "TheBeyond") && self.player.gold >= 75
                 }
-                "NoteForYourself" => {
-                    // AbstractDungeon.isNoteForYourselfAvailable: false at A15+.
-                    if self.ascension < 15 {
-                        tmp.push(e.clone());
-                    }
-                }
-                _ => tmp.push(e.clone()),
+                "Duplicator" => matches!(dungeon_id, "TheCity" | "TheBeyond"),
+                "FaceTrader" => matches!(dungeon_id, "TheCity" | "Exordium"),
+                "Knowing Skull" => dungeon_id == "TheCity" && self.player.hp > 12,
+                "N'loth" => dungeon_id == "TheCity" && self.player.relics.len() >= 2,
+                "The Joust" => dungeon_id == "TheCity" && self.player.gold >= 50,
+                "The Woman in Blue" => self.player.gold >= 50,
+                "SecretPortal" => false,
+                _ => true,
+            };
+            if include {
+                tmp.push(e.clone());
             }
         }
         if tmp.is_empty() {

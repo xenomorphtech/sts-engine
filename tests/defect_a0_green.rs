@@ -118,7 +118,7 @@ fn runic_pyramid_keeps_hand_at_end_of_turn() {
         Err(fail) => {
             assert!(
                 fail.last_ok > 346,
-                "213 still fails at BackToBasics purge last_ok={} want > 346: {fail}",
+                "213 still fails at shrine pool / WeMeetAgain last_ok={} want > 346: {fail}",
                 fail.last_ok
             );
         }
