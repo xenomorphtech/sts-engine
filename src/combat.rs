@@ -133,6 +133,10 @@ impl Combat {
         if player.has_relic(RelicId::Thread_and_Needle) {
             player.add_power(PowerId::PlatedArmor, 4);
         }
+        // FossilizedHelix.atBattleStart: BufferPower 1.
+        if player.has_relic(RelicId::FossilizedHelix) {
+            player.add_power(PowerId::Buffer, 1);
+        }
         if player.has_relic(RelicId::Happy_Flower) {
             if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Happy_Flower) {
                 r.counter += 1;
