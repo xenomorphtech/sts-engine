@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn decay_eot_and_weak_potion_lockstep() {
+    // 453310 Decay THORNS 2 after Frost so JawWorm 7 vs 6 block chips 1 HP.
+    // 684676 Weak Potion 3 so Lagavulin 20 → 15.
+    for (seed, min_ok) in [("453310", 55), ("684676", 56)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Decay/Weak potion last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn fear_and_cultist_potion_lockstep() {
     // 544590 / 381412 Fear Potion Vulnerable 3 then Strike (9 vs 6 / 1 through
     // Lagavulin block). 957958 Cultist Potion Ritual → EOT Strength 1, Strike 7.

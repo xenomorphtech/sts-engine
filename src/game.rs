@@ -384,6 +384,7 @@ impl Game {
                             if pot.id == PotionId::Fire
                                 || pot.id == PotionId::Explosive
                                 || pot.id == PotionId::Fear
+                                || pot.id == PotionId::Weak
                             {
                                 for (t, _) in combat.living() {
                                     actions.push(Action::Potion {
@@ -1392,6 +1393,14 @@ impl Game {
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         if let Some(m) = combat.monsters.get_mut(t) {
                             m.add_power(crate::ids::PowerId::Vulnerable, 3);
+                        }
+                    }
+                }
+                PotionId::Weak => {
+                    // WeakenPotion: WeakPower(target, 3, isSourceMonster=false).
+                    if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
+                        if let Some(m) = combat.monsters.get_mut(t) {
+                            m.add_power(crate::ids::PowerId::Weak, 3);
                         }
                     }
                 }
