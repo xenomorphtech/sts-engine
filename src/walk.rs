@@ -3,14 +3,13 @@
 use crate::action::Action;
 use crate::game::{Game, RewardKind, Screen};
 use crate::ids::Character;
-use crate::replay::load_commands;
+use crate::replay::{load_commands, open_jsonl};
 use crate::rng::RngSnapshot;
 use crate::Unlocks;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -276,8 +275,8 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
         ));
     }
     let cmds = load_commands(&cfg.commands).map_err(|e| dummy_fail(&cfg.name, &e.to_string()))?;
-    let file = File::open(&cfg.states).map_err(|e| dummy_fail(&cfg.name, &e.to_string()))?;
-    let mut lines = BufReader::new(file).lines();
+    let reader = open_jsonl(&cfg.states).map_err(|e| dummy_fail(&cfg.name, &e.to_string()))?;
+    let mut lines = reader.lines();
     let first_line = lines
         .next()
         .and_then(|r| r.ok())
@@ -800,6 +799,28 @@ pub fn runtime_root() -> PathBuf {
     crate_rel
 }
 
+fn jsonl_pair(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let states_gz = dir.join("states.jsonl.gz");
+    let cmds_gz = dir.join("commands.jsonl.gz");
+    let states = dir.join("states.jsonl");
+    let cmds = dir.join("commands.jsonl");
+    let states_p = if states_gz.exists() {
+        states_gz
+    } else if states.exists() {
+        states
+    } else {
+        return None;
+    };
+    let cmds_p = if cmds_gz.exists() {
+        cmds_gz
+    } else if cmds.exists() {
+        cmds
+    } else {
+        return None;
+    };
+    Some((states_p, cmds_p))
+}
+
 pub fn oracle_paths(character: Character, seed: &str, ascension: i32) -> (PathBuf, PathBuf) {
     let root = runtime_root();
     let preferred = root
@@ -807,8 +828,8 @@ pub fn oracle_paths(character: Character, seed: &str, ascension: i32) -> (PathBu
         .join(character.oracle_dir())
         .join(format!("a{ascension}"))
         .join(seed);
-    if preferred.join("states.jsonl").exists() {
-        return (preferred.join("states.jsonl"), preferred.join("commands.jsonl"));
+    if let Some(pair) = jsonl_pair(&preferred) {
+        return pair;
     }
     // Harvest sometimes files A0 hunts under a20 (summary default). Try both.
     for asc in [ascension, 0, 20] {
@@ -817,8 +838,8 @@ pub fn oracle_paths(character: Character, seed: &str, ascension: i32) -> (PathBu
             .join(character.oracle_dir())
             .join(format!("a{asc}"))
             .join(seed);
-        if dir.join("states.jsonl").exists() {
-            return (dir.join("states.jsonl"), dir.join("commands.jsonl"));
+        if let Some(pair) = jsonl_pair(&dir) {
+            return pair;
         }
     }
     (preferred.join("states.jsonl"), preferred.join("commands.jsonl"))
@@ -847,8 +868,8 @@ pub fn walk_from_runtime(
     let root = runtime_root();
     let cfg = WalkConfig {
         name: name.to_string(),
-        states: root.join(states_rel),
-        commands: root.join(commands_rel),
+        states: crate::replay::resolve_jsonl(root.join(states_rel)),
+        commands: crate::replay::resolve_jsonl(root.join(commands_rel)),
         character,
         unlocks,
         ascension: 0,

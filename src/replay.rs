@@ -2,14 +2,47 @@ use crate::action::Action;
 use crate::game::Game;
 use crate::ids::Character;
 use crate::unlocks::Unlocks;
+use flate2::read::GzDecoder;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Stream a JSONL file. `*.gz` is decoded in memory (no temp file).
+pub fn open_jsonl(path: impl AsRef<Path>) -> std::io::Result<Box<dyn BufRead>> {
+    let path = path.as_ref();
+    let file = File::open(path)?;
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    if name.ends_with(".gz") {
+        Ok(Box::new(BufReader::new(GzDecoder::new(file))))
+    } else {
+        Ok(Box::new(BufReader::new(file)))
+    }
+}
+
+/// Prefer `path.gz` when the uncompressed file is missing.
+pub fn resolve_jsonl(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if path.exists() {
+        return path.to_path_buf();
+    }
+    let gz = {
+        let mut s = path.as_os_str().to_os_string();
+        s.push(".gz");
+        PathBuf::from(s)
+    };
+    if gz.exists() {
+        gz
+    } else {
+        path.to_path_buf()
+    }
+}
 
 pub fn load_commands(path: impl AsRef<Path>) -> std::io::Result<Vec<Action>> {
-    let file = File::open(path)?;
     let mut out = Vec::new();
-    for line in BufReader::new(file).lines() {
+    for line in open_jsonl(path)?.lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;

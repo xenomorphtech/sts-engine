@@ -43,7 +43,10 @@ fn harvested_a0_oracles_walk_or_report() {
         }
         let seed = entry.file_name();
         let seed = seed.to_string_lossy();
-        if seed.contains(' ') || !(entry.path().join("states.jsonl")).exists() {
+        if seed.contains(' ')
+            || !(entry.path().join("states.jsonl").exists()
+                || entry.path().join("states.jsonl.gz").exists())
+        {
             continue;
         }
         seen += 1;
@@ -507,6 +510,41 @@ fn lagavulin_siphon_keeps_negative_strength() {
             assert!(
                 fail.last_ok > 117,
                 "713578 still fails at Lagavulin siphon last_ok={} want > 117: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn mind_blast_damage_is_draw_pile_size() {
+    // 543: Mind Blast applyPowers baseDamage = drawPile.size(); rust dealt 0
+    // so Looter lived (18) while Java ended combat.
+    let cfg = default_config(Character::Defect, "543", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 137,
+                "543 still fails at Mind Blast last_ok={} want > 137: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn secret_technique_opens_skill_from_deck_grid() {
+    // 806: Secret Technique GRID of skills; Choose 3 is Glacier, exhaust.
+    let cfg = default_config(Character::Defect, "806", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 146,
+                "806 still fails at Secret Technique last_ok={} want > 146: {fail}",
                 fail.last_ok
             );
         }

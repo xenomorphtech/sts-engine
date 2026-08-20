@@ -29,6 +29,6 @@ pub use action::Action;
 pub use env::TrainEnv;
 pub use game::{Game, Screen};
 pub use ids::Character;
-pub use replay::{load_commands, replay_seed};
+pub use replay::{load_commands, open_jsonl, replay_seed};
 pub use rng::{seed_from_string, RngSet, StsRandom};
 pub use unlocks::Unlocks;

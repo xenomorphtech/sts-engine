@@ -263,6 +263,8 @@ enum GridKind {
     DiscardToHand,
     /// Combat CardGroup select over the draw pile (Seek).
     DrawPileToHand,
+    /// SkillFromDeckToHandAction (Secret Technique): skills only.
+    SkillFromDeck,
     /// Bottled Flame / Lightning / Tornado: one purgeable card of this type.
     Bottle(CardType),
     /// The Library Read: 20 unique cards, obtain one.
@@ -983,6 +985,13 @@ impl Game {
         if kind == GridKind::DrawPileToHand {
             return seek_draw_grid_indices(&self.player.draw);
         }
+        if kind == GridKind::SkillFromDeck {
+            return self
+                .combat
+                .as_ref()
+                .map(|c| c.skill_from_deck.clone())
+                .unwrap_or_default();
+        }
         if kind == GridKind::Library {
             let n = self
                 .event
@@ -1015,6 +1024,7 @@ impl Game {
                 GridKind::Transform => purgeable_card(c),
                 GridKind::DiscardToHand
                 | GridKind::DrawPileToHand
+                | GridKind::SkillFromDeck
                 | GridKind::Bottle(_)
                 | GridKind::Library => true,
             })
@@ -1042,6 +1052,7 @@ impl Game {
                     kind,
                     GridKind::DiscardToHand
                         | GridKind::DrawPileToHand
+                        | GridKind::SkillFromDeck
                         | GridKind::Bottle(_)
                         | GridKind::Library
                 ) || self.grid.as_ref().is_some_and(|g| g.immediate)
@@ -1165,7 +1176,7 @@ impl Game {
                     combat::discard_pile_to_hand(&mut self.player, i);
                 }
             }
-            GridKind::DrawPileToHand => {
+            GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
                 for i in idxs.into_iter().rev() {
                     combat::draw_pile_to_hand(&mut self.player, i);
                 }
@@ -1242,7 +1253,12 @@ impl Game {
         let back_to_combat = self
             .grid
             .as_ref()
-            .is_some_and(|g| matches!(g.kind, GridKind::DiscardToHand | GridKind::DrawPileToHand));
+            .is_some_and(|g| {
+                matches!(
+                    g.kind,
+                    GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck
+                )
+            });
         let back_to_event = self.grid.as_ref().is_some_and(|g| g.return_event);
         let back_to_shop = self.grid.as_ref().is_some_and(|g| g.return_shop);
         let return_screen = self.grid.as_ref().and_then(|g| g.return_screen);
@@ -1479,6 +1495,8 @@ impl Game {
                             self.begin_draw_to_hand_select();
                         } else if combat.need_discovery {
                             self.begin_discovery(None, false);
+                        } else if combat.need_skill_from_deck {
+                            self.begin_skill_from_deck_select();
                         } else {
                             self.begin_armaments_select();
                         }
@@ -1768,7 +1786,7 @@ impl Game {
             id: PotionId::Slot,
             slot: slot as i32,
         };
-        let (all_dead, disc_to_hand, draw_to_hand, discovery, put_on_deck, exhaust_sel) =
+        let (all_dead, disc_to_hand, draw_to_hand, discovery, put_on_deck, exhaust_sel, skill_deck) =
             if let Some(c) = self.combat.as_ref() {
                 (
                     c.all_dead(),
@@ -1777,9 +1795,10 @@ impl Game {
                     c.need_discovery,
                     c.need_put_on_deck,
                     c.need_exhaust_select,
+                    c.need_skill_from_deck,
                 )
             } else {
-                (false, false, false, false, false, false)
+                (false, false, false, false, false, false, false)
             };
         if all_dead {
             self.finish_combat();
@@ -1795,6 +1814,8 @@ impl Game {
             self.begin_put_on_deck_select();
         } else if exhaust_sel {
             self.begin_exhaust_select();
+        } else if skill_deck {
+            self.begin_skill_from_deck_select();
         }
     }
 
@@ -4597,12 +4618,42 @@ impl Game {
             crate::combat::flush_dark_embrace(&mut self.player, combat, &mut self.rng);
             combat.need_discard_to_hand = false;
             combat.need_draw_to_hand = false;
+            combat.need_skill_from_deck = false;
+            combat.skill_from_deck.clear();
             if combat.all_dead() {
                 self.finish_combat();
                 return;
             }
         }
         self.screen = Screen::Combat;
+    }
+
+    fn begin_skill_from_deck_select(&mut self) {
+        let n = self
+            .combat
+            .as_ref()
+            .map(|c| c.skill_from_deck.len())
+            .unwrap_or(0);
+        if n <= 1 {
+            if n == 1 {
+                let i = self.combat.as_ref().unwrap().skill_from_deck[0];
+                combat::draw_pile_to_hand(&mut self.player, i);
+            }
+            self.finish_discard_to_hand();
+            return;
+        }
+        self.grid = Some(GridSelect {
+            kind: GridKind::SkillFromDeck,
+            needed: 1,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: false,
+            return_screen: None,
+            immediate: false,
+        });
+        self.screen = Screen::Grid;
     }
 
     fn begin_draw_to_hand_select(&mut self) {

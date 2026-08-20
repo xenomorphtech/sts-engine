@@ -24,6 +24,10 @@ pub struct Combat {
     pub need_discovery: bool,
     /// Forethought: HAND_SELECT then moveToBottomOfDeck + freeToPlayOnce.
     pub need_forethought: bool,
+    /// SkillFromDeckToHandAction GRID (Secret Technique).
+    pub need_skill_from_deck: bool,
+    /// Draw-pile indices in addToRandomSpot order for that GRID.
+    pub skill_from_deck: Vec<usize>,
     pub pending_exhaust: Option<Card>,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
@@ -242,6 +246,8 @@ impl Combat {
             need_draw_to_hand: false,
             need_discovery: false,
             need_forethought: false,
+            need_skill_from_deck: false,
+            skill_from_deck: Vec::new(),
             pending_exhaust: None,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
@@ -3426,6 +3432,8 @@ pub fn play_owned_card(
     combat.need_draw_to_hand = false;
     combat.need_discovery = false;
     combat.need_forethought = false;
+    combat.need_skill_from_deck = false;
+    combat.skill_from_deck.clear();
     combat.draw_after_exhaust = 0;
     let needs_select = (card.id == CardId::Armaments && !card.upgraded && !player.hand.is_empty())
         || (card.id == CardId::True_Grit && card.upgraded && !player.hand.is_empty())
@@ -3435,7 +3443,9 @@ pub fn play_owned_card(
         || (card.id == CardId::Seek && player.draw.len() > card.base_magic.max(1) as usize)
         || card.id == CardId::Discovery
         || (card.id == CardId::Purity && !player.hand.is_empty())
-        || (card.id == CardId::Forethought && !player.hand.is_empty());
+        || (card.id == CardId::Forethought && !player.hand.is_empty())
+        || (card.id == CardId::Secret_Technique
+            && player.draw.iter().filter(|c| c.card_type() == CardType::SKILL).count() > 1);
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         // Storm channels are addToBot after this card's ApplyPower, so snapshot
@@ -3593,6 +3603,7 @@ pub fn play_owned_card(
     if (card.id == CardId::Thinking_Ahead && card.exhaust)
         || (card.id == CardId::Hologram && combat.need_discard_to_hand)
         || (card.id == CardId::Seek && combat.need_draw_to_hand)
+        || (card.id == CardId::Secret_Technique && combat.need_skill_from_deck)
     {
         // UseCardAction runs after BetterDiscardPileToHandAction, so the played
         // card is still in limbo while GRID is open.
@@ -4594,6 +4605,40 @@ fn apply_card_effect(
             if !player.hand.is_empty() {
                 combat.need_forethought = true;
                 combat.need_put_on_deck = true;
+            }
+        }
+        CardId::Mind_Blast => {
+            // applyPowers: baseDamage = drawPile.size(), then DamageAction.
+            let base = player.draw.len() as i32;
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, base, 1);
+                }
+            }
+        }
+        CardId::Secret_Technique => {
+            // SkillFromDeckToHandAction: skills into tmp via addToRandomSpot.
+            combat.skill_from_deck.clear();
+            for (i, c) in player.draw.iter().enumerate() {
+                if c.card_type() != CardType::SKILL {
+                    continue;
+                }
+                if combat.skill_from_deck.is_empty() {
+                    combat.skill_from_deck.push(i);
+                } else {
+                    let idx = rng.card_random.random_int(combat.skill_from_deck.len() as i32 - 1)
+                        as usize;
+                    combat.skill_from_deck.insert(idx, i);
+                }
+            }
+            match combat.skill_from_deck.len() {
+                0 => {}
+                1 => {
+                    let i = combat.skill_from_deck[0];
+                    combat.skill_from_deck.clear();
+                    draw_pile_to_hand(player, i);
+                }
+                _ => combat.need_skill_from_deck = true,
             }
         }
         CardId::Purity => {
