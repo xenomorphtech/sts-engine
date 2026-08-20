@@ -90,6 +90,23 @@ fn registry_greens_still_walk() {
 }
 
 #[test]
+fn note_for_yourself_leave_stays_in_event() {
+    // 49: NoteForYourself Leave must not consume the COMPLETE click as a map node.
+    let cfg = default_config(Character::Defect, "49", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 75,
+                "49 still fails at NoteForYourself last_ok={} want > 75: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn monster_weak_vulnerable_floors_once() {
     // 34: SlaverRed Weak * player Vulnerable must chain then floor (14, not 13).
     let cfg = default_config(Character::Defect, "34", Unlocks::fixture(), 0);

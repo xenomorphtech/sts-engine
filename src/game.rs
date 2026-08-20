@@ -3025,6 +3025,10 @@ impl Game {
                 ]
             }
             "Lab" => vec!["[Search] #gFind #gsome #gPotions!".into()],
+            "NoteForYourself" => {
+                // NoteForYourself ctor: one INTRO option, then CHOOSE take/leave.
+                vec!["[Continue]".into()]
+            }
             "Bonfire Elementals" => vec!["[Continue]".into()],
             "FaceTrader" => {
                 // FaceTrader: A15+ gold=50 else 75; damage = maxHp/10 (min 1).
@@ -3426,6 +3430,32 @@ impl Game {
             // already resolved (match obtain or both cards face-down again).
             // Five attempts then CLEAN_UP/COMPLETE Leave.
             self.step_gremlin_match(*index);
+            return;
+        }
+        if id == "NoteForYourself" {
+            // INTRO Continue → CHOOSE take saved card or Leave → COMPLETE Leave/openMap.
+            // Default obtain card is Iron Wave (playerPref NOTE_CARD missing in fixture).
+            match screen {
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec![
+                            "[Take] Iron Wave.".into(),
+                            "[Leave]".into(),
+                        ];
+                    }
+                }
+                1 => {
+                    if *index == 0 {
+                        self.obtain_master_deck_card(CardId::Iron_Wave);
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                _ => self.open_map(),
+            }
             return;
         }
         if id == "FaceTrader" {
