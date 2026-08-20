@@ -51,6 +51,16 @@ impl MapNode {
     pub fn has_edges(&self) -> bool {
         !self.edges.is_empty()
     }
+
+    fn add_edge(&mut self, edge: MapEdge) {
+        if self
+            .edges
+            .iter()
+            .all(|existing| existing.cmp(&edge) != std::cmp::Ordering::Equal)
+        {
+            self.edges.push(edge);
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -132,7 +142,7 @@ fn create_path(map: &mut DungeonMap, edge: MapEdge, rng: &mut StsRandom) {
     let height = map.height() as i32;
     if edge.dst_y + 1 >= height {
         let current = map.node_mut(edge.dst_x, edge.dst_y);
-        current.edges.push(MapEdge {
+        current.add_edge(MapEdge {
             src_x: edge.dst_x,
             src_y: edge.dst_y,
             dst_x: 3,
@@ -210,7 +220,7 @@ fn create_path(map: &mut DungeonMap, edge: MapEdge, rng: &mut StsRandom) {
 
     {
         let current = map.node_mut(current_x, current_y);
-        current.edges.push(MapEdge {
+        current.add_edge(MapEdge {
             src_x: current_x,
             src_y: current_y,
             dst_x: new_edge_x,
@@ -355,6 +365,33 @@ pub fn generate_ending_map() -> DungeonMap {
         map.node_mut(dx, dy).parents.push((x, y));
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_nodes_reject_duplicate_edge_destinations() {
+        let mut rng = StsRandom::from_seed(1);
+        let map = generate_dungeon(15, 7, 6, &mut rng);
+        for row in &map.nodes {
+            for node in row {
+                for (index, edge) in node.edges.iter().enumerate() {
+                    assert!(
+                        node.edges[..index]
+                            .iter()
+                            .all(|existing| existing.cmp(edge) != std::cmp::Ordering::Equal),
+                        "duplicate edge from ({}, {}) to ({}, {})",
+                        node.x,
+                        node.y,
+                        edge.dst_x,
+                        edge.dst_y
+                    );
+                }
+            }
+        }
+    }
 }
 
 pub fn distribute_rooms(map: &mut DungeonMap, rng: &mut StsRandom, mut rooms: Vec<RoomKind>) {
