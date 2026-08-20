@@ -738,6 +738,20 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         },
         (CardId::Impatience, false) => CardStats::skill(0, -1, 2),
         (CardId::Impatience, true) => CardStats::skill(0, -1, 3),
+        (CardId::Flash_of_Steel, false) => CardStats::attack(0, 3),
+        (CardId::Flash_of_Steel, true) => CardStats::attack(0, 6),
+        (CardId::Panacea, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Panacea, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 2, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Genetic_Algorithm, false) => CardStats {
+            cost: 1, damage: -1, block: 1, magic: 2, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Genetic_Algorithm, true) => CardStats {
+            cost: 1, damage: -1, block: 1, magic: 3, exhaust: true, ethereal: false, innate: false,
+        },
         _ => {
             let def = id.def();
             CardStats {

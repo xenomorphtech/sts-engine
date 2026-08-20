@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn flash_panacea_genetic_rip_lockstep() {
+    // 989496 Flash of Steel draw, 328727 Panacea Artifact, 160663 Genetic
+    // Algorithm 1 block, 31732 Rip and Tear random hits without a target.
+    for (seed, min_ok) in [("989496", 7), ("328727", 13), ("160663", 22), ("31732", 22)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at unimplemented card last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn marbles_seek_impatience_lockstep() {
     // 478329 Bag of Marbles Vulnerable, 808348 Seek draw-pile GRID,
     // 971636 Impatience conditional draw.

@@ -3294,10 +3294,49 @@ fn apply_card_effect(
         }
         CardId::Swift_Strike | CardId::Rip_and_Tear => {
             let hits = if card.id == CardId::Rip_and_Tear { 2 } else { 1 };
-            if let Some(i) = target {
+            if card.id == CardId::Rip_and_Tear && target.is_none() {
+                // NewRipAndTearAction -> AttackDamageRandomEnemyAction: cardRandomRng
+                // getRandomMonster(null, true) per hit.
+                for _ in 0..hits {
+                    damage_random_alive(player, combat, rng, dmg);
+                }
+            } else if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, hits);
                 }
+            }
+        }
+        CardId::Flash_of_Steel => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                }
+            }
+            let n = draw_cards_rng(player, 1, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, n);
+        }
+        CardId::Panacea => {
+            player.add_power(PowerId::Artifact, card.base_magic.max(1) as i32);
+        }
+        CardId::Genetic_Algorithm => {
+            // Java misc starts at 1; GainBlock uses applyPowers() amount, then
+            // IncreaseMiscAction adds magic to masterDeck + in-battle copies.
+            let cur = if card.misc <= 0 { 1 } else { card.misc };
+            card.base_block = cur;
+            let blk = derived_block(card, player);
+            if blk > 0 {
+                player.block += blk;
+            }
+            let inc = card.base_magic.max(2) as i16;
+            card.misc = cur + inc;
+            card.base_block = card.misc;
+            if let Some(d) = player
+                .deck
+                .iter_mut()
+                .find(|c| c.id == CardId::Genetic_Algorithm && (c.misc == 0 || c.misc == cur))
+            {
+                d.misc = card.misc;
+                d.base_block = card.base_block;
             }
         }
         CardId::Barrage => {
@@ -3968,6 +4007,23 @@ fn apply_orb_passives(player: &mut Player, combat: &mut Combat, rng: &mut RngSet
         apply_front_orb_passive(player, combat, rng);
     }
     flush_guardian_defensive_block(combat);
+}
+
+fn damage_random_alive(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dmg: i32) {
+    let alive: Vec<usize> = combat
+        .monsters
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.alive() && !m.half_dead && !m.escaped)
+        .map(|(i, _)| i)
+        .collect();
+    if alive.is_empty() {
+        return;
+    }
+    let pick = rng.card_random.random_int(alive.len() as i32 - 1) as usize;
+    if let Some(m) = combat.monsters.get_mut(alive[pick]) {
+        damage_monster(m, player, rng, dmg, 1);
+    }
 }
 
 fn lightning_hit(combat: &mut Combat, rng: &mut RngSet, amount: i32) {
