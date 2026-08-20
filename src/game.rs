@@ -4428,9 +4428,12 @@ impl Game {
         } else {
             self.player.relics.push(inst);
         }
-        if id == RelicId::Whetstone || id == RelicId::War_Paint {
-            // ShowRelicObtainEffect: onEquip after the current room, like Old Coin.
-            self.pending_equip.push(id);
+        // Whetstone/War Paint onEquip shuffles with miscRng.randomLong() at
+        // instantObtain, not at the next Map open (seed 1 Rip and Tear+).
+        if id == RelicId::Whetstone {
+            self.upgrade_random_cards(crate::ids::CardType::ATTACK, 2);
+        } else if id == RelicId::War_Paint {
+            self.upgrade_random_cards(crate::ids::CardType::SKILL, 2);
         }
         // Bottled*.onEquip: GRID of purgeable cards of that type. ChoiceDriver
         // closes immediately (not upgrade/transform/purge). The picked card

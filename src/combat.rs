@@ -180,6 +180,13 @@ impl Combat {
         if player.has_relic(RelicId::Blood_Vial) {
             player.hp = (player.hp + 2).min(player.max_hp);
         }
+        // Pantograph.atBattleStart: HealAction(25) if any monster is BOSS.
+        if player.has_relic(RelicId::Pantograph)
+            && is_boss_encounter(encounter)
+            && !player.has_relic(RelicId::Mark_of_the_Bloom)
+        {
+            player.hp = (player.hp + 25).min(player.max_hp);
+        }
         red_skull_at_battle_start(player);
         // AbstractPlayer.preBattlePrep: maxOrbs=0, orbs.clear, then
         // increaseMaxOrbSlots(masterMaxOrbs, false). Capacitor / Consume must not
@@ -262,6 +269,19 @@ fn is_elite_encounter(id: EncounterId) -> bool {
             | EncounterId::Slavers
             | EncounterId::GremlinLeader
             | EncounterId::GiantHead
+    )
+}
+
+fn is_boss_encounter(id: EncounterId) -> bool {
+    matches!(
+        id,
+        EncounterId::Hexaghost
+            | EncounterId::TheGuardian
+            | EncounterId::SlimeBoss
+            | EncounterId::Automaton
+            | EncounterId::AwakenedOne
+            | EncounterId::ShieldAndSpear
+            | EncounterId::CorruptHeart
     )
 }
 
@@ -2482,7 +2502,11 @@ fn centennial_puzzle_was_hp_lost(player: &mut Player, rng: &mut RngSet) {
         return;
     }
     r.used_up = true;
-    let _ = draw_cards_rng(player, 3, Some(rng));
+    // DrawCardAction is addToTop from wasHPLost; lethal damage
+    // clearPostCombatActions drops DRAW (seed 452 death hand).
+    if player.hp > 0 {
+        let _ = draw_cards_rng(player, 3, Some(rng));
+    }
 }
 
 pub fn red_skull_on_hp_change(player: &mut Player) {
@@ -2971,6 +2995,19 @@ pub fn play_card(
     play_owned_card(player, combat, card, target, rng, dungeon)
 }
 
+/// Java `AbstractCard.canUse` for STATUS/CURSE with cost -2 (Dazed, Wound, Burn).
+/// PlayTopCard still queues them; GameActionManager then skips onUseCard/Hex/InkBottle
+/// and UseCardAction discards (ethereal does not exhaust on this path).
+fn status_or_curse_unplayable(card: &Card, player: &Player) -> bool {
+    if card.card_type() == CardType::STATUS && card.cost_for_turn < -1 {
+        !player.has_relic(RelicId::Medical_Kit)
+    } else if card.card_type() == CardType::CURSE && card.cost_for_turn < -1 {
+        !player.has_relic(RelicId::Blue_Candle)
+    } else {
+        false
+    }
+}
+
 /// UseCardAction for a card already taken off hand or draw (PlayTopCardAction).
 pub fn play_owned_card(
     player: &mut Player,
@@ -2980,6 +3017,18 @@ pub fn play_owned_card(
     rng: &mut RngSet,
     dungeon: Option<&Dungeon>,
 ) -> bool {
+    if status_or_curse_unplayable(&card, player) {
+        // UseCardAction.update clears freeToPlayOnce before discard. All For
+        // One's AllCostToHandAction pulls cost==0 OR freeToPlayOnce (seed 213).
+        card.free_to_play_once = false;
+        if card.exhaust {
+            exhaust_card(player, combat, card, rng);
+        } else if card.card_type() != CardType::POWER {
+            player.discard.push(card);
+        }
+        flush_dark_embrace(player, combat, rng);
+        return false;
+    }
     let cost = if card.free_to_play_once || card.cost_for_turn < 0 {
         0
     } else {
@@ -3025,8 +3074,7 @@ pub fn play_owned_card(
         flush_curl_up(combat);
         flush_guardian_defensive_block(combat);
         flush_ink_bottle(player, combat, rng);
-        // HexPower.onUseCard addToBot MakeTempCardInDrawPile after relics
-        // (InkBottle DrawCardAction) and after card.use() draws.
+        // HexPower.onUseCard: Java checks card.type != ATTACK.
         if card.card_type() != CardType::ATTACK && player.power_amount(PowerId::Hex) > 0 {
             let n = player.power_amount(PowerId::Hex);
             for _ in 0..n {
@@ -4362,7 +4410,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         apply_group_move(combat, i, id, used_move, rng);
         if player.hp <= 0 && !try_cheat_death(player) {
             player.hp = 0;
-            player.hand.clear();
             return;
         }
         flush_spore_cloud(player, combat);
@@ -4438,7 +4485,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
 
     if player.hp <= 0 && !try_cheat_death(player) {
         player.hp = 0;
-        player.hand.clear();
         return;
     }
     if combat.all_dead() {

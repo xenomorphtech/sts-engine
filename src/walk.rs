@@ -63,6 +63,10 @@ pub struct Side {
     pub powers: Vec<String>,
     pub mons: Vec<(String, i32)>,
     pub hand: Vec<String>,
+    pub draw: Vec<String>,
+    pub discard: Vec<String>,
+    pub exhaust: Vec<String>,
+    pub relic_counters: Vec<(String, i32)>,
     pub event: String,
     pub options: Vec<String>,
     pub rewards: Vec<String>,
@@ -108,6 +112,12 @@ fn write_side(f: &mut Formatter<'_>, s: &Side) -> std::fmt::Result {
     writeln!(f, "  deck={:?}", s.deck)?;
     writeln!(f, "  relics={:?} pots={:?} powers={:?}", s.relics, s.potions, s.powers)?;
     writeln!(f, "  mons={:?} hand={:?}", s.mons, s.hand)?;
+    if !s.draw.is_empty() || !s.discard.is_empty() || !s.exhaust.is_empty() {
+        writeln!(f, "  draw={:?} disc={:?} exh={:?}", s.draw, s.discard, s.exhaust)?;
+    }
+    if !s.relic_counters.is_empty() {
+        writeln!(f, "  relic_counters={:?}", s.relic_counters)?;
+    }
     if !s.event.is_empty() {
         writeln!(f, "  event={}", s.event)?;
     }
@@ -199,12 +209,20 @@ struct PowerAmt {
 #[derive(Deserialize)]
 struct Named {
     id: String,
+    #[serde(default)]
+    counter: i32,
 }
 
 #[derive(Deserialize)]
 struct CombatSnap {
     #[serde(default)]
     hand: Vec<Named>,
+    #[serde(default)]
+    draw_pile: Vec<Named>,
+    #[serde(default)]
+    discard_pile: Vec<Named>,
+    #[serde(default)]
+    exhaust_pile: Vec<Named>,
     #[serde(default)]
     monsters: Vec<Mon>,
 }
@@ -361,6 +379,22 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
             });
         }
         last_ok = seq;
+        if std::env::var_os("STS_WALK_INK").is_some() {
+            let ink = game
+                .player
+                .relics
+                .iter()
+                .find(|r| r.id == crate::ids::RelicId::InkBottle)
+                .map(|r| r.counter)
+                .unwrap_or(-99);
+            eprintln!(
+                "seq={seq} ink={ink} hand={:?} draw={:?} disc_n={} played_cmd={}",
+                rust.hand,
+                rust.draw,
+                rust.discard.len(),
+                applied
+            );
+        }
         Ok(())
     };
 
@@ -422,6 +456,15 @@ fn rust_side(game: &Game) -> Side {
             .map(|c| c.monsters.iter().map(|m| (m.id.sts_id().to_string(), m.hp)).collect())
             .unwrap_or_default(),
         hand: game.player.hand.iter().map(|c| c.sts_id().to_string()).collect(),
+        draw: game.player.draw.iter().map(|c| c.sts_id().to_string()).collect(),
+        discard: game.player.discard.iter().map(|c| c.sts_id().to_string()).collect(),
+        exhaust: game.player.exhaust.iter().map(|c| c.sts_id().to_string()).collect(),
+        relic_counters: game
+            .player
+            .relics
+            .iter()
+            .map(|r| (r.id.sts_id().to_string(), r.counter))
+            .collect(),
         event: game.event.as_ref().map(|e| e.id.clone()).unwrap_or_default(),
         options: match game.screen {
             Screen::Event => game.event.as_ref().map(|e| e.options.clone()).unwrap_or_default(),
@@ -556,6 +599,27 @@ fn java_side(snap: &Envelope) -> Side {
             .as_ref()
             .map(|c| c.hand.iter().map(|c| c.id.clone()).collect())
             .unwrap_or_default(),
+        draw: st
+            .combat
+            .as_ref()
+            .map(|c| c.draw_pile.iter().map(|c| c.id.clone()).collect())
+            .unwrap_or_default(),
+        discard: st
+            .combat
+            .as_ref()
+            .map(|c| c.discard_pile.iter().map(|c| c.id.clone()).collect())
+            .unwrap_or_default(),
+        exhaust: st
+            .combat
+            .as_ref()
+            .map(|c| c.exhaust_pile.iter().map(|c| c.id.clone()).collect())
+            .unwrap_or_default(),
+        relic_counters: st
+            .player
+            .relics
+            .iter()
+            .map(|r| (r.id.clone(), r.counter))
+            .collect(),
         event: event.0,
         options: event.1,
         rewards,

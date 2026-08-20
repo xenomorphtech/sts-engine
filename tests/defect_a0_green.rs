@@ -108,6 +108,41 @@ fn artifact_absorbs_lagavulin_siphon_dexterity() {
 }
 
 #[test]
+fn whetstone_upgrades_attacks_at_obtain() {
+    // Seed 1: Whetstone onEquip must use miscRng at instantObtain so Rip and
+    // Tear is + (9x2) vs Slime Boss, not unupgraded 7x2 (mons 123 vs 119).
+    let cfg = default_config(Character::Defect, "1", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 162,
+                "1 still fails at Whetstone Rip and Tear last_ok={} want > 162: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn pantograph_heals_at_boss() {
+    // Seed 5: Pantograph.atBattleStart HealAction(25) vs Hexaghost. 67+25 cap 75.
+    let cfg = default_config(Character::Defect, "5", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 148,
+                "5 still fails at Pantograph boss heal last_ok={} want > 148: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn runic_pyramid_keeps_hand_at_end_of_turn() {
     // 213: Runic Pyramid skips DiscardAtEndOfTurnAction. Rust discarded
     // Hologram/Consume/Defend_B; Java kept them (hand 8 vs 5 after the draw).
@@ -117,12 +152,120 @@ fn runic_pyramid_keeps_hand_at_end_of_turn() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 346,
-                "213 still fails at shrine pool / WeMeetAgain last_ok={} want > 346: {fail}",
+                fail.last_ok > 429,
+                "213 still fails after Distilled Chaos Dazed autoplay last_ok={} want > 429: {fail}",
                 fail.last_ok
             );
         }
     }
+}
+
+#[test]
+fn hex_does_not_insert_dazed_on_cold_snap() {
+    // 213 seq 429: Cold Snap is an Attack; HexPower.onUseCard skips ATTACK.
+    // Extra Dazed in hand meant rust treated the play as a non-attack.
+    use sts_engine::card::Card;
+    use sts_engine::combat::{play_card, Combat};
+    use sts_engine::creature::{Orb, OrbKind, Player, RelicInstance};
+    use sts_engine::ids::{CardId, EncounterId, PowerId, RelicId};
+    use sts_engine::rng::RngSet;
+
+    let mut rng = RngSet::generate_seeds(213);
+    let mut player = Player::defect();
+    player.energy = 3;
+    player.max_orbs = 2;
+    player.orbs = vec![
+        Orb { kind: OrbKind::Frost, evoke: 9 },
+        Orb { kind: OrbKind::Lightning, evoke: 12 },
+    ];
+    player.add_power(PowerId::Hex, 1);
+    player.add_power(PowerId::Focus, 4);
+    player.relics.push(RelicInstance {
+        id: RelicId::InkBottle,
+        counter: 8,
+        used_up: false,
+    });
+    let mut combat = Combat::start(EncounterId::Cultist, &mut player, &mut rng, 29, 213, 0);
+    player.orbs = vec![
+        Orb { kind: OrbKind::Frost, evoke: 9 },
+        Orb { kind: OrbKind::Lightning, evoke: 12 },
+    ];
+    player.max_orbs = 2;
+    player.hand = vec![
+        Card::new(CardId::Skim),
+        Card::new(CardId::Capacitor),
+        Card::new(CardId::Buffer),
+        Card::new(CardId::Capacitor),
+        Card::new(CardId::Dazed),
+        Card::new(CardId::Dazed),
+        Card::new(CardId::Dazed),
+        Card::new(CardId::Cold_Snap),
+    ];
+    player.draw.clear();
+    player.discard.clear();
+    play_card(&mut player, &mut combat, 7, Some(0), &mut rng, None);
+    let dazed_hand = player.hand.iter().filter(|c| c.id == CardId::Dazed).count();
+    let dazed_draw = player.draw.iter().filter(|c| c.id == CardId::Dazed).count();
+    assert_eq!(
+        dazed_hand, 3,
+        "Cold Snap+Hex must not add Dazed; hand_dazed={dazed_hand} draw_dazed={dazed_draw} hand={:?}",
+        player.hand.iter().map(|c| c.sts_id()).collect::<Vec<_>>()
+    );
+    assert_eq!(dazed_draw, 0, "Hex must not insert Dazed on an Attack");
+}
+
+#[test]
+fn autoplay_dazed_skips_hex_and_ink_bottle() {
+    // PlayTopCard of Dazed: canUse is false, UseCardAction.dontTriggerOnUseCard.
+    // Rust used to Hex-insert and tick InkBottle, leaving an extra Dazed for
+    // seed 213 Cold Snap to draw.
+    use sts_engine::card::Card;
+    use sts_engine::combat::{play_owned_card, Combat};
+    use sts_engine::creature::{Player, RelicInstance};
+    use sts_engine::ids::{CardId, EncounterId, PowerId, RelicId};
+    use sts_engine::rng::RngSet;
+
+    let mut rng = RngSet::generate_seeds(213);
+    let mut player = Player::defect();
+    player.add_power(PowerId::Hex, 1);
+    player.relics.push(RelicInstance {
+        id: RelicId::InkBottle,
+        counter: 9,
+        used_up: false,
+    });
+    let mut combat = Combat::start(EncounterId::Cultist, &mut player, &mut rng, 1, 213, 0);
+    player.hand.clear();
+    player.draw.clear();
+    player.discard.clear();
+    play_owned_card(
+        &mut player,
+        &mut combat,
+        Card::new(CardId::Dazed),
+        None,
+        &mut rng,
+        None,
+    );
+    let ink = player
+        .relics
+        .iter()
+        .find(|r| r.id == RelicId::InkBottle)
+        .map(|r| r.counter)
+        .unwrap_or(-1);
+    assert_eq!(ink, 9, "unplayable Dazed must not tick InkBottle");
+    assert_eq!(
+        player.draw.iter().filter(|c| c.id == CardId::Dazed).count(),
+        0,
+        "Hex must not fire on unplayable Dazed autoplay"
+    );
+    assert_eq!(
+        player.discard.iter().filter(|c| c.id == CardId::Dazed).count(),
+        1,
+        "Dazed autoplay still discards via UseCardAction"
+    );
+    assert!(
+        !player.discard.iter().any(|c| c.id == CardId::Dazed && c.free_to_play_once),
+        "UseCardAction clears freeToPlayOnce so All For One does not retrieve Dazed"
+    );
 }
 
 #[test]
