@@ -2993,21 +2993,41 @@ pub fn play_top_card(
     rng: &mut RngSet,
     dungeon: Option<&Dungeon>,
 ) {
-    if player.draw.is_empty() && player.discard.is_empty() {
-        return;
+    play_top_cards(player, combat, &[target], exhausts, rng, dungeon);
+}
+
+/// DistilledChaosPotion queues 3 PlayTopCardActions, then the action manager
+/// drains that queue before any UseCardAction discards. Empty-deck shuffle
+/// therefore sees the in-flight cards still in limbo, not in discard
+/// (seed 38: Dualcast then 5-card shuffle, not 6).
+pub fn play_top_cards(
+    player: &mut Player,
+    combat: &mut Combat,
+    targets: &[Option<usize>],
+    exhausts: bool,
+    rng: &mut RngSet,
+    dungeon: Option<&Dungeon>,
+) {
+    let mut pending: Vec<(Card, Option<usize>)> = Vec::new();
+    for &target in targets {
+        if player.draw.is_empty() && player.discard.is_empty() {
+            break;
+        }
+        if player.draw.is_empty() {
+            reshuffle_if_needed(player, rng);
+        }
+        let Some(mut card) = player.draw.pop() else {
+            break;
+        };
+        card.free_to_play_once = true;
+        if exhausts {
+            card.exhaust = true;
+        }
+        pending.push((card, target));
     }
-    if player.draw.is_empty() {
-        reshuffle_if_needed(player, rng);
+    for (card, target) in pending {
+        let _ = play_owned_card(player, combat, card, target, rng, dungeon);
     }
-    let Some(mut card) = player.draw.pop() else {
-        return;
-    };
-    // NewQueueCardAction autoplay: energy cost 0.
-    card.free_to_play_once = true;
-    if exhausts {
-        card.exhaust = true;
-    }
-    let _ = play_owned_card(player, combat, card, target, rng, dungeon);
 }
 
 /// MonsterGroup.getRandomMonster(null, true, rng): alive, not half-dead.

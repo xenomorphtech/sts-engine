@@ -1494,6 +1494,9 @@ impl Game {
                 PotionId::DistilledChaos => {
                     // DistilledChaosPotion: 3x PlayTopCardAction. Targets are
                     // rolled up front via cardRandomRng.getRandomMonster.
+                    // The three PlayTopCardActions drain before UseCardAction
+                    // discards, so a mid-batch empty-deck shuffle must not
+                    // include the in-flight cards (seed 38 Dualcast).
                     if let Some(combat) = self.combat.as_mut() {
                         let mut targets = Vec::new();
                         for _ in 0..3 {
@@ -1502,16 +1505,14 @@ impl Game {
                                 &mut self.rng.card_random,
                             ));
                         }
-                        for t in targets {
-                            combat::play_top_card(
-                                &mut self.player,
-                                combat,
-                                t,
-                                false,
-                                &mut self.rng,
-                                Some(&self.dungeon),
-                            );
-                        }
+                        combat::play_top_cards(
+                            &mut self.player,
+                            combat,
+                            &targets,
+                            false,
+                            &mut self.rng,
+                            Some(&self.dungeon),
+                        );
                     }
                 }
                 PotionId::SneckoOil => {

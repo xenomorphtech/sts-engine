@@ -90,6 +90,23 @@ fn registry_greens_still_walk() {
 }
 
 #[test]
+fn distilled_chaos_shuffles_without_in_flight_cards() {
+    // 38: Dualcast is still in limbo when the next PlayTopCard shuffles.
+    let cfg = default_config(Character::Defect, "38", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 92,
+                "38 still fails at Distilled Chaos last_ok={} want > 92: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn note_for_yourself_leave_stays_in_event() {
     // 49: NoteForYourself Leave must not consume the COMPLETE click as a map node.
     let cfg = default_config(Character::Defect, "49", Unlocks::fixture(), 0);
