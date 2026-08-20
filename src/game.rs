@@ -1646,17 +1646,33 @@ impl Game {
                 }
                 PotionId::Fire => {
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
+                        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
                         if let Some(m) = combat.monsters.get_mut(t) {
                             combat::deal_thorns(m, 20);
                         }
+                        // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
+                        // addToBot Draw+Energy if combat is not over (seed 773).
+                        combat::gremlin_horn_on_kills(
+                            &mut self.player,
+                            combat,
+                            &mut self.rng,
+                            dead_before,
+                        );
                     }
                 }
                 PotionId::Explosive => {
                     // ExplosivePotion.use: DamageAllEnemiesAction(createDamageMatrix(10, true), NORMAL).
                     if let Some(combat) = self.combat.as_mut() {
+                        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
                         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
                             combat::deal_thorns(m, 10);
                         }
+                        combat::gremlin_horn_on_kills(
+                            &mut self.player,
+                            combat,
+                            &mut self.rng,
+                            dead_before,
+                        );
                     }
                 }
                 PotionId::LiquidBronze => self.player.add_power(crate::ids::PowerId::Thorns, 3),

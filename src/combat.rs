@@ -4856,7 +4856,7 @@ fn apply_card_effect(
 
 /// GremlinHorn.onMonsterDeath: if this kill did not end combat, +1 energy and draw 1.
 /// Sequential deaths in one card: the last remaining enemy dying does not trigger.
-fn gremlin_horn_on_kills(
+pub(crate) fn gremlin_horn_on_kills(
     player: &mut Player,
     combat: &mut Combat,
     rng: &mut RngSet,

@@ -555,6 +555,25 @@ fn speed_potion_is_combat_only() {
 }
 
 #[test]
+fn explosive_potion_triggers_gremlin_horn() {
+    // 773: ExplosivePotion DamageAllEnemiesAction kills AcidSlime_M.
+    // GremlinHorn.onMonsterDeath addToBot Draw+Energy while the other M lives
+    // (hand 6 with Strike_B, energy 4). Rust dealt the 10 and skipped Horn.
+    let cfg = default_config(Character::Defect, "773", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 160,
+                "773 still fails at Explosive/Gremlin Horn last_ok={} want > 160: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn duplication_tempest_keeps_energy_on_use() {
     // 991: DuplicationPower queues CardQueueItem(tmp, m, card.energyOnUse).
     // The copy channels X=3 Lightning after the original spent the energy.
