@@ -4544,6 +4544,19 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             let allies = combat.monsters.iter().filter(|m| m.alive()).count() as i32;
             combat.monsters[i].roll_move_group(rng, missing, allies, i as i32);
         }
+        // AcidSlime_L.damage: setMove(SPLIT) plus addToBottom SetMoveAction
+        // after RollMoveAction, so a thorns hit that crosses 50% HP during
+        // takeTurn still wins over getMove (seed 776 Bronze Scales).
+        if combat.monsters[i].alive()
+            && matches!(
+                combat.monsters[i].id,
+                MonsterId::AcidSlimeL | MonsterId::SpikeSlimeL
+            )
+            && combat.monsters[i].split_triggered
+            && combat.monsters[i].hp <= combat.monsters[i].max_hp / 2
+        {
+            combat.monsters[i].set_move(3, Intent::Unknown, 0, 1);
+        }
         i += 1;
     }
     resolve_darklings(combat);

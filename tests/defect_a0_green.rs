@@ -144,6 +144,25 @@ fn slime_boss_split_inserts_by_draw_x() {
 }
 
 #[test]
+fn acid_slime_l_split_survives_roll_move() {
+    // Seed 776: Bronze Scales thorns during AcidSlime_L tackle crosses 50% HP.
+    // Java queues SetMoveAction(SPLIT) after RollMoveAction so getMove cannot
+    // overwrite the split (player 29 vs 13, two AcidSlime_M kids).
+    let cfg = default_config(Character::Defect, "776", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 73,
+                "776 still fails at AcidSlime_L split last_ok={} want > 73: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn clumsy_is_ethereal_at_end_of_turn() {
     // Seed 944: Clumsy in hand at EOT must ExhaustSpecificCardAction, not
     // discard-and-reshuffle (hand Compile Driver vs Strike_B at seq 56).
