@@ -1199,17 +1199,10 @@ impl Game {
                 None => return,
             }
         };
-        let can_use_map_potion = self
-            .player
-            .potions
-            .iter()
-            .any(|p| p.id == PotionId::FruitJuice);
-        if !self.dungeon.first_room_chosen && can_use_map_potion {
-            self.pending_room = Some((mx, my, room));
-            self.dungeon.first_room_chosen = true;
-        } else {
-            self.enter_room(mx, my, room);
-        }
+        // Map node click always enters. Fruit Juice is usable on the map as a
+        // Potion action before this choose; deferring entry left rust on Map
+        // while Java was already in the first hallway (191892).
+        self.enter_room(mx, my, room);
     }
 
     fn reset_player_between_rooms(&mut self) {

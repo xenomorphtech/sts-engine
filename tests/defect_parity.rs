@@ -88,6 +88,43 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn fruit_juice_does_not_defer_first_map_node() {
+    // 191892: Neow three potions, Fruit Juice in belt. Map choose must enter
+    // floor 1, not park pending_room.
+    let cfg = default_config(Character::Defect, "191892", Unlocks::fixture(), 20);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 5,
+                "Fruit Juice still deferred first hallway: {fail}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unimplemented_defect_cards_and_bronze_scales_lockstep() {
+    // First-combat reds: Fission draw (107249), Multi-Cast evokes (112185),
+    // Finesse block+draw (779907), Bronze Scales thorns (511896).
+    for (seed, min_ok) in [("107249", 8), ("112185", 4), ("779907", 8), ("511896", 7)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at the unimplemented effect last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn maw_bank_grants_gold_on_first_hallway() {
     // 116441: Neow MawBank, Java gold=111 on floor 1. Missing onEnterRoom left rust at 99.
     let cfg = default_config(Character::Defect, "116441", Unlocks::fixture(), 20);

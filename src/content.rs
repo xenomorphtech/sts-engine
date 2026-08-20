@@ -694,6 +694,14 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Rainbow, true) => CardStats {
             cost: 1, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
         },
+        (CardId::Fission, false) | (CardId::Fission, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Multi_Cast, false) | (CardId::Multi_Cast, true) => CardStats {
+            cost: -1, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Finesse, false) => CardStats::skill(0, 2, -1),
+        (CardId::Finesse, true) => CardStats::skill(0, 4, -1),
         _ => {
             let def = id.def();
             CardStats {

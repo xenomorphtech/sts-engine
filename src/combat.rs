@@ -179,6 +179,10 @@ impl Combat {
         if player.has_relic(RelicId::DataDisk) {
             player.add_power(PowerId::Focus, 1);
         }
+        // BronzeScales.atBattleStart: ApplyPowerAction Thorns 3 (addToTop).
+        if player.has_relic(RelicId::Bronze_Scales) {
+            player.add_power(PowerId::Thorns, 3);
+        }
 
         Self {
             encounter,
@@ -2904,6 +2908,43 @@ fn apply_card_effect(
             evoke_front(player, combat, rng, false);
             evoke_front(player, combat, rng, true);
         }
+        CardId::Fission => {
+            // FissionAction: capture filledOrbCount, then addToTop Draw, GainEnergy,
+            // then EvokeAll (upgraded) or RemoveAllOrbs (unupgraded).
+            let n = player.orbs.len() as i32;
+            if card.upgraded {
+                while !player.orbs.is_empty() {
+                    evoke_front(player, combat, rng, true);
+                }
+            } else {
+                player.orbs.clear();
+            }
+            player.energy += n;
+            let drawn = draw_cards_rng(player, n, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, drawn);
+        }
+        CardId::Multi_Cast => {
+            // MulticastAction: if hasOrb, effect = energyOnUse (+2 Chemical X, +1 upgraded).
+            // EvokeWithoutRemoving (effect-1) times, then EvokeOrbAction (removes).
+            if !player.orbs.is_empty() {
+                let mut effect = player.energy;
+                if player.has_relic(RelicId::Chemical_X) {
+                    effect += 2;
+                }
+                if card.upgraded {
+                    effect += 1;
+                }
+                if effect > 0 {
+                    for _ in 0..(effect - 1) {
+                        evoke_front(player, combat, rng, false);
+                    }
+                    evoke_front(player, combat, rng, true);
+                    if !card.free_to_play_once {
+                        player.energy = 0;
+                    }
+                }
+            }
+        }
         CardId::Ball_Lightning => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
@@ -3042,6 +3083,13 @@ fn apply_card_effect(
             if block > 0 {
                 player.block += block;
             }
+        }
+        CardId::Finesse => {
+            if block > 0 {
+                player.block += block;
+            }
+            let n = draw_cards_rng(player, 1, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, n);
         }
         CardId::Hologram => {
             if block > 0 {
