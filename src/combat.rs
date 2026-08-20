@@ -4733,17 +4733,24 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // then each Burn L-to-R so Fairy/Lizard Tail can revive mid-sequence.
     apply_orb_passives(player, combat, rng);
     flush_spore_cloud(player, combat);
+    if player.hp <= 0 {
+        return;
+    }
     // triggerOnEndOfTurnForPlayingCard L-to-R after orbs. Burn 2/4, Decay
     // THORNS 2 (hits block). 453310 Decay after Frost left 1 HP vs JawWorm.
-    let eot_autoplay: Vec<(CardId, bool)> = player
-        .hand
-        .iter()
-        .filter(|c| is_end_turn_autoplay(c.id))
-        .map(|c| (c.id, c.upgraded))
-        .collect();
+    // UseCardAction discards each autoplayed card as it resolves. A lethal
+    // Burn (seed 255 Hexaghost, 2 HP + Burn in hand) cancels the rest of
+    // EOT: remaining cards stay in hand, DiscardAtEndOfTurn is skipped.
     // Regret.use LoseHP(hand.size()) is captured at trigger, before discard.
     let regret_n = player.hand.len() as i32;
-    for (id, upgraded) in eot_autoplay {
+    let mut i = 0;
+    while i < player.hand.len() {
+        let id = player.hand[i].id;
+        if !is_end_turn_autoplay(id) {
+            i += 1;
+            continue;
+        }
+        let upgraded = player.hand[i].upgraded;
         match id {
             CardId::Shame => {
                 // Shame.use: FrailPower(player, 1, true) — justApplied.
@@ -4780,6 +4787,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 }
             }
             _ => {}
+        }
+        let card = player.hand.remove(i);
+        player.discard.push(card);
+        if player.hp <= 0 {
+            return;
         }
     }
     // DiscardAtEndOfTurnAction: retain/selfRetain cards are pulled to limbo
