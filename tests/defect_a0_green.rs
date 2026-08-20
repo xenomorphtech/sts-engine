@@ -555,6 +555,26 @@ fn speed_potion_is_combat_only() {
 }
 
 #[test]
+fn guardian_twin_slam_then_mode_shift() {
+    // 32: Twin Slam queues ChangeState Offensive then 8x2. ApplyPower(Mode
+    // Shift) / Reset Threshold are addToBottom of ChangeState, so player
+    // Thorns 3x2 do not stick on the new Mode Shift. Rust applied Mode Shift
+    // first (24 leftover, Sweeping Beam hit 20 block: 97 vs 91).
+    let cfg = default_config(Character::Defect, "32", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 161,
+                "32 still fails at Guardian Twin Slam/Mode Shift last_ok={} want > 161: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn tiny_house_opens_combat_reward() {
     // 906: TinyHouse.onEquip increaseMaxHp(5) and CombatRewardScreen.open
     // (gold 50, miscRng potion, CARD). Rust stayed on BossRelic at 36 HP.

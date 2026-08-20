@@ -2487,17 +2487,25 @@ impl Monster {
                 self.set_move(4, Intent::AttackBuff, 8, 2);
             }
             (MonsterId::TheGuardian, 4) => {
-                // Twin Slam: Offensive Mode first (Mode Shift + lose block), then 8x2.
+                // Twin Slam takeTurn queues ChangeState("Offensive Mode") then
+                // two DamageActions. ChangeState queues ApplyPower(ModeShift)
+                // / Reset Threshold addToBottom, so the 8x2 (and player Thorns)
+                // resolve while still defensive; Reset then wipes dmgTaken
+                // (seed 32 Mode Shift 40 not 34, Sweeping Beam 6 vs leftover 20).
+                let _ = hit_player(player, self, rng, 8, 2);
                 self.split_triggered = false;
                 self.add_power(PowerId::ModeShift, self.extra);
                 self.block = 0;
-                let _ = hit_player(player, self, rng, 8, 2);
                 self.powers.retain(|p| p.id != PowerId::SharpHide);
                 self.set_move(5, Intent::Attack, 5, 4);
             }
             (MonsterId::TheGuardian, 5) => {
                 let _ = hit_player(player, self, rng, 5, 4);
-                self.set_move(6, Intent::Defend, 0, 1);
+                // takeTurn setMove(CHARGE_UP) runs before queued DamageActions.
+                // Mode Shift ChangeState CLOSE_UP after those hits must win.
+                if !self.split_triggered {
+                    self.set_move(6, Intent::Defend, 0, 1);
+                }
             }
             (MonsterId::TheGuardian, 6) => {
                 self.block += 9;
