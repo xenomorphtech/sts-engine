@@ -88,6 +88,32 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn writhe_innate_flex_swift_shrine_gold_lockstep() {
+    // 932701 Writhe is innate (on top after shuffle). 268103 Golden Shrine
+    // Pray +50 is gainGold, not RewardItem idol bonus. 620958 Flex Potion
+    // (Steroid) Str+5/LoseStr+5. 455171 Swift Potion draws 3.
+    for (seed, min_ok) in [
+        ("932701", 36),
+        ("268103", 38),
+        ("620958", 35),
+        ("455171", 44),
+    ] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Writhe/potion/shrine last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn event_room_from_shop_is_not_shop_lockstep() {
     // EventHelper.roll: if getCurrRoom() is still ShopRoom, shopSize=0 so the
     // ? node after a shop cannot convert to Shop (idx 10-11 is Treasure).

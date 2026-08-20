@@ -843,6 +843,9 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::HandOfGreed, true) => CardStats {
             cost: 2, damage: 25, block: -1, magic: 25, exhaust: false, ethereal: false, innate: false,
         },
+        (CardId::Writhe, _) => CardStats {
+            cost: -2, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: true,
+        },
         _ => {
             let def = id.def();
             CardStats {

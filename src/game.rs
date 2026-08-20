@@ -1363,6 +1363,17 @@ impl Game {
                     self.player.add_power(crate::ids::PowerId::Dexterity, 5);
                     self.player.add_power(crate::ids::PowerId::LoseDexterity, 5);
                 }
+                PotionId::Steroid => {
+                    // Flex Potion: Strength 5 + LoseStrength 5.
+                    self.player.add_power(crate::ids::PowerId::Strength, 5);
+                    self.player.add_power(crate::ids::PowerId::LoseStrength, 5);
+                }
+                PotionId::Swift => {
+                    let statuses = combat::draw_cards_rng(&mut self.player, 3, Some(&mut self.rng));
+                    if let Some(combat) = self.combat.as_mut() {
+                        combat::apply_fire_breathing(&mut self.player, &mut combat.monsters, statuses);
+                    }
+                }
                 PotionId::Block => self.player.block += 12,
                 PotionId::Fire => {
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
@@ -3372,12 +3383,13 @@ impl Game {
                 match *index {
                     0 => {
                         if !self.player.has_relic(RelicId::Ectoplasm) {
-                            self.player.gold += self.gold_with_idol(50);
+                            // gainGold; Golden Idol is combat/chest RewardItem.applyGoldBonus only.
+                            self.player.gold += 50;
                         }
                     }
                     1 => {
                         if !self.player.has_relic(RelicId::Ectoplasm) {
-                            self.player.gold += self.gold_with_idol(275);
+                            self.player.gold += 275;
                         }
                         self.obtain_master_deck_card(CardId::Regret);
                     }
