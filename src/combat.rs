@@ -3658,10 +3658,10 @@ pub fn play_top_card(
     play_top_cards(player, combat, &[target], exhausts, rng, dungeon);
 }
 
-/// DistilledChaosPotion queues 3 PlayTopCardActions, then the action manager
-/// drains that queue before any UseCardAction discards. Empty-deck shuffle
-/// therefore sees the in-flight cards still in limbo, not in discard
-/// (seed 38: Dualcast then 5-card shuffle, not 6).
+/// DistilledChaosPotion queues 3 PlayTopCardActions (ActionType.WAIT).
+/// NewQueueCardAction is addToTop, so each card plays before the next pop
+/// (Coolheaded draws can become the next top). Remaining WAIT is dropped
+/// once the room is dead.
 pub fn play_top_cards(
     player: &mut Player,
     combat: &mut Combat,
@@ -3670,6 +3670,8 @@ pub fn play_top_cards(
     rng: &mut RngSet,
     dungeon: Option<&Dungeon>,
 ) {
+    // Pop every PlayTopCard up front so an empty-deck shuffle during the
+    // batch does not see in-flight cards in discard (seed 38 Dualcast).
     let mut pending: Vec<(Card, Option<usize>)> = Vec::new();
     for &target in targets {
         if player.draw.is_empty() && player.discard.is_empty() {
@@ -3687,7 +3689,18 @@ pub fn play_top_cards(
         }
         pending.push((card, target));
     }
-    for (card, target) in pending {
+    let mut rest = pending.into_iter();
+    while let Some((card, target)) = rest.next() {
+        // PlayTopCardAction is WAIT; clearPostCombatActions drops leftover
+        // WAIT after a lethal autoplay (seed 211 block 7 vs 0).
+        if combat.all_dead() {
+            let mut back = vec![card];
+            back.extend(rest.map(|(c, _)| c));
+            for c in back.into_iter().rev() {
+                player.draw.push(c);
+            }
+            break;
+        }
         let _ = play_owned_card(player, combat, card, target, rng, dungeon);
     }
 }

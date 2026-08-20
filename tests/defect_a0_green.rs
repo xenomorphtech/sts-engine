@@ -517,6 +517,25 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn distilled_chaos_drops_wait_after_lethal() {
+    // 211: DistilledChaosPotion queues PlayTopCardAction (WAIT). After a
+    // lethal top card, clearPostCombatActions drops the rest so Glacier
+    // never grants 7 block.
+    let cfg = default_config(Character::Defect, "211", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 141,
+                "211 still fails at Distilled Chaos last_ok={} want > 141: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn rainbow_upgrade_stops_exhaust() {
     // 935: Java Rainbow.upgrade sets exhaust=false (cost stays 2). Rust kept
     // exhaust so EndTurn shuffled Rainbow into draw vs exhaust pile.
