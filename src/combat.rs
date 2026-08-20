@@ -2087,7 +2087,43 @@ fn acid_slime_m_move(m: &mut Monster, num: i32, rng: &mut RngSet, wound: i32, ta
 }
 
 fn acid_slime_l_move(m: &mut Monster, num: i32, rng: &mut RngSet) {
-    acid_slime_m_move(m, num, rng, 11, 16);
+    // AcidSlime_L.getMove is not AcidSlime_M: A17 uses num<40 / <70 and
+    // randomBoolean(0.6F) on the lastTwo branches (M uses <80 and 0.5).
+    let wound = if m.ascension >= 2 { 12 } else { 11 };
+    let tackle = if m.ascension >= 2 { 18 } else { 16 };
+    if m.ascension >= 17 {
+        if num < 40 {
+            if m.last_two(1) {
+                if rng.ai.random_boolean_chance(0.6) {
+                    m.set_move(2, Intent::Attack, tackle, 1);
+                } else {
+                    m.set_move(4, Intent::Debuff, 0, 1);
+                }
+            } else {
+                m.set_move(1, Intent::AttackDebuff, wound, 1);
+            }
+        } else if num < 70 {
+            if m.last_two(2) {
+                if rng.ai.random_boolean_chance(0.6) {
+                    m.set_move(1, Intent::AttackDebuff, wound, 1);
+                } else {
+                    m.set_move(4, Intent::Debuff, 0, 1);
+                }
+            } else {
+                m.set_move(2, Intent::Attack, tackle, 1);
+            }
+        } else if m.last_move(4) {
+            if rng.ai.random_boolean_chance(0.4) {
+                m.set_move(1, Intent::AttackDebuff, wound, 1);
+            } else {
+                m.set_move(2, Intent::Attack, tackle, 1);
+            }
+        } else {
+            m.set_move(4, Intent::Debuff, 0, 1);
+        }
+        return;
+    }
+    acid_slime_m_move(m, num, rng, wound, tackle);
 }
 
 fn steal_stasis_card(player: &mut Player, rng: &mut RngSet) -> Option<Card> {
@@ -2362,6 +2398,11 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
                     monster.set_move(4, Intent::Unknown, 0, 1);
                 } else {
                     monster.dead = true;
+                    let spores = monster.power_amount(PowerId::SporeCloud);
+                    if spores > 0 {
+                        player.add_power(PowerId::Vulnerable, spores);
+                        monster.powers.retain(|p| p.id != PowerId::SporeCloud);
+                    }
                 }
             }
             if !lethal {
@@ -2403,6 +2444,16 @@ fn flush_curl_up(combat: &mut Combat) {
                 monster.block += monster.pending_curl;
             }
             monster.pending_curl = 0;
+        }
+    }
+}
+
+fn flush_spore_cloud(player: &mut Player, combat: &mut Combat) {
+    for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
+        let spores = monster.power_amount(PowerId::SporeCloud);
+        if spores > 0 {
+            player.add_power(PowerId::Vulnerable, spores);
+            monster.powers.retain(|p| p.id != PowerId::SporeCloud);
         }
     }
 }
@@ -3811,6 +3862,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // addToBot, so Frost block resolves before each Burn hit. Apply orbs first,
     // then each Burn L-to-R so Fairy/Lizard Tail can revive mid-sequence.
     apply_orb_passives(player, combat, rng);
+    flush_spore_cloud(player, combat);
     let burn_upgraded: Vec<bool> = player
         .hand
         .iter()
@@ -4056,6 +4108,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, 3);
         }
+        flush_spore_cloud(player, combat);
         if combat.all_dead() {
             return;
         }
