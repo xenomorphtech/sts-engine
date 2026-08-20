@@ -712,7 +712,8 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
             cost: 2, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
         },
         (CardId::Rainbow, true) => CardStats {
-            cost: 1, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
+            // Java Rainbow.upgrade: exhaust = false, cost unchanged.
+            cost: 2, damage: -1, block: -1, magic: 3, exhaust: false, ethereal: false, innate: false,
         },
         (CardId::Fission, false) | (CardId::Fission, true) => CardStats {
             cost: 0, damage: -1, block: -1, magic: 1, exhaust: true, ethereal: false, innate: false,

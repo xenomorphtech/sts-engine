@@ -517,6 +517,24 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn rainbow_upgrade_stops_exhaust() {
+    // 935: Java Rainbow.upgrade sets exhaust=false (cost stays 2). Rust kept
+    // exhaust so EndTurn shuffled Rainbow into draw vs exhaust pile.
+    let cfg = default_config(Character::Defect, "935", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 143,
+                "935 still fails at Rainbow+ exhaust last_ok={} want > 143: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn blizzard_applies_strength_with_zero_frost() {
     // 840: Blizzard.use calculateCardDamage after baseDamage = frostCount*2;
     // frostCount 0 still gets Strength 2 (Java SlaverRed 18, rust skipped the hit).
