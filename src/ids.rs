@@ -497,6 +497,11 @@ pub enum EncounterId {
     GiantHead,
     JawWormHorde,
     AwakenedOne,
+    TwoThieves,
+    ShellParasite,
+    SentryAndSphere,
+    CultistAndChosen,
+    ThreeCultists,
 }
 
 impl EncounterId {
@@ -541,6 +546,11 @@ impl EncounterId {
             EncounterId::GiantHead => "Giant Head",
             EncounterId::JawWormHorde => "Jaw Worm Horde",
             EncounterId::AwakenedOne => "Awakened One",
+            EncounterId::TwoThieves => "2 Thieves",
+            EncounterId::ShellParasite => "Shell Parasite",
+            EncounterId::SentryAndSphere => "Sentry and Sphere",
+            EncounterId::CultistAndChosen => "Cultist and Chosen",
+            EncounterId::ThreeCultists => "3 Cultists",
         }
     }
 
@@ -585,6 +595,11 @@ impl EncounterId {
             "Giant Head" => EncounterId::GiantHead,
             "Jaw Worm Horde" => EncounterId::JawWormHorde,
             "Awakened One" => EncounterId::AwakenedOne,
+            "2 Thieves" => EncounterId::TwoThieves,
+            "Shell Parasite" => EncounterId::ShellParasite,
+            "Sentry and Sphere" => EncounterId::SentryAndSphere,
+            "Cultist and Chosen" => EncounterId::CultistAndChosen,
+            "3 Cultists" => EncounterId::ThreeCultists,
             _ => return None,
         })
     }

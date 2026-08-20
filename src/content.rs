@@ -1084,5 +1084,10 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
             MonsterId::Exploder,
             MonsterId::Repulsor,
         ],
+        EncounterId::TwoThieves => &[MonsterId::Looter, MonsterId::Mugger],
+        EncounterId::ShellParasite => &[MonsterId::ShelledParasite],
+        EncounterId::SentryAndSphere => &[MonsterId::Sentry, MonsterId::SphericGuardian],
+        EncounterId::CultistAndChosen => &[MonsterId::Cultist, MonsterId::Chosen],
+        EncounterId::ThreeCultists => &[MonsterId::Cultist, MonsterId::Cultist, MonsterId::Cultist],
     }
 }

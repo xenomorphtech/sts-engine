@@ -153,8 +153,8 @@ fn act1_boss_still_rolls_potion_chance() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 219,
-                "169 still fails at boss potion last_ok={} want > 219: {fail}",
+                fail.last_ok > 244,
+                "169 still fails at 2 Thieves last_ok={} want > 244: {fail}",
                 fail.last_ok
             );
         }

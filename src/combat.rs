@@ -664,6 +664,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (44, 48)
             }
         }
+        MonsterId::Mugger => {
+            if a7 {
+                (50, 54)
+            } else {
+                (48, 52)
+            }
+        }
         MonsterId::GremlinNob => {
             if ascension >= 8 {
                 (85, 90)
@@ -862,6 +869,10 @@ impl Monster {
             }
             MonsterId::Looter => {
                 self.set_move(1, Intent::Attack, 10, 1);
+            }
+            MonsterId::Mugger => {
+                let swipe = if self.ascension >= 2 { 11 } else { 10 };
+                self.set_move(1, Intent::Attack, swipe, 1);
             }
             MonsterId::AcidSlimeS => {
                 let dmg = if self.ascension >= 2 { 4 } else { 3 };
@@ -1421,6 +1432,7 @@ impl Monster {
             self.id,
             MonsterId::AcidSlimeS
                 | MonsterId::Looter
+                | MonsterId::Mugger
                 | MonsterId::Transient
                 | MonsterId::SlimeBoss
                 | MonsterId::GremlinWarrior
@@ -1637,6 +1649,43 @@ impl Monster {
                 let steal = if ascension >= 17 { 20 } else { 15 };
                 looter_steal(self, player, steal);
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 14 } else { 12 }, 1);
+                self.extra += 1;
+                self.set_move(2, Intent::Defend, 0, 1);
+            }
+            (MonsterId::Mugger, 1) => {
+                // Mugger.takeTurn MUG: talk rng only on the second swipe
+                // (slashCount==1). playSfx uses aiRng.random(2).
+                if self.extra == 1 {
+                    let _ = rng.ai.random_boolean_chance(0.6);
+                }
+                let _ = rng.ai.random_int(2);
+                let steal = if ascension >= 17 { 20 } else { 15 };
+                looter_steal(self, player, steal);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 11 } else { 10 }, 1);
+                self.extra += 1;
+                if self.extra == 2 {
+                    if rng.ai.random_boolean_chance(0.5) {
+                        self.set_move(2, Intent::Defend, 0, 1);
+                    } else {
+                        self.set_move(4, Intent::Attack, if ascension >= 2 { 18 } else { 16 }, 1);
+                    }
+                } else {
+                    self.set_move(1, Intent::Attack, if ascension >= 2 { 11 } else { 10 }, 1);
+                }
+            }
+            (MonsterId::Mugger, 2) => {
+                self.block += if ascension >= 17 { 17 } else { 11 };
+                self.set_move(3, Intent::Escape, 0, 1);
+            }
+            (MonsterId::Mugger, 3) => {
+                self.escaped = true;
+                self.set_move(3, Intent::Escape, 0, 1);
+            }
+            (MonsterId::Mugger, 4) => {
+                let _ = rng.ai.random_int(2);
+                let steal = if ascension >= 17 { 20 } else { 15 };
+                looter_steal(self, player, steal);
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
                 self.extra += 1;
                 self.set_move(2, Intent::Defend, 0, 1);
             }
