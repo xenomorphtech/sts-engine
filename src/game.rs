@@ -1978,10 +1978,23 @@ impl Game {
     fn generate_card_reward(&mut self) {
         let boss = self.current_room == RoomType::Boss;
         let elite = self.current_room == RoomType::Elite;
+        // TheCity: A12+ 0.125 else 0.25. TheBeyond/TheEnding: A12+ 0.25 else 0.5.
         let upgrade_chance = match self.dungeon.act {
             crate::ids::Act::Exordium => 0.0,
-            crate::ids::Act::City => 0.125,
-            crate::ids::Act::Beyond | crate::ids::Act::Ending => 0.25,
+            crate::ids::Act::City => {
+                if self.ascension >= 12 {
+                    0.125
+                } else {
+                    0.25
+                }
+            }
+            crate::ids::Act::Beyond | crate::ids::Act::Ending => {
+                if self.ascension >= 12 {
+                    0.25
+                } else {
+                    0.5
+                }
+            }
         };
         // AbstractDungeon.getRewardCards: relic.changeNumberOfCardsInReward.
         let mut n = 3i32;

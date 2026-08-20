@@ -117,8 +117,8 @@ fn runic_pyramid_keeps_hand_at_end_of_turn() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 297,
-                "213 still fails at Snecko spawn last_ok={} want > 297: {fail}",
+                fail.last_ok > 307,
+                "213 still fails at Glacier+ reward upgrade last_ok={} want > 307: {fail}",
                 fail.last_ok
             );
         }
