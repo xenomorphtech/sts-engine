@@ -864,6 +864,24 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn trip_applies_vulnerable() {
+    // 496: Trip.use Vulnerable 2 on Guardian. Ball Lightning then hits 7*1.5
+    // plus Lightning evoke 8 (214 not 217).
+    let cfg = default_config(Character::Defect, "496", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 171,
+                "496 still fails at Trip Vulnerable last_ok={} want > 171: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn philosophers_stone_gives_enemies_strength() {
     // 645: PhilosopherStone.atBattleStart Strength 1 on Looter+Mugger
     // (intent 11 not 10). Missing it, EndTurn is 60 HP vs Java 58.

@@ -4486,6 +4486,19 @@ fn apply_card_effect(
                 }
             }
         }
+        CardId::Trip => {
+            // Trip.use: unupgraded Vulnerable on the target; upgraded on all.
+            let n = card.base_magic.max(2) as i32;
+            if card.upgraded {
+                for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                    monster.add_power(PowerId::Vulnerable, n);
+                }
+            } else if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    m.add_power(PowerId::Vulnerable, n);
+                }
+            }
+        }
         CardId::Dramatic_Entrance => {
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 damage_monster(monster, player, rng, dmg, 1);
