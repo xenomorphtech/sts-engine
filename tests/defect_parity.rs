@@ -88,6 +88,27 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn frost_orb_ignores_noblock_lockstep() {
+    // 627737 Panic Button NoBlock + Frost passive at EOT: Java addBlock still
+    // grants 2, so JawWorm Thrash 7 vs 2 block (hp 52) not vs 0 (hp 50).
+    // 457969 Dark Shackles Str-9 bite must clamp to 0, not add to player block.
+    for (seed, min_ok) in [("627737", 30), ("457969", 26)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Frost/NoBlock last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn hand_of_greed_lockstep() {
     // 259462 Hand of Greed 20 damage (GreedAction) on Cultist.
     for (seed, min_ok) in [("259462", 29)] {

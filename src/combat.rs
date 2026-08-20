@@ -2200,6 +2200,9 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
         if player.power_amount(PowerId::Vulnerable) > 0 {
             dmg = (dmg as f32 * 1.5).floor() as i32;
         }
+        if dmg < 0 {
+            dmg = 0;
+        }
         dmg = apply_block(&mut player.block, dmg);
         dmg = buffer_absorb(player, dmg);
         dmg = on_lose_hp_last(player, dmg);
@@ -2308,6 +2311,9 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             dmg_f *= 1.0 + slow as f32 * 0.1;
         }
         let mut dmg = dmg_f.floor() as i32;
+        if dmg < 0 {
+            dmg = 0;
+        }
         dmg = apply_block(&mut monster.block, dmg);
         // Boot.onAttackToChangeDamage after decrementBlock: unblocked Attack 1–4 → 5.
         if dmg > 0 && dmg < 5 && player.has_relic(RelicId::Boot) {
@@ -2513,7 +2519,9 @@ pub fn derived_block(card: &Card, player: &Player) -> i32 {
 }
 
 fn gain_player_block(player: &mut Player, amt: i32) {
-    if amt <= 0 || player.power_amount(PowerId::NoBlock) > 0 {
+    // AbstractCreature.addBlock does not consult NoBlockPower. That power's
+    // modifyBlockLast is card applyPowers only (Panic Button: no block from cards).
+    if amt <= 0 {
         return;
     }
     player.block += amt;
@@ -3510,9 +3518,11 @@ fn apply_card_effect(
                 effect += 2;
             }
             if effect > 0 {
-                let amt = if block > 0 { block } else { 7 };
+                // `block` is derived_block (0 under NoBlock). Do not fall back to 7.
                 for _ in 0..effect {
-                    gain_player_block(player, amt);
+                    if block > 0 {
+                        player.block += block;
+                    }
                 }
                 if !card.free_to_play_once {
                     player.energy = 0;
