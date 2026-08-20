@@ -117,8 +117,8 @@ fn whetstone_upgrades_attacks_at_obtain() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 202,
-                "1 still fails after slime split last_ok={} want > 202: {fail}",
+                fail.last_ok > 205,
+                "1 still fails at lethal thorns last_ok={} want > 205: {fail}",
                 fail.last_ok
             );
         }

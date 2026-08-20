@@ -2473,9 +2473,11 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
                 player.discard.push(Card::new(CardId::Wound));
             }
         }
-        // ThornsPower.onAttacked: Attack-type hits bounce even if fully blocked.
+        // ThornsPower.onAttacked addToTop DamageAction. If this hit is lethal,
+        // ExactTextSim death snapshots before that thorns DamageAction (seed 1
+        // AcidSlime_M 13 vs 10). Skip bounce when the player is already dead.
         let thorns = player.power_amount(PowerId::Thorns);
-        if thorns > 0 {
+        if thorns > 0 && player.hp > 0 {
             deal_thorns(monster, thorns);
             let spores = monster.power_amount(PowerId::SporeCloud);
             if monster.dead && spores > 0 {
