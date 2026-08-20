@@ -144,6 +144,24 @@ fn slime_boss_split_inserts_by_draw_x() {
 }
 
 #[test]
+fn clumsy_is_ethereal_at_end_of_turn() {
+    // Seed 944: Clumsy in hand at EOT must ExhaustSpecificCardAction, not
+    // discard-and-reshuffle (hand Compile Driver vs Strike_B at seq 56).
+    let cfg = default_config(Character::Defect, "944", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 54,
+                "944 still fails at Clumsy ethereal last_ok={} want > 54: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn pantograph_heals_at_boss() {
     // Seed 5: Pantograph boss heal, then Byrd FlightPower.atStartOfTurn
     // restores storedAmount so Sweeping Beam still halves (10→7 not 10→4).

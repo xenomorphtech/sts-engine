@@ -852,6 +852,27 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Writhe, _) => CardStats {
             cost: -2, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: true,
         },
+        (CardId::Clumsy, _) => CardStats {
+            cost: -2, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: true, innate: false,
+        },
+        (CardId::Echo_Form, false) => CardStats {
+            cost: 3, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: true, innate: false,
+        },
+        (CardId::Echo_Form, true) => CardStats {
+            cost: 3, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Ghostly, false) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: 1, exhaust: true, ethereal: true, innate: false,
+        },
+        (CardId::Ghostly, true) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: 1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Violence, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Violence, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 4, exhaust: true, ethereal: false, innate: false,
+        },
         (CardId::Discovery, false) => CardStats {
             cost: 1, damage: -1, block: -1, magic: -1, exhaust: true, ethereal: false, innate: false,
         },

@@ -3822,6 +3822,49 @@ fn apply_card_effect(
         CardId::Panacea => {
             player.add_power(PowerId::Artifact, card.base_magic.max(1) as i32);
         }
+        CardId::Violence => {
+            // DrawPileToHandAction(magic, ATTACK): attacks into tmp via
+            // addToRandomSpot (cardRandomRng), then amount times shuffle tmp
+            // (shuffleRng.randomLong) and move the bottom card to hand.
+            let n = card.base_magic.max(3) as usize;
+            let mut tmp: Vec<usize> = Vec::new();
+            for (i, c) in player.draw.iter().enumerate() {
+                if c.card_type() == CardType::ATTACK {
+                    if tmp.is_empty() {
+                        tmp.push(i);
+                    } else {
+                        let at = rng.card_random.random_int(tmp.len() as i32 - 1) as usize;
+                        tmp.insert(at, i);
+                    }
+                }
+            }
+            let mut picked: Vec<usize> = Vec::new();
+            for _ in 0..n {
+                if tmp.is_empty() {
+                    break;
+                }
+                let seed = rng.shuffle.random_long();
+                shuffle_java(&mut tmp, seed);
+                picked.push(tmp.remove(0));
+            }
+            for (k, &idx) in picked.iter().enumerate() {
+                let mut adj = idx;
+                for &prev in picked.iter().take(k) {
+                    if prev < idx {
+                        adj -= 1;
+                    }
+                }
+                if adj >= player.draw.len() {
+                    continue;
+                }
+                let c = player.draw.remove(adj);
+                if player.hand.len() >= 10 {
+                    player.discard.push(c);
+                } else {
+                    player.hand.push(c);
+                }
+            }
+        }
         CardId::Genetic_Algorithm => {
             // Java misc starts at 1; GainBlock uses applyPowers() amount, then
             // IncreaseMiscAction adds magic to masterDeck + in-battle copies.
