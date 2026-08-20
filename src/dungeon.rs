@@ -33,6 +33,9 @@ pub struct Dungeon {
     pub uncommon_cards: Vec<CardId>,
     pub rare_cards: Vec<CardId>,
     pub colorless_cards: Vec<CardId>,
+    /// `srcColorlessCardPool`: addToBottom copy of colorlessCardPool. Discovery
+    /// reads this; `returnColorlessCard` shuffles `colorless_cards` in place.
+    pub src_colorless_cards: Vec<CardId>,
     pub curse_cards: Vec<CardId>,
     pub map: DungeonMap,
     pub path_x: Vec<i32>,
@@ -63,6 +66,7 @@ impl Dungeon {
             uncommon_cards: Vec::new(),
             rare_cards: Vec::new(),
             colorless_cards: Vec::new(),
+            src_colorless_cards: Vec::new(),
             curse_cards: Vec::new(),
             map: DungeonMap { nodes: Vec::new() },
             path_x: Vec::new(),
@@ -413,6 +417,9 @@ impl Dungeon {
                 self.colorless_cards.push(id);
             }
         }
+        // srcColorlessCardPool.addToBottom each colorlessCardPool card.
+        self.src_colorless_cards = self.colorless_cards.clone();
+        self.src_colorless_cards.reverse();
         for sts_id in CARD_LIBRARY_HASHMAP_ORDER {
             let Some(id) = CardId::from_sts_id(sts_id) else {
                 continue;

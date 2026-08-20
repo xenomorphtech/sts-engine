@@ -90,6 +90,24 @@ fn registry_greens_still_walk() {
 }
 
 #[test]
+fn colorless_potion_discovery_matches_src_pool() {
+    // 28: ColorlessPotion DiscoveryAction reads srcColorlessCardPool. Rust shuffled
+    // colorlessCardPool in place for returnColorlessCard, then reversed that.
+    let cfg = default_config(Character::Defect, "28", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 101,
+                "28 still fails at Colorless discovery last_ok={} want > 101: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn distilled_chaos_shuffles_without_in_flight_cards() {
     // 38: Dualcast is still in limbo when the next PlayTopCard shuffles.
     let cfg = default_config(Character::Defect, "38", Unlocks::fixture(), 0);
