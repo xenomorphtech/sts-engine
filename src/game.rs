@@ -3003,8 +3003,9 @@ impl Game {
                 opts
             }
             "Golden Shrine" => {
+                let pray = if self.ascension >= 15 { 50 } else { 100 };
                 vec![
-                    "[Pray] #gGain #g50 #gGold.".into(),
+                    format!("[Pray] #gGain #g{pray} #gGold."),
                     "[Desecrate] #gGain #g275 #gGold. #rBecome #rCursed #r- #rRegret.".into(),
                     "[Leave]".into(),
                 ]
@@ -3521,8 +3522,8 @@ impl Game {
                 match *index {
                     0 => {
                         if !self.player.has_relic(RelicId::Ectoplasm) {
-                            // gainGold; Golden Idol is combat/chest RewardItem.applyGoldBonus only.
-                            self.player.gold += 50;
+                            // GoldShrine: A15+ 50 else 100. Golden Idol is combat/chest only.
+                            self.player.gold += if self.ascension >= 15 { 50 } else { 100 };
                         }
                     }
                     1 => {

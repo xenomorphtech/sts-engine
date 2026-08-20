@@ -90,6 +90,23 @@ fn registry_greens_still_walk() {
 }
 
 #[test]
+fn golden_shrine_pray_is_100_gold_on_a0() {
+    // 18: GoldShrine pray is 100 below A15 (rust had hardcoded 50).
+    let cfg = default_config(Character::Defect, "18", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 21,
+                "18 still fails at Golden Shrine last_ok={} want > 21: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn lagavulin_siphon_keeps_negative_strength() {
     // 713578: Lagavulin move 1 applies Strength -1; rust used to drop amount<=0 at EOT.
     let cfg = default_config(Character::Defect, "713578", Unlocks::fixture(), 0);
