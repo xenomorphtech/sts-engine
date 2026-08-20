@@ -4616,6 +4616,35 @@ fn apply_card_effect(
                 }
             }
         }
+        CardId::Chrysalis | CardId::Metamorphosis => {
+            // use() rolls returnTrulyRandomCardInCombat N times, then queues
+            // MakeTempCardInDrawPileAction(randomSpot). Inserts must not interleave
+            // with the picks (seed 63: pick/insert/pick drew Steam Power).
+            let n = card.base_magic.max(3) as i32;
+            let typ = if card.id == CardId::Chrysalis {
+                CardType::SKILL
+            } else {
+                CardType::ATTACK
+            };
+            if let Some(dungeon) = dungeon {
+                let mut made = Vec::new();
+                for _ in 0..n {
+                    let Some(id) = crate::rewards::random_combat_card_of_type(dungeon, rng, typ)
+                    else {
+                        break;
+                    };
+                    let mut c = Card::new(id);
+                    if c.cost > 0 {
+                        c.cost = 0;
+                        c.cost_for_turn = 0;
+                    }
+                    made.push(c);
+                }
+                for c in made {
+                    add_to_random_spot(&mut player.draw, c, rng);
+                }
+            }
+        }
         CardId::Secret_Technique => {
             // SkillFromDeckToHandAction: skills into tmp via addToRandomSpot.
             combat.skill_from_deck.clear();
@@ -5159,8 +5188,14 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     combat.cards_played_this_turn = 0;
     combat.skills_this_turn = 0;
     combat.attacks_this_turn = 0;
+    // GameActionManager.getNextAction: Barricade/Blur keep block; Calipers
+    // loseBlock(15); otherwise loseBlock() all.
     if player.power_amount(PowerId::Barricade) == 0 {
-        player.block = 0;
+        if player.has_relic(RelicId::Calipers) {
+            player.block = (player.block - 15).max(0);
+        } else {
+            player.block = 0;
+        }
     }
     // CreativeAI / Hello World roll cardRandomRng immediately in
     // atStartOfTurn. Loop only queues LightningOrbPassiveAction, so the

@@ -456,6 +456,14 @@ pub(crate) fn random_power_in_combat(dungeon: &Dungeon, rng: &mut RngSet) -> Opt
     truly_random_combat_card(dungeon, rng, Some(CardType::POWER), false)
 }
 
+pub(crate) fn random_combat_card_of_type(
+    dungeon: &Dungeon,
+    rng: &mut RngSet,
+    typ: CardType,
+) -> Option<CardId> {
+    truly_random_combat_card(dungeon, rng, Some(typ), false)
+}
+
 fn truly_random_combat_card(
     dungeon: &Dungeon,
     rng: &mut RngSet,

@@ -517,6 +517,24 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn chrysalis_shuffles_zero_cost_skills_into_draw() {
+    // 63: Chrysalis use() rolls 3 SKILLs then queues random-spot inserts
+    // (interleaving pick/insert drew Steam Power). Calipers loseBlock(15).
+    let cfg = default_config(Character::Defect, "63", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 176,
+                "63 still fails at Chrysalis/Calipers last_ok={} want > 176: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn mind_blast_damage_is_draw_pile_size() {
     // 543: Mind Blast applyPowers baseDamage = drawPile.size(); rust dealt 0
     // so Looter lived (18) while Java ended combat.
