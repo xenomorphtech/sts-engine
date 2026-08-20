@@ -3290,6 +3290,21 @@ pub fn apply_fire_breathing(player: &Player, monsters: &mut [Monster], statuses:
     }
 }
 
+fn reduce_force_field_costs(player: &mut Player) {
+    for c in player
+        .hand
+        .iter_mut()
+        .chain(player.draw.iter_mut())
+        .chain(player.discard.iter_mut())
+    {
+        if c.id == CardId::Force_Field {
+            let diff = c.cost - c.cost_for_turn;
+            c.cost = (c.cost - 1).max(0);
+            c.cost_for_turn = (c.cost - diff).max(0);
+        }
+    }
+}
+
 pub fn play_card(
     player: &mut Player,
     combat: &mut Combat,
@@ -3434,6 +3449,11 @@ pub fn play_owned_card(
             }
         }
         combat.cards_played_this_turn += 1;
+        if card.card_type() == CardType::POWER {
+            // ForceField.triggerOnCardPlayed: UseCardAction walks hand,
+            // discard, and draw. updateCost(-1) per Power played.
+            reduce_force_field_costs(player);
+        }
         match card.card_type() {
             CardType::SKILL => {
                 combat.skills_this_turn += 1;

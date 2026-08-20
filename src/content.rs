@@ -297,6 +297,8 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
             ethereal: false,
             innate: true,
         },
+        (CardId::Force_Field, false) => CardStats::skill(4, 12, -1),
+        (CardId::Force_Field, true) => CardStats::skill(4, 16, -1),
         (CardId::Buffer, false) => CardStats::skill(2, -1, 1),
         (CardId::Buffer, true) => CardStats::skill(2, -1, 2),
         (CardId::Defragment, false) => CardStats::skill(1, -1, 1),
