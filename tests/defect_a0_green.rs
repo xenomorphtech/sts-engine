@@ -127,16 +127,15 @@ fn whetstone_upgrades_attacks_at_obtain() {
 
 #[test]
 fn slime_boss_split_inserts_by_draw_x() {
-    // Seed 8: slime split, Cursed Key curse, then Champ Act 2 boss
-    // (Heavy Slash / Defensive Stance / Execute / Slap / Gloat / Taunt / Anger).
+    // Seed 8: slime split, Cursed Key, Champ, then Shame EOT Frail on Defend.
     let cfg = default_config(Character::Defect, "8", Unlocks::fixture(), 0);
     match walk_oracle(&cfg) {
         Ok(_) => {}
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 674,
-                "8 still fails after Maw/Orb Walker hallways last_ok={} want > 674: {fail}",
+                fail.last_ok > 689,
+                "8 still fails at Act 3 event last_ok={} want > 689: {fail}",
                 fail.last_ok
             );
         }

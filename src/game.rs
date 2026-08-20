@@ -3177,6 +3177,23 @@ impl Game {
                     format!("[Eat] #gHeal #g{heal} #gHP. #rBecome #rCursed #r- #rParasite."),
                 ]
             }
+            "Forgotten Altar" => {
+                // ForgottenAltar ctor: hpLoss = MathUtils.round(max * 0.25),
+                // A15+ 0.35. Golden Idol option is disabled without the relic;
+                // ChoiceDriver skips disabled buttons so omit it.
+                let pct = if self.ascension >= 15 { 0.35 } else { 0.25 };
+                let hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * pct);
+                data = vec![hp_loss];
+                let mut opts = Vec::new();
+                if self.player.has_relic(RelicId::Golden_Idol) {
+                    opts.push("[Offer] #gObtain #gBloody #gIdol.".into());
+                }
+                opts.push(format!(
+                    "[Sacrifice] #gMax #gHP #g+5. #rLose #r{hp_loss} #rHP."
+                ));
+                opts.push("[Desecrate] #rBecome #rCursed #r- #rDecay.".into());
+                opts
+            }
             "Lab" => vec!["[Search] #gFind #gsome #gPotions!".into()],
             "NoteForYourself" => {
                 // NoteForYourself ctor: one INTRO option, then CHOOSE take/leave.
@@ -3702,6 +3719,56 @@ impl Game {
             } else if let Some(event) = self.event.as_mut() {
                 event.screen = 1;
                 event.options = vec!["[Leave]".into()];
+            }
+            return;
+        }
+        if id == "Forgotten Altar" {
+            if screen == 0 {
+                let has_idol = self.player.has_relic(RelicId::Golden_Idol);
+                let sacrifice = if has_idol { 1 } else { 0 };
+                let smash = if has_idol { 2 } else { 1 };
+                if has_idol && *index == 0 {
+                    // gainChalice: replace Golden Idol in-slot; Circlet if
+                    // Bloody Idol is already owned. instantObtain callOnEquip=false.
+                    if self.player.has_relic(RelicId::Bloody_Idol) {
+                        if let Some(id) = RelicId::from_sts_id("Circlet") {
+                            self.gain_relic(id);
+                        }
+                    } else if let Some(i) = self
+                        .player
+                        .relics
+                        .iter()
+                        .position(|r| r.id == RelicId::Golden_Idol)
+                    {
+                        self.player.relics[i] = RelicInstance {
+                            id: RelicId::Bloody_Idol,
+                            counter: -1,
+                            used_up: false,
+                        };
+                    }
+                } else if *index == sacrifice {
+                    let hp_loss = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.first().copied())
+                        .unwrap_or_else(|| {
+                            crate::rewards::gdx_round(self.player.max_hp as f32 * 0.25)
+                        });
+                    self.increase_max_hp(5);
+                    // DamageInfo(null, hpLoss): owner is null so Torii/powers
+                    // skip; TungstenRod onLoseHpLast still applies.
+                    let dmg = combat::on_lose_hp_last(&self.player, hp_loss);
+                    self.player.hp = (self.player.hp - dmg).max(0);
+                    combat::red_skull_on_hp_change(&mut self.player);
+                } else if *index == smash {
+                    self.obtain_master_deck_card(CardId::Decay);
+                }
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Leave]".into()];
+                }
+            } else {
+                self.open_map();
             }
             return;
         }

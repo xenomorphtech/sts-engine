@@ -2657,6 +2657,16 @@ pub fn on_lose_hp_last(player: &Player, damage: i32) -> i32 {
     }
 }
 
+/// Torii.onAttacked: Attack-type damage in (1, 5] becomes 1. Java runs this
+/// after Buffer and before TungstenRod. HP_LOSS / THORNS never call this.
+fn torii_on_attacked(player: &Player, damage: i32) -> i32 {
+    if player.has_relic(RelicId::Torii) && damage > 1 && damage <= 5 {
+        1
+    } else {
+        damage
+    }
+}
+
 /// BufferPower.onAttackedToChangeDamage after decrementBlock: consume 1 and return 0.
 /// AbstractPlayer.damage: if currentHealth < 1, FairyPotion then Lizard Tail
 /// (blocked by Mark of the Bloom). Returns true if death was prevented.
@@ -2728,6 +2738,7 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
         }
         dmg = apply_block(&mut player.block, dmg);
         dmg = buffer_absorb(player, dmg);
+        dmg = torii_on_attacked(player, dmg);
         dmg = on_lose_hp_last(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
@@ -4631,29 +4642,45 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         .filter(|c| is_end_turn_autoplay(c.id))
         .map(|c| (c.id, c.upgraded))
         .collect();
+    // Regret.use LoseHP(hand.size()) is captured at trigger, before discard.
+    let regret_n = player.hand.len() as i32;
     for (id, upgraded) in eot_autoplay {
-        let raw = match id {
-            CardId::Burn => {
-                if upgraded {
-                    4
-                } else {
-                    2
+        match id {
+            CardId::Shame => {
+                // Shame.use: FrailPower(player, 1, true) — justApplied.
+                player.add_power_from_monster(PowerId::Frail, 1);
+            }
+            CardId::Doubt => {
+                player.add_power_from_monster(PowerId::Weak, 1);
+            }
+            CardId::Regret => {
+                let dmg = on_lose_hp_last(player, regret_n);
+                if dmg > 0 {
+                    player.hp -= dmg;
+                    if player.hp < 0 {
+                        player.hp = 0;
+                    }
+                    let _ = try_cheat_death(player);
+                    red_skull_on_hp_change(player);
+                    centennial_puzzle_was_hp_lost(player, rng);
                 }
             }
-            CardId::Decay => 2,
-            _ => continue,
-        };
-        let dmg = apply_block(&mut player.block, raw);
-        let dmg = buffer_absorb(player, dmg);
-        let dmg = on_lose_hp_last(player, dmg);
-        if dmg > 0 {
-            player.hp -= dmg;
-            if player.hp < 0 {
-                player.hp = 0;
+            CardId::Burn | CardId::Decay => {
+                let raw = if id == CardId::Burn && upgraded { 4 } else { 2 };
+                let dmg = apply_block(&mut player.block, raw);
+                let dmg = buffer_absorb(player, dmg);
+                let dmg = on_lose_hp_last(player, dmg);
+                if dmg > 0 {
+                    player.hp -= dmg;
+                    if player.hp < 0 {
+                        player.hp = 0;
+                    }
+                    let _ = try_cheat_death(player);
+                    red_skull_on_hp_change(player);
+                    centennial_puzzle_was_hp_lost(player, rng);
+                }
             }
-            let _ = try_cheat_death(player);
-            red_skull_on_hp_change(player);
-            centennial_puzzle_was_hp_lost(player, rng);
+            _ => {}
         }
     }
     // DiscardAtEndOfTurnAction: retain/selfRetain cards are pulled to limbo
