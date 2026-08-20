@@ -4997,6 +4997,12 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         player.block += plated;
     }
     crate::creature::end_of_turn(&mut player.powers);
+    // FrozenCore.onPlayerEndTurn: if hasEmptyOrb, channel Frost immediately
+    // so TriggerEndOfTurnOrbsAction passives it (seed 870 Parasite 6x2: 2
+    // Frost block, hp 65 not 63).
+    if player.has_relic(RelicId::FrozenCore) && (player.orbs.len() as i32) < player.max_orbs {
+        channel_orb(player, combat, rng, OrbKind::Frost);
+    }
     // GameActionManager.callEndOfTurnActions: addToBottom(TriggerEndOfTurnOrbsAction)
     // *then* hand.triggerOnEndOfTurnForPlayingCard. Burn.use queues DamageAction
     // addToBot, so Frost block resolves before each Burn hit. Apply orbs first,

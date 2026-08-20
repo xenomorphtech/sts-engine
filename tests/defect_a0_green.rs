@@ -864,6 +864,24 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn frozen_core_channels_frost_on_empty_eot() {
+    // 870: FrozenCore.onPlayerEndTurn channels Frost if hasEmptyOrb, before
+    // TriggerEndOfTurnOrbsAction. Missing it, Parasite 6x2 is 12 not 10.
+    let cfg = default_config(Character::Defect, "870", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 169,
+                "870 still fails at Frozen Core EOT Frost last_ok={} want > 169: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn secret_weapon_opens_attack_from_deck_grid() {
     // 509: Secret Weapon AttackFromDeckToHandAction GRID; Choose 1 is Cold Snap,
     // exhaust. Rust discarded Secret Weapon and never pulled the attack.
