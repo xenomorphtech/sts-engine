@@ -199,6 +199,12 @@ impl Combat {
         if player.has_relic(RelicId::Bronze_Scales) {
             player.add_power(PowerId::Thorns, 3);
         }
+        // MercuryHourglass.atTurnStart: DamageAllEnemiesAction THORNS 3.
+        if player.has_relic(RelicId::Mercury_Hourglass) {
+            for m in monsters.iter_mut().filter(|m| m.alive()) {
+                deal_thorns(m, 3);
+            }
+        }
 
         Self {
             encounter,
@@ -4018,6 +4024,14 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         }
     }
     tick_turn_start_block_relics(player);
+    if player.has_relic(RelicId::Mercury_Hourglass) {
+        for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
+            deal_thorns(m, 3);
+        }
+        if combat.all_dead() {
+            return;
+        }
+    }
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Letter_Opener) {
         r.counter = 0;
     }

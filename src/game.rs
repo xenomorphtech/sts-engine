@@ -2064,6 +2064,10 @@ impl Game {
     }
 
     fn open_shop(&mut self) {
+        // MealTicket.justEnteredRoom: heal 15 when the room is a ShopRoom.
+        if self.player.has_relic(RelicId::MealTicket) {
+            self.heal_player(15);
+        }
         let stock = crate::rewards::generate_shop(
             &mut self.dungeon,
             &mut self.rng,
