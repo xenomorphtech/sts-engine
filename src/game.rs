@@ -256,6 +256,8 @@ enum GridKind {
     Transform,
     /// Combat CardGroup select over the discard pile (Hologram).
     DiscardToHand,
+    /// Combat CardGroup select over the draw pile (Seek).
+    DrawPileToHand,
     /// Bottled Flame / Lightning / Tornado: one purgeable card of this type.
     Bottle(CardType),
 }
@@ -878,6 +880,9 @@ impl Game {
         if kind == GridKind::DiscardToHand {
             return (0..self.player.discard.len()).collect();
         }
+        if kind == GridKind::DrawPileToHand {
+            return seek_draw_grid_indices(&self.player.draw);
+        }
         if let GridKind::Bottle(typ) = kind {
             // CardGroup.getCardsOfType uses addToBottom (insert at 0), reversing
             // master-deck order. getPurgeableCards then getSkills/Attacks/Powers.
@@ -903,7 +908,7 @@ impl Game {
                         && !(c.in_bottle && self.grid.as_ref().is_some_and(|g| g.return_shop))
                 }
                 GridKind::Transform => purgeable_card(c),
-                GridKind::DiscardToHand | GridKind::Bottle(_) => true,
+                GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::Bottle(_) => true,
             })
             .map(|(i, _)| i)
             .collect()
@@ -924,7 +929,7 @@ impl Game {
                     return;
                 };
                 // ChoiceDriver.chooseGrid: non-purge/upgrade/transform closes immediately.
-                if matches!(kind, GridKind::DiscardToHand | GridKind::Bottle(_)) {
+                if matches!(kind, GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::Bottle(_)) {
                     self.apply_grid(kind, &[pile_i]);
                     return;
                 }
@@ -1021,6 +1026,11 @@ impl Game {
                     combat::discard_pile_to_hand(&mut self.player, i);
                 }
             }
+            GridKind::DrawPileToHand => {
+                for i in idxs.into_iter().rev() {
+                    combat::draw_pile_to_hand(&mut self.player, i);
+                }
+            }
             GridKind::Bottle(_) => {
                 for i in idxs {
                     if let Some(c) = self.player.deck.get_mut(i) {
@@ -1081,7 +1091,7 @@ impl Game {
         let back_to_combat = self
             .grid
             .as_ref()
-            .is_some_and(|g| g.kind == GridKind::DiscardToHand);
+            .is_some_and(|g| matches!(g.kind, GridKind::DiscardToHand | GridKind::DrawPileToHand));
         let back_to_event = self.grid.as_ref().is_some_and(|g| g.return_event);
         let back_to_shop = self.grid.as_ref().is_some_and(|g| g.return_shop);
         let return_screen = self.grid.as_ref().and_then(|g| g.return_screen);
@@ -1304,6 +1314,8 @@ impl Game {
                             self.begin_exhaust_select();
                         } else if combat.need_discard_to_hand {
                             self.begin_discard_to_hand_select();
+                        } else if combat.need_draw_to_hand {
+                            self.begin_draw_to_hand_select();
                         } else {
                             self.begin_armaments_select();
                         }
@@ -3808,12 +3820,41 @@ impl Game {
             }
             crate::combat::flush_dark_embrace(&mut self.player, combat, &mut self.rng);
             combat.need_discard_to_hand = false;
+            combat.need_draw_to_hand = false;
             if combat.all_dead() {
                 self.finish_combat();
                 return;
             }
         }
         self.screen = Screen::Combat;
+    }
+
+    fn begin_draw_to_hand_select(&mut self) {
+        let needed = self
+            .combat
+            .as_ref()
+            .and_then(|c| c.pending_exhaust.as_ref())
+            .map(|c| c.base_magic.max(1) as usize)
+            .unwrap_or(1);
+        if self.player.draw.len() <= needed {
+            while !self.player.draw.is_empty() && self.player.hand.len() < 10 {
+                let c = self.player.draw.pop().unwrap();
+                self.player.hand.push(c);
+            }
+            self.finish_discard_to_hand();
+            return;
+        }
+        self.grid = Some(GridSelect {
+            kind: GridKind::DrawPileToHand,
+            needed,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: false,
+            return_screen: None,
+        });
+        self.screen = Screen::Grid;
     }
 
     fn begin_put_on_deck_select(&mut self) {
@@ -4177,4 +4218,36 @@ impl Game {
             }
         }
     }
+}
+
+/// BetterDrawPileToHandAction GRID: sortAlphabetically then
+/// sortByRarityPlusStatusCardType(false) (rarity descending, status last).
+fn seek_draw_grid_indices(draw: &[Card]) -> Vec<usize> {
+    fn java_rarity_ord(r: CardRarity) -> i32 {
+        match r {
+            CardRarity::BASIC => 0,
+            CardRarity::SPECIAL => 1,
+            CardRarity::COMMON => 2,
+            CardRarity::UNCOMMON => 3,
+            CardRarity::RARE => 4,
+            CardRarity::CURSE => 5,
+        }
+    }
+    fn grid_name(c: &Card) -> String {
+        match c.sts_id() {
+            "Strike_B" | "Strike_R" | "Strike_G" | "Strike_P" => "Strike".into(),
+            "Defend_B" | "Defend_R" | "Defend_G" | "Defend_P" => "Defend".into(),
+            "AscendersBane" => "Ascender's Bane".into(),
+            other => other.replace('_', " "),
+        }
+    }
+    let mut idxs: Vec<usize> = (0..draw.len()).collect();
+    idxs.sort_by(|&a, &b| grid_name(&draw[a]).cmp(&grid_name(&draw[b])));
+    idxs.sort_by(|&a, &b| java_rarity_ord(draw[b].rarity()).cmp(&java_rarity_ord(draw[a].rarity())));
+    idxs.sort_by(|&a, &b| {
+        let sa = draw[a].card_type() == CardType::STATUS;
+        let sb = draw[b].card_type() == CardType::STATUS;
+        sa.cmp(&sb)
+    });
+    idxs
 }

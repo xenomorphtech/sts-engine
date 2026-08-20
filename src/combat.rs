@@ -18,6 +18,8 @@ pub struct Combat {
     pub need_put_on_deck: bool,
     /// BetterDiscardPileToHandAction GRID (Hologram).
     pub need_discard_to_hand: bool,
+    /// BetterDrawPileToHandAction GRID (Seek).
+    pub need_draw_to_hand: bool,
     pub pending_exhaust: Option<Card>,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
@@ -58,6 +60,15 @@ impl Combat {
                 monster.extra = 1;
             }
             apply_prebattle(monster, rng);
+        }
+        // BagOfMarbles.atBattleStart is after usePreBattleAction, so Sentry
+        // Artifact (and similar) absorbs the Vulnerable.
+        if player.has_relic(RelicId::Bag_of_Marbles) {
+            for m in &mut monsters {
+                if m.alive() {
+                    m.add_power(PowerId::Vulnerable, 1);
+                }
+            }
         }
         for (i, monster) in monsters.iter_mut().enumerate() {
             monster.roll_move_group(rng, 0, ally_count, i as i32);
@@ -195,6 +206,7 @@ impl Combat {
             need_exhaust_select: false,
             need_put_on_deck: false,
             need_discard_to_hand: false,
+            need_draw_to_hand: false,
             pending_exhaust: None,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
@@ -2604,6 +2616,15 @@ pub fn discard_pile_to_hand(player: &mut Player, index: usize) {
     player.hand.push(c);
 }
 
+/// BetterDrawPileToHandAction: move draw[index] to hand if there is room.
+pub fn draw_pile_to_hand(player: &mut Player, index: usize) {
+    if index >= player.draw.len() || player.hand.len() >= 10 {
+        return;
+    }
+    let c = player.draw.remove(index);
+    player.hand.push(c);
+}
+
 pub fn apply_fire_breathing(player: &Player, monsters: &mut [Monster], statuses: i32) {
     let dmg = player.power_amount(PowerId::FireBreathing);
     if dmg <= 0 || statuses <= 0 {
@@ -2644,12 +2665,14 @@ pub fn play_card(
     combat.need_exhaust_select = false;
     combat.need_put_on_deck = false;
     combat.need_discard_to_hand = false;
+    combat.need_draw_to_hand = false;
     combat.draw_after_exhaust = 0;
     let needs_select = (card.id == CardId::Armaments && !card.upgraded && !player.hand.is_empty())
         || (card.id == CardId::True_Grit && card.upgraded && !player.hand.is_empty())
         || card.id == CardId::Thinking_Ahead
         || (card.id == CardId::Burning_Pact && player.hand.len() > 1)
-        || (card.id == CardId::Hologram && player.discard.len() > 1);
+        || (card.id == CardId::Hologram && player.discard.len() > 1)
+        || (card.id == CardId::Seek && player.draw.len() > card.base_magic.max(1) as usize);
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
@@ -2759,6 +2782,7 @@ pub fn play_card(
     combat.publish_intents();
     if (card.id == CardId::Thinking_Ahead && card.exhaust)
         || (card.id == CardId::Hologram && combat.need_discard_to_hand)
+        || (card.id == CardId::Seek && combat.need_draw_to_hand)
     {
         // UseCardAction runs after BetterDiscardPileToHandAction, so the played
         // card is still in limbo while GRID is open.
@@ -3147,6 +3171,24 @@ fn apply_card_effect(
                 }
             } else {
                 combat.need_discard_to_hand = true;
+            }
+        }
+        CardId::Seek => {
+            let n = card.base_magic.max(1) as usize;
+            if player.draw.len() <= n {
+                while !player.draw.is_empty() && player.hand.len() < 10 {
+                    let c = player.draw.pop().unwrap();
+                    player.hand.push(c);
+                }
+            } else {
+                combat.need_draw_to_hand = true;
+            }
+        }
+        CardId::Impatience => {
+            // ConditionalDrawAction: draw magic if no ATTACK remains in hand.
+            if !player.hand.iter().any(|c| c.card_type() == CardType::ATTACK) {
+                let n = draw_cards_rng(player, card.base_magic.max(2) as i32, Some(rng));
+                apply_fire_breathing(player, &mut combat.monsters, n);
             }
         }
         CardId::Stack => {

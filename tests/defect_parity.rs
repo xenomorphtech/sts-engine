@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn marbles_seek_impatience_lockstep() {
+    // 478329 Bag of Marbles Vulnerable, 808348 Seek draw-pile GRID,
+    // 971636 Impatience conditional draw.
+    for (seed, min_ok) in [("478329", 4), ("808348", 7), ("971636", 11), ("377225", 59)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at unimplemented effect last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn machine_learning_all_for_one_fusion_lockstep() {
     // 395084 Machine Learning extra draw, 631058 All For One 10 damage,
     // 321898 Fusion channels Plasma.

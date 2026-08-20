@@ -730,6 +730,14 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::All_For_One, true) => CardStats::attack(2, 14),
         (CardId::Fusion, false) => CardStats::skill(2, -1, 1),
         (CardId::Fusion, true) => CardStats::skill(1, -1, 1),
+        (CardId::Seek, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Seek, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 2, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Impatience, false) => CardStats::skill(0, -1, 2),
+        (CardId::Impatience, true) => CardStats::skill(0, -1, 3),
         _ => {
             let def = id.def();
             CardStats {
