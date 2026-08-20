@@ -88,6 +88,46 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn snecko_oil_draws_five_and_randomizes_costs() {
+    // 203190 Snecko Oil: draw 5 then cardRandomRng.random(3) per cost>=0 card.
+    // Was a no-op (hand 5 vs Java 10).
+    for (seed, min_ok) in [("203190", 55)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Snecko Oil last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn shop_purge_cost_persists_across_shops() {
+    // 144185 purged at floor 2 (75→100). Floor 5 shop must keep 100 so
+    // choose index 4 is Defragment, not Darkness (purge-shifted).
+    for (seed, min_ok) in [("144185", 50)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at persisted shop purge last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn distilled_chaos_plays_top_of_draw() {
     // 972720 Distilled Chaos autoplays 3 draw-pile cards (two Defends + Strike
     // → player block 10, Lagavulin block 8→2). Was a no-op.

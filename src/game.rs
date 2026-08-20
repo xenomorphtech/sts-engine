@@ -1472,6 +1472,30 @@ impl Game {
                         }
                     }
                 }
+                PotionId::SneckoOil => {
+                    // SneckoOil: DrawCardAction(5) then RandomizeHandCostAction.
+                    // cardRandomRng.random(3) for every card with cost >= 0.
+                    if self.combat.is_some() {
+                        let statuses =
+                            combat::draw_cards_rng(&mut self.player, 5, Some(&mut self.rng));
+                        if let Some(combat) = self.combat.as_mut() {
+                            combat::apply_fire_breathing(
+                                &mut self.player,
+                                &mut combat.monsters,
+                                statuses,
+                            );
+                        }
+                        for c in self.player.hand.iter_mut() {
+                            if c.cost >= 0 {
+                                let new_cost = self.rng.card_random.random_int(3) as i16;
+                                if c.cost != new_cost {
+                                    c.cost = new_cost;
+                                    c.cost_for_turn = new_cost;
+                                }
+                            }
+                        }
+                    }
+                }
                 PotionId::LiquidMemories => {
                     self.begin_memories_select();
                 }
@@ -2135,12 +2159,21 @@ impl Game {
             self.character,
             self.current_room,
         );
+        // ShopScreen.purgeCost is run-wide (resetPurgeCost on a new run).
+        // Rebuilding the shop from stock was resetting it to 75, so a second
+        // shop still treated purge as 75g and shifted choose indices
+        // (144185: index 4 bought Darkness instead of Defragment).
+        let purge_cost = if self.shop.purge_cost > 0 {
+            self.shop.purge_cost
+        } else {
+            75
+        };
         self.shop = ShopState {
             open: false,
             cards: stock.cards,
             relics: stock.relics,
             potions: stock.potions,
-            purge_cost: stock.purge_cost,
+            purge_cost,
             purge_available: true,
         };
         self.screen = Screen::Shop;
