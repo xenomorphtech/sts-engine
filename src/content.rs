@@ -702,6 +702,24 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         },
         (CardId::Finesse, false) => CardStats::skill(0, 2, -1),
         (CardId::Finesse, true) => CardStats::skill(0, 4, -1),
+        (CardId::Reboot, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 4, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Reboot, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 6, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Creative_AI, false) => CardStats {
+            cost: 3, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Creative_AI, true) => CardStats {
+            cost: 2, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Scrape, false) => CardStats {
+            cost: 1, damage: 7, block: -1, magic: 4, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Scrape, true) => CardStats {
+            cost: 1, damage: 10, block: -1, magic: 5, exhaust: false, ethereal: false, innate: false,
+        },
         _ => {
             let def = id.def();
             CardStats {

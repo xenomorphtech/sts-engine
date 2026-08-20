@@ -442,6 +442,10 @@ pub fn burn_discovery_rng(
     }
 }
 
+pub(crate) fn random_power_in_combat(dungeon: &Dungeon, rng: &mut RngSet) -> Option<CardId> {
+    truly_random_combat_card(dungeon, rng, Some(CardType::POWER), false)
+}
+
 fn truly_random_combat_card(
     dungeon: &Dungeon,
     rng: &mut RngSet,

@@ -97,7 +97,7 @@ fn corrupt_heart_spawns_and_debuffs() {
     assert_eq!(combat.monsters[0].id, MonsterId::CorruptHeart);
     assert_eq!(combat.monsters[0].hp, 750);
     assert_eq!(combat.monsters[0].next_move, 3);
-    sts_engine::combat::end_turn(&mut player, &mut combat, &mut rng);
+    sts_engine::combat::end_turn(&mut player, &mut combat, &mut rng, None);
     assert!(player.power_amount(sts_engine::ids::PowerId::Vulnerable) > 0);
     assert!(player.power_amount(sts_engine::ids::PowerId::Weak) > 0);
     assert!(player.power_amount(sts_engine::ids::PowerId::Frail) > 0);

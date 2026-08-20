@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn reboot_creative_ai_scrape_lockstep() {
+    // 875398 Reboot reshuffle+draw, 31813 Creative AI start-of-turn power card,
+    // 369514 Scrape 7 damage.
+    for (seed, min_ok) in [("875398", 4), ("31813", 14), ("369514", 27)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at unimplemented card last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn fruit_juice_does_not_defer_first_map_node() {
     // 191892: Neow three potions, Fruit Juice in belt. Map choose must enter
     // floor 1, not park pending_room.

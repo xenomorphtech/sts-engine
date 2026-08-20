@@ -1312,7 +1312,7 @@ impl Game {
             }
             Action::EndTurn => {
                 if let Some(combat) = self.combat.as_mut() {
-                    combat::end_turn(&mut self.player, combat, &mut self.rng);
+                    combat::end_turn(&mut self.player, combat, &mut self.rng, Some(&self.dungeon));
                     if self.player.hp <= 0 {
                         self.screen = Screen::Terminal;
                         self.done = true;

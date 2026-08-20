@@ -1,6 +1,7 @@
 use crate::card::Card;
 use crate::content::encounter_monsters;
 use crate::creature::{Intent, Monster, Orb, OrbKind, Player};
+use crate::dungeon::Dungeon;
 use crate::ids::{CardId, CardRarity, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId};
 use crate::java_util::shuffle_java;
 use crate::rng::RngSet;
@@ -3091,6 +3092,49 @@ fn apply_card_effect(
             let n = draw_cards_rng(player, 1, Some(rng));
             apply_fire_breathing(player, &mut combat.monsters, n);
         }
+        CardId::Reboot => {
+            // ShuffleAllAction: onShuffle relics, PutOnDeckAction(hand, random) via
+            // cardRandomRng, discardPile.shuffle(shuffleRng), souls to draw, then
+            // ShuffleAction(drawPile) via shuffleRng.randomLong, then Draw magic.
+            while !player.hand.is_empty() {
+                let i = rng.card_random.random_int(player.hand.len() as i32 - 1) as usize;
+                let c = player.hand.remove(i);
+                player.draw.push(c);
+            }
+            // CardGroup.shuffle(rng) always calls rng.randomLong(), even on empty.
+            let seed = rng.shuffle.random_long();
+            shuffle_java(&mut player.discard, seed);
+            player.draw.append(&mut player.discard);
+            let seed = rng.shuffle.random_long();
+            shuffle_java(&mut player.draw, seed);
+            let n = draw_cards_rng(player, card.base_magic.max(4) as i32, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, n);
+        }
+        CardId::Creative_AI => {
+            player.add_power(PowerId::CreativeAI, card.base_magic.max(1) as i32);
+        }
+        CardId::Scrape => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                }
+            }
+            let n = card.base_magic.max(4) as i32;
+            let before = player.hand.len();
+            let statuses = draw_cards_rng(player, n, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, statuses);
+            let drawn = player.hand.len().saturating_sub(before);
+            let start = player.hand.len().saturating_sub(drawn);
+            let mut i = start;
+            while i < player.hand.len() {
+                if player.hand[i].cost_for_turn != 0 && !player.hand[i].free_to_play_once {
+                    let c = player.hand.remove(i);
+                    player.discard.push(c);
+                } else {
+                    i += 1;
+                }
+            }
+        }
         CardId::Hologram => {
             if block > 0 {
                 player.block += block;
@@ -3371,7 +3415,7 @@ pub fn reshuffle_if_needed(player: &mut Player, rng: &mut RngSet) {
     }
 }
 
-pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
+pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dungeon: Option<&Dungeon>) {
     // GameActionManager.callEndOfTurnActions: applyEndOfTurnRelics then
     // applyEndOfTurnPreCardPowers. Orichalcum.onPlayerEndTurn addToTop GainBlock 6
     // if currentBlock==0, so it resolves before PlatedArmor/Metallicize addToBot.
@@ -3643,6 +3687,20 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
         reshuffle_if_needed(player, rng);
         let statuses = draw_cards_rng(player, n, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, statuses);
+    }
+    // CreativeAIPower.atStartOfTurn: MakeTempCardInHand of a random POWER, queued
+    // before the turn's DrawCardAction(5), so the generated card sits at hand[0].
+    let ai = player.power_amount(PowerId::CreativeAI);
+    if ai > 0 {
+        if let Some(dungeon) = dungeon {
+            for _ in 0..ai {
+                if let Some(id) = crate::rewards::random_power_in_combat(dungeon, rng) {
+                    if player.hand.len() < 10 {
+                        player.hand.push(Card::new(id));
+                    }
+                }
+            }
+        }
     }
     let statuses = draw_cards_rng(player, 5, Some(rng));
     apply_fire_breathing(player, &mut combat.monsters, statuses);
