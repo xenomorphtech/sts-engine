@@ -2480,14 +2480,17 @@ impl Monster {
                 self.set_move(3, Intent::Attack, roll, 1);
             }
             (MonsterId::TheGuardian, 2) => {
+                // useFierceBash: setMove(VENTSTEAM) is immediate after queueing
+                // DamageAction, so player Thorns Mode Shift CLOSE_UP wins
+                // (seed 275 Vent Steam Weak/Vuln vs Sharp Hide).
+                self.set_move(7, Intent::StrongDebuff, 0, 1);
                 let dmg = if self.ascension >= 4 { 36 } else { 32 };
                 let _ = hit_player(player, self, rng, dmg, 1);
-                self.set_move(7, Intent::StrongDebuff, 0, 1);
             }
             (MonsterId::TheGuardian, 3) => {
+                self.set_move(4, Intent::AttackBuff, 8, 2);
                 let dmg = if self.ascension >= 4 { 10 } else { 9 };
                 let _ = hit_player(player, self, rng, dmg, 1);
-                self.set_move(4, Intent::AttackBuff, 8, 2);
             }
             (MonsterId::TheGuardian, 4) => {
                 // Twin Slam takeTurn queues ChangeState("Offensive Mode") then

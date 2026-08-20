@@ -1057,6 +1057,25 @@ fn odd_mushroom_cuts_vulnerable_to_25_percent() {
 }
 
 #[test]
+fn guardian_thorns_mode_shift_beats_vent_steam() {
+    // 275: Fierce Bash setMove(Vent Steam) before DamageAction resolves.
+    // Player Thorns 3 crosses Mode Shift; CLOSE_UP must stick (Sharp Hide,
+    // no Weak/Vuln). Rust overwrote CLOSE_UP (hp 45 vs 42, Guardian 178 vs 173).
+    let cfg = default_config(Character::Defect, "275", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 168,
+                "275 still fails at Fierce Bash Mode Shift last_ok={} want > 168: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn ornamental_fan_block_before_sharp_hide() {
     // 872: UseCardAction ctor relics-then-monster-powers after card.use.
     // Fan GainBlock 4 then Sharp Hide 3 (hp 58 block 1, not 55/4).
