@@ -62,6 +62,8 @@ pub struct EventState {
     pub options: Vec<String>,
     /// Event-specific deck indices or counters (Falling: skill/power/attack).
     pub data: Vec<i32>,
+    /// The Library Read grid (20 unique cards).
+    library_cards: Vec<Card>,
     /// GremlinMatchGame cards in shuffled table order.
     match_cards: Vec<MatchCard>,
     match_chosen: Option<usize>,
@@ -260,6 +262,8 @@ enum GridKind {
     DrawPileToHand,
     /// Bottled Flame / Lightning / Tornado: one purgeable card of this type.
     Bottle(CardType),
+    /// The Library Read: 20 unique cards, obtain one.
+    Library,
 }
 
 #[derive(Clone, Debug)]
@@ -810,6 +814,91 @@ impl Game {
         }
     }
 
+    fn open_library_grid(&mut self) {
+        if std::env::var_os("STS_WALK_INK").is_some() {
+            eprintln!(
+                "library_pre blizz={} card_rng={} commons={:?}",
+                self.card_blizz,
+                self.rng.card.counter,
+                self.dungeon
+                    .common_cards
+                    .iter()
+                    .map(|id| id.sts_id())
+                    .collect::<Vec<_>>()
+            );
+        }
+        let cards = self.generate_library_cards();
+        if std::env::var_os("STS_WALK_INK").is_some() {
+            eprintln!(
+                "library_blizz={} card_rng={} commons={} uncommons={} rares={} library_cards={:?}",
+                self.card_blizz,
+                self.rng.card.counter,
+                self.dungeon.common_cards.len(),
+                self.dungeon.uncommon_cards.len(),
+                self.dungeon.rare_cards.len(),
+                cards.iter().map(|c| c.sts_id()).collect::<Vec<_>>()
+            );
+        }
+        if let Some(event) = self.event.as_mut() {
+            event.library_cards = cards;
+            event.screen = 1;
+            event.options = vec!["[Leave]".into()];
+        }
+        self.grid = Some(GridSelect {
+            kind: GridKind::Library,
+            needed: 1,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: true,
+            return_shop: false,
+            return_screen: None,
+            immediate: true,
+        });
+        self.screen = Screen::Grid;
+    }
+
+    /// The Library Read: `getCard(rollRarity())` until 20 unique cardIDs.
+    /// `getCard(rarity)` uses `getRandomCard(true)` = cardRng, not MathUtils.
+    fn generate_library_cards(&mut self) -> Vec<Card> {
+        let mut out = Vec::new();
+        for _ in 0..20 {
+            let mut card = self.roll_library_card();
+            let mut guard = 0;
+            while out.iter().any(|c: &Card| c.id == card.id) && guard < 40 {
+                card = self.roll_library_card();
+                guard += 1;
+            }
+            crate::rewards::preview_obtain(&self.player, &mut card);
+            // CardGroup.addToBottom inserts at index 0.
+            out.insert(0, card);
+        }
+        out
+    }
+
+    fn roll_library_card(&mut self) -> Card {
+        // AbstractDungeon.rollRarity: cardRng.random(99) + cardBlizzRandomizer.
+        // Unlike getRewardCards, Library does not mutate cardBlizzRandomizer.
+        let mut roll = self.rng.card.random_int(99);
+        roll += self.card_blizz;
+        let rarity = if roll < 3 {
+            CardRarity::RARE
+        } else if roll < 40 {
+            CardRarity::UNCOMMON
+        } else {
+            CardRarity::COMMON
+        };
+        let pool = match rarity {
+            CardRarity::RARE => &self.dungeon.rare_cards,
+            CardRarity::UNCOMMON => &self.dungeon.uncommon_cards,
+            _ => &self.dungeon.common_cards,
+        };
+        if pool.is_empty() {
+            return Card::new(CardId::Zap);
+        }
+        Card::new(pool[self.rng.card.random_int(pool.len() as i32 - 1) as usize])
+    }
+
     fn open_grid(&mut self, kind: GridKind, needed: usize, return_event: bool) {
         self.grid = Some(GridSelect {
             kind,
@@ -890,6 +979,14 @@ impl Game {
         if kind == GridKind::DrawPileToHand {
             return seek_draw_grid_indices(&self.player.draw);
         }
+        if kind == GridKind::Library {
+            let n = self
+                .event
+                .as_ref()
+                .map(|e| e.library_cards.len())
+                .unwrap_or(0);
+            return (0..n).collect();
+        }
         if let GridKind::Bottle(typ) = kind {
             // CardGroup.getCardsOfType uses addToBottom (insert at 0), reversing
             // master-deck order. getPurgeableCards then getSkills/Attacks/Powers.
@@ -912,7 +1009,10 @@ impl Game {
                 GridKind::Upgrade => c.can_upgrade(),
                 GridKind::Purge => purgeable_card(c) && !c.in_bottle,
                 GridKind::Transform => purgeable_card(c),
-                GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::Bottle(_) => true,
+                GridKind::DiscardToHand
+                | GridKind::DrawPileToHand
+                | GridKind::Bottle(_)
+                | GridKind::Library => true,
             })
             .map(|(i, _)| i)
             .collect()
@@ -934,8 +1034,13 @@ impl Game {
                 };
                 // ChoiceDriver.chooseGrid: forUpgrade/forTransform/forPurge wait
                 // for confirm; otherwise closeCurrentScreen after the click.
-                if matches!(kind, GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::Bottle(_))
-                    || self.grid.as_ref().is_some_and(|g| g.immediate)
+                if matches!(
+                    kind,
+                    GridKind::DiscardToHand
+                        | GridKind::DrawPileToHand
+                        | GridKind::Bottle(_)
+                        | GridKind::Library
+                ) || self.grid.as_ref().is_some_and(|g| g.immediate)
                 {
                     self.apply_grid(kind, &[pile_i]);
                     return;
@@ -1042,6 +1147,18 @@ impl Game {
                 for i in idxs {
                     if let Some(c) = self.player.deck.get_mut(i) {
                         c.in_bottle = true;
+                    }
+                }
+            }
+            GridKind::Library => {
+                let cards = self
+                    .event
+                    .as_ref()
+                    .map(|e| e.library_cards.clone())
+                    .unwrap_or_default();
+                for i in idxs {
+                    if let Some(card) = cards.get(i).cloned() {
+                        self.pending_cards.push(card);
                     }
                 }
             }
@@ -3109,6 +3226,7 @@ impl Game {
             screen: 0,
             options,
             data,
+            library_cards: Vec::new(),
             match_cards,
             match_chosen: None,
             match_attempts,
@@ -4080,6 +4198,9 @@ impl Game {
                 {
                     let heal = (self.player.max_hp as f32 * 0.33 + 0.5).floor() as i32;
                     self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
+                } else {
+                    self.open_library_grid();
+                    return;
                 }
             }
             "Ghosts" => {}

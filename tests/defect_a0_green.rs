@@ -135,8 +135,8 @@ fn slime_boss_split_inserts_by_draw_x() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 278,
-                "8 still fails after slime split last_ok={} want > 278: {fail}",
+                fail.last_ok > 318,
+                "8 still fails after The Library last_ok={} want > 318: {fail}",
                 fail.last_ok
             );
         }
