@@ -88,6 +88,25 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn hand_of_greed_lockstep() {
+    // 259462 Hand of Greed 20 damage (GreedAction) on Cultist.
+    for (seed, min_ok) in [("259462", 29)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Hand of Greed last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn curl_up_boot_after_block_lockstep() {
     // 234953 Rip and Tear 7×2 before Curl Up addToBot block; 154632/909358
     // Boot onAttackToChangeDamage after decrementBlock (unblocked 1–4 → 5).

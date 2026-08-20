@@ -3552,6 +3552,19 @@ fn apply_card_effect(
                 player.energy += 3;
             }
         }
+        CardId::HandOfGreed => {
+            // GreedAction: damage, then gainGold(magic) if dying and not Minion.
+            let mut killed = false;
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                    killed = (m.hp <= 0 || m.dead) && !m.half_dead;
+                }
+            }
+            if killed {
+                player.gold += card.base_magic.max(20) as i32;
+            }
+        }
         CardId::Barrage => {
             let hits = player.orbs.len() as i32;
             if hits > 0 {
