@@ -514,6 +514,24 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn toy_ornithopter_heals_after_discovery_overlay() {
+    // 45: Colorless/typed potion DiscoveryAction is on the queue before
+    // ToyOrnithopter HealAction, so the CARD_REWARD snapshot is still 56 HP.
+    let cfg = default_config(Character::Defect, "45", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 127,
+                "45 still fails at Ornithopter discovery heal last_ok={} want > 127: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn gremlin_horn_draws_when_eot_orbs_kill() {
     // 906: Electro lightning kills AcidSlime_M at EOT; Gremlin Horn
     // DrawCardAction resolves before DiscardAtEndOfTurn. SlimeBoss slam

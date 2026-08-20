@@ -134,6 +134,9 @@ pub struct Game {
     discovery_combat: bool,
     discovery_typ: Option<crate::ids::CardType>,
     discovery_colorless: bool,
+    /// ToyOrnithopter HealAction is addToBot after DiscoveryAction, so the
+    /// CARD_REWARD snapshot is still pre-heal (seed 45).
+    pending_ornithopter_heal: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -350,6 +353,7 @@ impl Game {
             discovery_combat: false,
             discovery_typ: None,
             discovery_colorless: false,
+            pending_ornithopter_heal: false,
         };
         game.neow_options = vec![NeowOption {
             label: "[Talk]".into(),
@@ -1699,7 +1703,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
-                    self.on_use_potion_relics();
+                    self.ornithopter_after_potion(true);
                     return;
                 }
                 PotionId::Skill => {
@@ -1708,7 +1712,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
-                    self.on_use_potion_relics();
+                    self.ornithopter_after_potion(true);
                     return;
                 }
                 PotionId::Power => {
@@ -1717,7 +1721,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
-                    self.on_use_potion_relics();
+                    self.ornithopter_after_potion(true);
                     return;
                 }
                 PotionId::Colorless => {
@@ -1726,7 +1730,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
-                    self.on_use_potion_relics();
+                    self.ornithopter_after_potion(true);
                     return;
                 }
                 PotionId::EntropicBrew => {
@@ -2263,6 +2267,10 @@ impl Game {
             self.discovery_combat = false;
             self.card_reward.clear();
             self.screen = Screen::Combat;
+            if self.pending_ornithopter_heal {
+                self.pending_ornithopter_heal = false;
+                self.on_use_potion_relics();
+            }
             return;
         }
         // FastCardObtainEffect lands before the next stable boundary.
@@ -4884,6 +4892,16 @@ impl Game {
         if self.player.has_relic(RelicId::Toy_Ornithopter) {
             self.heal_player(5);
             combat::red_skull_on_hp_change(&mut self.player);
+        }
+    }
+
+    /// DiscoveryAction is queued before HealAction, so combat Discovery
+    /// snapshots must not include the +5 yet.
+    fn ornithopter_after_potion(&mut self, discovery_overlay: bool) {
+        if discovery_overlay && self.combat.is_some() {
+            self.pending_ornithopter_heal = true;
+        } else {
+            self.on_use_potion_relics();
         }
     }
 
