@@ -222,6 +222,7 @@ pub enum PowerId {
     Storm,
     NoBlock,
     HelloWorld,
+    StaticDischarge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

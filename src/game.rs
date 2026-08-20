@@ -2827,6 +2827,13 @@ impl Game {
                 opts.push("[Attack]".into());
                 opts
             }
+            "Golden Shrine" => {
+                vec![
+                    "[Pray] #gGain #g50 #gGold.".into(),
+                    "[Desecrate] #gGain #g275 #gGold. #rBecome #rCursed #r- #rRegret.".into(),
+                    "[Leave]".into(),
+                ]
+            }
             "Golden Idol" => {
                 vec![
                     "[Take] #gObtain #gGolden #gIdol.".into(),
@@ -3331,6 +3338,31 @@ impl Game {
             } else if let Some(event) = self.event.as_mut() {
                 event.screen = 1;
                 event.options = vec!["[Leave]".into()];
+            }
+            return;
+        }
+        if id == "Golden Shrine" {
+            if screen == 0 {
+                match *index {
+                    0 => {
+                        if !self.player.has_relic(RelicId::Ectoplasm) {
+                            self.player.gold += self.gold_with_idol(50);
+                        }
+                    }
+                    1 => {
+                        if !self.player.has_relic(RelicId::Ectoplasm) {
+                            self.player.gold += self.gold_with_idol(275);
+                        }
+                        self.obtain_master_deck_card(CardId::Regret);
+                    }
+                    _ => {}
+                }
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Leave]".into()];
+                }
+            } else {
+                self.open_map();
             }
             return;
         }

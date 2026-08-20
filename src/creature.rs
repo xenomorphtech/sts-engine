@@ -55,6 +55,8 @@ pub struct Player {
     pub discard: Vec<crate::card::Card>,
     pub exhaust: Vec<crate::card::Card>,
     pub duplication: i32,
+    /// StaticDischargePower.onAttacked: Lightning channels queued during a hit.
+    pub pending_static: i32,
     pub orbs: Vec<Orb>,
     /// Combat orb slots (`AbstractPlayer.maxOrbs`). Reset from `master_max_orbs` in
     /// `preBattlePrep`; Capacitor / Consume mutate this only for the current fight.
@@ -104,6 +106,7 @@ impl Player {
             discard: Vec::new(),
             exhaust: Vec::new(),
             duplication: 0,
+            pending_static: 0,
             orbs: Vec::new(),
             max_orbs: 0,
             master_max_orbs: 0,
@@ -150,6 +153,7 @@ impl Player {
             discard: Vec::new(),
             exhaust: Vec::new(),
             duplication: 0,
+            pending_static: 0,
             orbs: Vec::new(),
             max_orbs: 3,
             master_max_orbs: 3,

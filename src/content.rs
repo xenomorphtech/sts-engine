@@ -819,6 +819,16 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Hello_World, true) => CardStats {
             cost: 1, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: true,
         },
+        (CardId::Reinforced_Body, false) => CardStats {
+            cost: -1, damage: -1, block: 7, magic: -1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Reinforced_Body, true) => CardStats {
+            cost: -1, damage: -1, block: 9, magic: -1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Thunder_Strike, false) => CardStats::attack(3, 7),
+        (CardId::Thunder_Strike, true) => CardStats::attack(3, 9),
+        (CardId::Static_Discharge, false) => CardStats::skill(1, -1, 1),
+        (CardId::Static_Discharge, true) => CardStats::skill(1, -1, 2),
         _ => {
             let def = id.def();
             CardStats {

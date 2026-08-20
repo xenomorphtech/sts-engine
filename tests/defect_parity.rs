@@ -88,6 +88,33 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn reinforced_thunder_static_shrine_lockstep() {
+    // 672603 Reinforced Body X block, 44477 Thunder Strike random hits,
+    // 29041 Static Discharge channel on hit, 544172 Golden Shrine +50 gold.
+    for (seed, min_ok) in [
+        ("672603", 11),
+        ("44477", 12),
+        ("29041", 17),
+        ("544172", 14),
+        ("804998", 17),
+        ("888563", 16),
+    ] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at unimplemented card last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn reboot_order_boot_shackles_lockstep() {
     // 883356/642248/249652 first-combat Reboot hand order; 608360 Boot
     // Weak Strike 4→5; 475701 Dark Shackles Str-9.

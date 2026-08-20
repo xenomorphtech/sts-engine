@@ -81,6 +81,7 @@ impl Combat {
 
         player.block = 0;
         player.powers.clear();
+        player.pending_static = 0;
         player.draw = player.deck.clone();
         player.hand.clear();
         player.discard.clear();
@@ -176,17 +177,20 @@ impl Combat {
         // leak slots into the next fight.
         player.orbs.clear();
         player.max_orbs = player.master_max_orbs;
+        let mut channeled = Vec::new();
         if player.has_relic(RelicId::Cracked_Core) && player.max_orbs > 0 {
             player.orbs.push(Orb {
                 kind: OrbKind::Lightning,
                 evoke: 0,
             });
+            channeled.push(OrbKind::Lightning);
         }
         if player.has_relic(RelicId::Symbiotic_Virus) && player.max_orbs > 0 {
             player.orbs.push(Orb {
                 kind: OrbKind::Dark,
                 evoke: 0,
             });
+            channeled.push(OrbKind::Dark);
         }
         if player.has_relic(RelicId::DataDisk) {
             player.add_power(PowerId::Focus, 1);
@@ -212,7 +216,7 @@ impl Combat {
             pending_dark_embrace: 0,
             pending_ink_bottle: 0,
             ascension,
-            orbs_channeled_this_combat: Vec::new(),
+            orbs_channeled_this_combat: channeled,
         }
     }
 
@@ -2210,6 +2214,9 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
             }
             let _ = try_cheat_death(player);
             total += dmg;
+            // StaticDischargePower.onAttacked: channel Lightning per stack
+            // when the hit is Attack-type unblocked damage.
+            player.pending_static += player.power_amount(PowerId::StaticDischarge);
             if monster.powers.iter().any(|p| p.id == PowerId::PainfulStabs) {
                 player.discard.push(Card::new(CardId::Wound));
             }
@@ -3484,6 +3491,34 @@ fn apply_card_effect(
         CardId::Hello_World => {
             player.add_power(PowerId::HelloWorld, 1);
         }
+        CardId::Reinforced_Body => {
+            let mut effect = player.energy;
+            if player.has_relic(RelicId::Chemical_X) {
+                effect += 2;
+            }
+            if effect > 0 {
+                let amt = if block > 0 { block } else { 7 };
+                for _ in 0..effect {
+                    gain_player_block(player, amt);
+                }
+                if !card.free_to_play_once {
+                    player.energy = 0;
+                }
+            }
+        }
+        CardId::Thunder_Strike => {
+            let n = combat
+                .orbs_channeled_this_combat
+                .iter()
+                .filter(|k| **k == OrbKind::Lightning)
+                .count();
+            for _ in 0..n {
+                damage_random_alive(player, combat, rng, dmg);
+            }
+        }
+        CardId::Static_Discharge => {
+            player.add_power(PowerId::StaticDischarge, card.base_magic.max(1) as i32);
+        }
         CardId::Barrage => {
             let hits = player.orbs.len() as i32;
             if hits > 0 {
@@ -3792,6 +3827,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let id = combat.monsters[i].id;
         let used_move = combat.monsters[i].next_move;
         let spawned = combat.monsters[i].take_turn(player, rng, combat.ascension);
+        let static_n = player.pending_static;
+        player.pending_static = 0;
+        for _ in 0..static_n {
+            channel_orb(player, combat, rng, OrbKind::Lightning);
+        }
         apply_group_move(combat, i, id, used_move, rng);
         if player.hp <= 0 && !try_cheat_death(player) {
             player.hp = 0;
