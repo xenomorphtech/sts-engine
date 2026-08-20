@@ -1150,7 +1150,8 @@ impl Game {
         self.flush_pending_equip();
         self.event = None;
         self.screen = Screen::Map;
-        self.current_room = RoomType::Empty;
+        // Keep current_room. EventHelper.roll runs before setCurrMapNode, so a
+        // ShopRoom still current zeros shopSize for the next ? node.
     }
 
     fn map_choices(&self) -> Vec<(i32, i32, RoomType)> {
@@ -1226,6 +1227,9 @@ impl Game {
     }
 
     fn enter_room(&mut self, x: i32, y: i32, room: RoomType) {
+        // EventHelper.roll runs before setCurrMapNode, so getCurrRoom() is still
+        // the previous room (ShopRoom zeros shopSize).
+        let prev_room = self.current_room;
         self.event = None;
         if self.pending_gold != 0 {
             self.player.gold += self.gold_with_idol(self.pending_gold);
@@ -1271,7 +1275,7 @@ impl Game {
                 self.screen = Screen::Treasure;
             }
             RoomType::BossTreasure => self.screen = Screen::Treasure,
-            RoomType::Event => match self.roll_event_room() {
+            RoomType::Event => match self.roll_event_room(prev_room) {
                 Some(converted) => {
                     self.current_room = converted;
                     match converted {
@@ -2556,34 +2560,50 @@ impl Game {
         self.screen = Screen::HandSelect;
     }
 
-    fn roll_event_room(&mut self) -> Option<RoomType> {
+    fn roll_event_room(&mut self, prev_room: RoomType) -> Option<RoomType> {
         // EventHelper.roll uses a reconstructed Random(seed, counter), then the
         // dungeon writes that instance back. Vanilla never fills the elite band
         // unless the Deadly Events modifier is on.
         let mut dup = StsRandom::from_seed_counter(self.seed, self.rng.event.counter);
         let roll = dup.random_float();
         self.rng.event = dup;
+        let mut force_chest = false;
+        if let Some(r) = self.player.relics.iter_mut().find(|r| r.id == RelicId::Tiny_Chest) {
+            r.counter += 1;
+            if r.counter == 4 {
+                r.counter = 0;
+                force_chest = true;
+            }
+        }
         let monster_size = (self.event_monster_chance * 100.0) as i32;
-        let shop_size = (self.event_shop_chance * 100.0) as i32;
+        // ShopRoom still current when Java rolls, so a shop does not convert into another shop.
+        let shop_size = if prev_room == RoomType::Shop {
+            0
+        } else {
+            (self.event_shop_chance * 100.0) as i32
+        };
         let treasure_size = (self.event_treasure_chance * 100.0) as i32;
         let idx = (roll * 100.0) as i32;
         let mut fill = 0;
-        let choice = if idx < fill + monster_size {
-            RoomType::Monster
+        let mut choice = if idx < fill + monster_size {
+            Some(RoomType::Monster)
         } else {
             fill += monster_size;
             if idx < fill + shop_size {
-                RoomType::Shop
+                Some(RoomType::Shop)
             } else {
                 fill += shop_size;
                 if idx < fill + treasure_size {
-                    RoomType::Treasure
+                    Some(RoomType::Treasure)
                 } else {
-                    return self.after_event_roll(None);
+                    None
                 }
             }
         };
-        self.after_event_roll(Some(choice))
+        if force_chest {
+            choice = Some(RoomType::Treasure);
+        }
+        self.after_event_roll(choice)
     }
 
     fn after_event_roll(&mut self, choice: Option<RoomType>) -> Option<RoomType> {

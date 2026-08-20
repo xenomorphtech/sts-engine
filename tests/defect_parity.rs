@@ -88,6 +88,31 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn event_room_from_shop_is_not_shop_lockstep() {
+    // EventHelper.roll: if getCurrRoom() is still ShopRoom, shopSize=0 so the
+    // ? node after a shop cannot convert to Shop (idx 10-11 is Treasure).
+    for (seed, min_ok) in [
+        ("439817", 28),
+        ("297788", 29),
+        ("362538", 29),
+        ("682932", 29),
+    ] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at event-from-shop last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn meal_ticket_hourglass_lockstep() {
     // 924030/873442 MealTicket.justEnteredRoom heals 15 in ShopRoom.
     // 97200/885469 MercuryHourglass.atTurnStart deals 3 THORNS to all enemies.
