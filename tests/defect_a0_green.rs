@@ -153,8 +153,8 @@ fn act1_boss_still_rolls_potion_chance() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 303,
-                "169 still fails at Snake Plant Malleable last_ok={} want > 303: {fail}",
+                fail.last_ok > 335,
+                "169 still fails at Hex Dazed timing last_ok={} want > 335: {fail}",
                 fail.last_ok
             );
         }

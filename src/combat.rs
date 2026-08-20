@@ -2847,12 +2847,6 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
             }
         }
     }
-    if card.card_type() != CardType::ATTACK && player.power_amount(PowerId::Hex) > 0 {
-        let n = player.power_amount(PowerId::Hex);
-        for _ in 0..n {
-            add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
-        }
-    }
     if card.card_type() == CardType::POWER {
         // BirdFacedUrn.onUseCard: HealAction(player, 2) addToTop for Power cards.
         if player.has_relic(RelicId::Bird_Faced_Urn) {
@@ -3031,6 +3025,14 @@ pub fn play_owned_card(
         flush_curl_up(combat);
         flush_guardian_defensive_block(combat);
         flush_ink_bottle(player, combat, rng);
+        // HexPower.onUseCard addToBot MakeTempCardInDrawPile after relics
+        // (InkBottle DrawCardAction) and after card.use() draws.
+        if card.card_type() != CardType::ATTACK && player.power_amount(PowerId::Hex) > 0 {
+            let n = player.power_amount(PowerId::Hex);
+            for _ in 0..n {
+                add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
+            }
+        }
         gremlin_horn_on_kills(player, combat, rng, dead_before);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
             let spores = monster.power_amount(PowerId::SporeCloud);
