@@ -555,6 +555,24 @@ fn speed_potion_is_combat_only() {
 }
 
 #[test]
+fn eot_orbs_killing_skip_burn_autoplay() {
+    // 968: EOT lightning kills Hexaghost; cleanCardQueue drops queued Burn
+    // autoplays. Playing them anyway Fairy-revives (22 vs 8).
+    let cfg = default_config(Character::Defect, "968", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 164,
+                "968 still fails at EOT Burn after Hexaghost death last_ok={} want > 164: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn jax_loses_hp_and_gains_strength() {
     // 32: JAX.use LoseHP 3 then Strength 2 (seq 207 65 vs 62, no Strength).
     let cfg = default_config(Character::Defect, "32", Unlocks::fixture(), 0);

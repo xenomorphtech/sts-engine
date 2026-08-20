@@ -4989,6 +4989,12 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if player.hp <= 0 {
         return;
     }
+    // AbstractMonster.die: if areMonstersBasicallyDead, cleanCardQueue
+    // drops CardQueueItems still in hand (Burn autoplays). Lightning EOT
+    // killing Hexaghost therefore skips Burns (seed 968 Fairy 22 vs 8).
+    if combat.all_dead() {
+        return;
+    }
     // triggerOnEndOfTurnForPlayingCard L-to-R after orbs. Burn 2/4, Decay
     // THORNS 2 (hits block). 453310 Decay after Frost left 1 HP vs JawWorm.
     // UseCardAction discards each autoplayed card as it resolves. A lethal
