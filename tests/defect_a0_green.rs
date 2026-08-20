@@ -864,6 +864,24 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn secret_weapon_opens_attack_from_deck_grid() {
+    // 509: Secret Weapon AttackFromDeckToHandAction GRID; Choose 1 is Cold Snap,
+    // exhaust. Rust discarded Secret Weapon and never pulled the attack.
+    let cfg = default_config(Character::Defect, "509", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 169,
+                "509 still fails at Secret Weapon last_ok={} want > 169: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn secret_technique_opens_skill_from_deck_grid() {
     // 806: Secret Technique GRID of skills; Choose 3 is Glacier, exhaust.
     let cfg = default_config(Character::Defect, "806", Unlocks::fixture(), 0);

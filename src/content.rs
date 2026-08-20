@@ -936,6 +936,12 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Secret_Technique, true) => CardStats {
             cost: 0, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: false,
         },
+        (CardId::Secret_Weapon, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: -1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Secret_Weapon, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: false,
+        },
         (CardId::Chrysalis, false) => CardStats {
             cost: 2, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
         },

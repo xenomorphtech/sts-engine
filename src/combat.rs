@@ -3503,7 +3503,9 @@ pub fn play_owned_card(
         || (card.id == CardId::Purity && !player.hand.is_empty())
         || (card.id == CardId::Forethought && !player.hand.is_empty())
         || (card.id == CardId::Secret_Technique
-            && player.draw.iter().filter(|c| c.card_type() == CardType::SKILL).count() > 1);
+            && player.draw.iter().filter(|c| c.card_type() == CardType::SKILL).count() > 1)
+        || (card.id == CardId::Secret_Weapon
+            && player.draw.iter().filter(|c| c.card_type() == CardType::ATTACK).count() > 1);
     for play_i in 0..plays {
         if play_i > 0 {
             card.free_to_play_once = true;
@@ -3667,7 +3669,8 @@ pub fn play_owned_card(
     if (card.id == CardId::Thinking_Ahead && card.exhaust)
         || (card.id == CardId::Hologram && combat.need_discard_to_hand)
         || (card.id == CardId::Seek && combat.need_draw_to_hand)
-        || (card.id == CardId::Secret_Technique && combat.need_skill_from_deck)
+        || ((card.id == CardId::Secret_Technique || card.id == CardId::Secret_Weapon)
+            && combat.need_skill_from_deck)
     {
         // UseCardAction runs after BetterDiscardPileToHandAction, so the played
         // card is still in limbo while GRID is open.
@@ -4743,11 +4746,17 @@ fn apply_card_effect(
                 }
             }
         }
-        CardId::Secret_Technique => {
-            // SkillFromDeckToHandAction: skills into tmp via addToRandomSpot.
+        CardId::Secret_Technique | CardId::Secret_Weapon => {
+            // SkillFromDeckToHandAction / AttackFromDeckToHandAction: matching
+            // cards into tmp via addToRandomSpot (seed 509 Secret Weapon GRID).
+            let want = if card.id == CardId::Secret_Weapon {
+                CardType::ATTACK
+            } else {
+                CardType::SKILL
+            };
             combat.skill_from_deck.clear();
             for (i, c) in player.draw.iter().enumerate() {
-                if c.card_type() != CardType::SKILL {
+                if c.card_type() != want {
                     continue;
                 }
                 if combat.skill_from_deck.is_empty() {
