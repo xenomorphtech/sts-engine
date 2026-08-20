@@ -89,6 +89,31 @@ let obs = env.compact_obs();
 `TrainEnv::step` indexes into the current `legal_actions()` list, the same
 discrete interface the Java headless sim advertises.
 
+## How this was developed
+
+The engine was not written from the wiki and then tested. It was grown against
+ExactTextSim transcripts.
+
+A Python HTN drives the pruned Java headless sim and records every
+`ready_for_command` boundary (combat turn, map, event, rewards, shop, rest,
+grids) plus the command it sent. Those JSONL files are the oracle: gameplay
+fields and the 13 named STS RNG streams, not a SHA-256 of the Java object
+graph. `sts-parity` replays the same commands on rust and stops at the first
+mismatch (hp, gold, block, floor, act, deck, monsters, hand, relics; optionally
+`--rng`).
+
+Most of the card, relic, potion, and monster side effects that were missing
+showed up as leftover reds on that walk — a Lagavulin siphon that dropped
+negative Strength, a ChannelAction that still ran after the last monster died,
+Discovery never rolling the card-random stream, and so on. The loop is: hunt
+thousands of seeds, harvest the JSONL, scan for the earliest mismatch cluster,
+port that Java `Action` / `Power` / relic trigger, retest the green registry
+so a fix does not silently drop a seed that used to match.
+
+Defect A20 has a registry of more than a thousand seeds that walk GREEN under
+`Unlocks::fixture()` against their oracles. That is lockstep of those
+transcripts, not “Defect is done” and not a claim that HTN wins Act 4.
+
 ## Seeds and unlocks
 
 - `Unlocks::fixture()` — captured ExactTextSim profile

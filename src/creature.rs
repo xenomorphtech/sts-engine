@@ -300,7 +300,8 @@ pub fn end_of_turn(powers: &mut Vec<Power>) {
             && p.id != PowerId::LoseDexterity
             && p.id != PowerId::Entangled
     });
-    powers.retain(|p| (p.id != PowerId::Strength && p.id != PowerId::Dexterity) || p.amount > 0);
+    // Java keeps negative Strength/Dexterity (Lagavulin siphon is -1); drop only 0.
+    powers.retain(|p| (p.id != PowerId::Strength && p.id != PowerId::Dexterity) || p.amount != 0);
 }
 
 pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {

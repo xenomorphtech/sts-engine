@@ -1,0 +1,125 @@
+//! Defect A0 GREEN registry: walk seeds listed in the JSONL file.
+//!
+//! The file `exact-text-sim/runtime/oracles/defect/a0/green_registry.jsonl`
+//! is the source of truth. Do not keep a Rust array of seeds.
+
+use sts_engine::green_registry::{GreenRegistry, GreenStatus};
+use sts_engine::ids::Character;
+use sts_engine::walk::{default_config, walk_oracle};
+use sts_engine::Unlocks;
+use std::path::PathBuf;
+
+fn registry_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../exact-text-sim/runtime/oracles/defect/a0/green_registry.jsonl")
+}
+
+fn walk_a0(seed: &str) -> Result<sts_engine::walk::WalkOk, sts_engine::walk::WalkFail> {
+    let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 0);
+    walk_oracle(&cfg)
+}
+
+#[test]
+fn registry_file_is_loadable() {
+    let path = registry_path();
+    if !path.exists() {
+        eprintln!("skip: a0 green_registry.jsonl not written yet");
+        return;
+    }
+    let reg = GreenRegistry::load(&path).expect("load a0 green_registry.jsonl");
+    assert_eq!(reg.ascension, 0, "a0 registry meta.ascension");
+}
+
+#[test]
+fn harvested_a0_oracles_walk_or_report() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../exact-text-sim/runtime/oracles/defect/a0");
+    let mut seen = 0usize;
+    let mut green = 0usize;
+    for entry in std::fs::read_dir(&root).expect("a0 oracle dir") {
+        let entry = entry.unwrap();
+        if !entry.file_type().unwrap().is_dir() {
+            continue;
+        }
+        let seed = entry.file_name();
+        let seed = seed.to_string_lossy();
+        if seed.contains(' ') || !(entry.path().join("states.jsonl")).exists() {
+            continue;
+        }
+        seen += 1;
+        match walk_a0(&seed) {
+            Ok(ok) => {
+                assert!(ok.snaps > 0, "{seed} empty GREEN walk");
+                green += 1;
+            }
+            Err(fail) if fail.mismatched == ["io"] => {
+                eprintln!("skip missing oracle {seed}");
+            }
+            Err(fail) => {
+                eprintln!(
+                    "{seed} RED last_ok {} seq {} {}",
+                    fail.last_ok, fail.seq, fail.boundary
+                );
+            }
+        }
+    }
+    assert!(seen > 0, "no harvested a0 oracles under {}", root.display());
+    eprintln!("a0 harvested {green} GREEN / {seen} oracles");
+}
+
+#[test]
+fn registry_greens_still_walk() {
+    let path = registry_path();
+    if !path.exists() {
+        eprintln!("skip: a0 green_registry.jsonl not written yet");
+        return;
+    }
+    let reg = GreenRegistry::load(&path).expect("load a0 registry");
+    let seeds: Vec<String> = reg.green_seeds().into_iter().map(str::to_string).collect();
+    for seed in &seeds {
+        match walk_a0(seed) {
+            Ok(ok) => {
+                assert!(ok.snaps > 0, "{seed} empty walk");
+            }
+            Err(fail) if fail.mismatched == ["io"] => {
+                eprintln!("skip missing oracle {seed}");
+            }
+            Err(fail) => panic!("a0 registry seed {seed} is not GREEN:\n{fail}"),
+        }
+    }
+}
+
+#[test]
+fn lagavulin_siphon_keeps_negative_strength() {
+    // 713578: Lagavulin move 1 applies Strength -1; rust used to drop amount<=0 at EOT.
+    let cfg = default_config(Character::Defect, "713578", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 117,
+                "713578 still fails at Lagavulin siphon last_ok={} want > 117: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn regression_is_recorded_not_deleted() {
+    let mut reg = GreenRegistry::new();
+    reg.record_green("407258", 250, 242, 210390258);
+    assert_eq!(reg.green_count(), 1);
+    assert!(reg.seeds.contains_key("407258"));
+
+    reg.record_regression("407258", 12, "first mismatch at seq 13 hp");
+    assert!(
+        reg.seeds.contains_key("407258"),
+        "regression must not drop the seed"
+    );
+    assert_eq!(reg.seeds["407258"].status, GreenStatus::Regression);
+    assert_eq!(reg.green_count(), 0);
+    assert_eq!(reg.regressions.len(), 1);
+    assert_eq!(reg.regressions[0].seed, "407258");
+}
