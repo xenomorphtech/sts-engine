@@ -285,6 +285,15 @@ pub fn end_of_turn(powers: &mut Vec<Power>) {
             s.amount -= lose_dex;
         }
     }
+    // RitualPower.atEndOfTurn when onPlayer: ApplyPower Strength (no skipFirst).
+    let ritual = powers
+        .iter()
+        .find(|p| p.id == PowerId::Ritual)
+        .map(|p| p.amount)
+        .unwrap_or(0);
+    if ritual != 0 {
+        add_power_to(powers, PowerId::Strength, ritual);
+    }
     powers.retain(|p| {
         p.id != PowerId::Rage
             && p.id != PowerId::LoseStrength

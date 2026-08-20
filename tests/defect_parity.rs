@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn fear_and_cultist_potion_lockstep() {
+    // 544590 / 381412 Fear Potion Vulnerable 3 then Strike (9 vs 6 / 1 through
+    // Lagavulin block). 957958 Cultist Potion Ritual → EOT Strength 1, Strike 7.
+    for (seed, min_ok) in [("957958", 51), ("544590", 53), ("381412", 54)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Fear/Cultist potion last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn entropic_brew_out_of_combat_is_not_limited() {
     // 861954: Entropic Brew after Wheel of Change. Java returnRandomPotion()
     // (limited=false); rust always passed true and the next hallway dropped

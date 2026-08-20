@@ -1387,6 +1387,29 @@ impl Game {
                     }
                 }
                 PotionId::Block => self.player.block += 12,
+                PotionId::Fear => {
+                    // FearPotion: VulnerablePower(target, 3, isSourceMonster=false).
+                    if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
+                        if let Some(m) = combat.monsters.get_mut(t) {
+                            m.add_power(crate::ids::PowerId::Vulnerable, 3);
+                        }
+                    }
+                }
+                PotionId::Cultist => {
+                    // CultistPotion: RitualPower(player, 1, playerControlled=true).
+                    // Player ritual ticks atEndOfTurn with no skipFirst.
+                    if self.combat.is_some() {
+                        self.player.add_power(crate::ids::PowerId::Ritual, 1);
+                        if let Some(p) = self
+                            .player
+                            .powers
+                            .iter_mut()
+                            .find(|p| p.id == crate::ids::PowerId::Ritual)
+                        {
+                            p.skip_first = false;
+                        }
+                    }
+                }
                 PotionId::Fire => {
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         if let Some(m) = combat.monsters.get_mut(t) {
