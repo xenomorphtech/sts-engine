@@ -74,15 +74,18 @@ pub fn roll_potion(
     rng: &mut RngSet,
     blizzard: &mut i32,
     _elite: bool,
-    boss: bool,
+    skip: bool,
     character: Character,
     reward_count: usize,
     white_beast: bool,
 ) -> Option<PotionId> {
-    // MonsterRoomBoss still calls addPotionToRewards, but observed oracles
-    // never drop a boss potion: chance stays 0 so the roll always misses
-    // and blizzard ticks +10 (one potionRng call).
-    let mut chance = if boss { 0 } else { 40 + *blizzard };
+    // AbstractRoom.addPotionToRewards: MonsterRoomBoss instanceof MonsterRoom,
+    // so Act 1/2 bosses use chance 40+blizzard. `skip` is Act 3/4 bosses,
+    // where endBattle never calls addPotionToRewards (no potionRng).
+    if skip {
+        return None;
+    }
+    let mut chance = 40 + *blizzard;
     // WhiteBeastStatue: chance = 100 (still rolls potionRng; 0-99 never misses).
     if white_beast {
         chance = 100;

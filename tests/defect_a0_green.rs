@@ -108,6 +108,24 @@ fn artifact_absorbs_lagavulin_siphon_dexterity() {
 }
 
 #[test]
+fn runic_pyramid_keeps_hand_at_end_of_turn() {
+    // 213: Runic Pyramid skips DiscardAtEndOfTurnAction. Rust discarded
+    // Hologram/Consume/Defend_B; Java kept them (hand 8 vs 5 after the draw).
+    let cfg = default_config(Character::Defect, "213", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 263,
+                "213 still fails at Runic Pyramid last_ok={} want > 263: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn storm_channels_after_the_power_applies() {
     // 169: Defragment +1 Focus then Storm channels Lightning, evoking Frost at 6 not 5.
     let cfg = default_config(Character::Defect, "169", Unlocks::fixture(), 0);
@@ -118,6 +136,25 @@ fn storm_channels_after_the_power_applies() {
             assert!(
                 fail.last_ok > 111,
                 "169 still fails at Storm+Focus last_ok={} want > 111: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn act1_boss_still_rolls_potion_chance() {
+    // 169: Hexaghost addPotionToRewards uses 40+blizzard (MonsterRoomBoss
+    // instanceof MonsterRoom). Rust forced chance 0, skipped SteroidPotion,
+    // then Choose 0 claimed CARD instead of the potion.
+    let cfg = default_config(Character::Defect, "169", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 219,
+                "169 still fails at boss potion last_ok={} want > 219: {fail}",
                 fail.last_ok
             );
         }

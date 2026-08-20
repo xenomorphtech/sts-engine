@@ -1675,18 +1675,18 @@ impl Game {
         }
         let boss = self.current_room == RoomType::Boss;
         let elite = self.current_room == RoomType::Elite;
-        let darklings = self
-            .combat
-            .as_ref()
-            .is_some_and(|c| c.monsters.iter().any(|m| m.id == crate::ids::MonsterId::Darkling));
-        // CombatRewardScreen.setupItemReward: potion first, then CARD.
-        // addPotionToRewards uses chance 0 when rewards.size() >= 4 but still rolls.
-        // EventRoom still uses chance 40 + blizzard (not the boss/darkling miss).
+        // AbstractRoom.endBattle: skip addPotionToRewards only for
+        // MonsterRoomBoss in TheBeyond / TheEnding (unless endless).
+        // MonsterRoomBoss instanceof MonsterRoom, so Act 1/2 bosses still
+        // use chance 40+blizzard. EventRoom uses the same 40+blizzard roll.
+        let skip_potion = !event_room
+            && boss
+            && matches!(self.dungeon.act, crate::ids::Act::Beyond | crate::ids::Act::Ending);
         if let Some(p) = crate::rewards::roll_potion(
             &mut self.rng,
             &mut self.potion_blizzard,
             elite,
-            !event_room && (boss || darklings),
+            skip_potion,
             self.character,
             self.rewards.len(),
             self.player.has_relic(RelicId::White_Beast_Statue),

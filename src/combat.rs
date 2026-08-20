@@ -4077,23 +4077,31 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             centennial_puzzle_was_hp_lost(player, rng);
         }
     }
+    // DiscardAtEndOfTurnAction: retain/selfRetain cards are pulled to limbo
+    // first (not yet modeled). Runic Pyramid and Equilibrium skip the
+    // DiscardAction loop; ethereal still exhausts via triggerOnEndOfPlayerTurn.
+    let keep_hand = player.has_relic(RelicId::Runic_Pyramid);
     let mut rest = Vec::new();
     for card in player.hand.drain(..) {
-        if is_end_turn_autoplay(card.id) {
+        if is_end_turn_autoplay(card.id) && !keep_hand {
             player.discard.push(card);
         } else {
             rest.push(card);
         }
     }
-    // DiscardAtEndOfTurnAction: ethereal ExhaustSpecificCardAction first
-    // (AbstractCard.triggerOnEndOfPlayerTurn), then remaining cards via
-    // getTopCard / right-to-left.
+    let mut kept = Vec::new();
     for card in rest.into_iter().rev() {
         if card.ethereal {
             player.exhaust.push(card);
+        } else if keep_hand {
+            kept.push(card);
         } else {
             player.discard.push(card);
         }
+    }
+    if keep_hand {
+        kept.reverse();
+        player.hand = kept;
     }
 
     if combat.all_dead() {
