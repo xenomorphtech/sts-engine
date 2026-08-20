@@ -210,19 +210,22 @@ impl Combat {
         player.orbs.clear();
         player.max_orbs = player.master_max_orbs;
         let mut channeled = Vec::new();
-        if player.has_relic(RelicId::Cracked_Core) && player.max_orbs > 0 {
-            player.orbs.push(Orb {
-                kind: OrbKind::Lightning,
-                evoke: 0,
-            });
-            channeled.push(OrbKind::Lightning);
-        }
-        if player.has_relic(RelicId::Symbiotic_Virus) && player.max_orbs > 0 {
-            player.orbs.push(Orb {
-                kind: OrbKind::Dark,
-                evoke: 0,
-            });
-            channeled.push(OrbKind::Dark);
+        // Relic.atPreBattle in inventory order: CrackedCore Lightning,
+        // SymbioticVirus Dark, NuclearBattery Plasma (seed 32 Spheric 18 vs 15).
+        for r in &player.relics {
+            if player.orbs.len() >= player.max_orbs as usize {
+                break;
+            }
+            let kind = match r.id {
+                RelicId::Cracked_Core => Some(OrbKind::Lightning),
+                RelicId::Symbiotic_Virus => Some(OrbKind::Dark),
+                RelicId::Nuclear_Battery => Some(OrbKind::Plasma),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                player.orbs.push(Orb { kind, evoke: 0 });
+                channeled.push(kind);
+            }
         }
         if player.has_relic(RelicId::DataDisk) {
             player.add_power(PowerId::Focus, 1);
@@ -4829,6 +4832,17 @@ fn apply_card_effect(
                 let n = draw_cards_rng(player, card.base_magic as i32, Some(rng));
                 apply_fire_breathing(player, &mut combat.monsters, n);
             }
+        }
+        CardId::J_A_X_ => {
+            // JAX.use: LoseHPAction(3) then Strength magic (2, +1 upgraded).
+            let dmg = on_lose_hp_last(player, 3);
+            if dmg > 0 {
+                player.hp -= dmg;
+                red_skull_on_hp_change(player);
+                centennial_puzzle_was_hp_lost(player, rng);
+                let _ = try_cheat_death(player);
+            }
+            player.add_power(PowerId::Strength, card.base_magic.max(2) as i32);
         }
         CardId::Bloodletting => player.energy += card.base_magic as i32,
         CardId::Offering => {

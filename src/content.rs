@@ -912,6 +912,12 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Forethought, false) | (CardId::Forethought, true) => CardStats {
             cost: 0, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: false,
         },
+        (CardId::J_A_X_, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 2, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::J_A_X_, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 3, exhaust: false, ethereal: false, innate: false,
+        },
         (CardId::Purity, false) => CardStats {
             cost: 0, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
         },

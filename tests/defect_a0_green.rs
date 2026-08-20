@@ -555,6 +555,41 @@ fn speed_potion_is_combat_only() {
 }
 
 #[test]
+fn jax_loses_hp_and_gains_strength() {
+    // 32: JAX.use LoseHP 3 then Strength 2 (seq 207 65 vs 62, no Strength).
+    let cfg = default_config(Character::Defect, "32", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 207,
+                "32 still fails at JAX last_ok={} want > 207: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn nuclear_battery_channels_plasma_at_prebattle() {
+    // 32: NuclearBattery.atPreBattle channels Plasma after Cracked Core.
+    // Without it turn-1 Cold Snap does not evoke Lightning (Spheric 15 vs 18).
+    let cfg = default_config(Character::Defect, "32", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 187,
+                "32 still fails at Nuclear Battery Plasma last_ok={} want > 187: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn guardian_twin_slam_then_mode_shift() {
     // 32: Twin Slam queues ChangeState Offensive then 8x2. ApplyPower(Mode
     // Shift) / Reset Threshold are addToBottom of ChangeState, so player
