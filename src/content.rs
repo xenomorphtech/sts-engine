@@ -632,6 +632,9 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
             ethereal: true,
             innate: false,
         },
+        (CardId::Blind, false) | (CardId::Blind, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 2, exhaust: false, ethereal: false, innate: false,
+        },
         (CardId::Dramatic_Entrance, false) => CardStats {
             cost: 0,
             damage: 8,

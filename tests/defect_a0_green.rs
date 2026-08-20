@@ -517,6 +517,44 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn gfte_weak_snapshots_intent_before_mode_shift() {
+    // 54: Blind.use applies Weak 2 (Java WeakPower). Without it Guardian
+    // ROLL_ATTACK 9 vs 8 frost is 1 HP; Weak 9*0.75=6 is fully blocked.
+    // ForTheEyesAction snapshots getIntentBaseDmg before Mode Shift.
+    let cfg = default_config(Character::Defect, "54", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 152,
+                "54 still fails at GftE Weak last_ok={} want > 152: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn speed_potion_is_combat_only() {
+    // 357: SpeedPotion is COMBAT-only (canUse). LoseDexterityPower.atEndOfTurn
+    // is ApplyPowerAction(Dexterity, -amount), so Ancient Potion Artifact 1
+    // eats the -5 and Glacier+ stays 15 (10 + Dex 5).
+    let cfg = default_config(Character::Defect, "357", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 153,
+                "357 still fails at Speed Potion last_ok={} want > 153: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn empty_cage_opens_purge_grid_once() {
     // 723: EmptyCage.onEquip opens a 2-card purge GRID. Staying on BossRelic
     // treated the next Choose as another relic pick (two Empty Cages).

@@ -209,18 +209,7 @@ impl Player {
         if id == PowerId::Frail && self.has_relic(crate::ids::RelicId::Turnip) {
             return;
         }
-        if power_is_debuff(id, amount) {
-            if let Some(art) = self.powers.iter_mut().find(|p| p.id == PowerId::Artifact) {
-                if art.amount > 0 {
-                    art.amount -= 1;
-                    if art.amount <= 0 {
-                        self.powers.retain(|p| p.id != PowerId::Artifact);
-                    }
-                    return;
-                }
-            }
-        }
-        add_power_to_flags(&mut self.powers, id, amount, from_monster);
+        absorb_or_add_power(&mut self.powers, id, amount, from_monster);
     }
 
     pub fn has_relic(&self, id: crate::ids::RelicId) -> bool {
@@ -260,6 +249,24 @@ pub fn add_power_to(powers: &mut Vec<Power>, id: PowerId, amount: i32) {
     add_power_to_flags(powers, id, amount, false);
 }
 
+/// ApplyPowerAction body after relic-specific blocks (Ginger/Turnip).
+/// ArtifactPower.onApplyPower absorbs `type == DEBUFF` (including Strength/
+/// Dexterity/Focus with a negative amount) and skips the apply.
+pub fn absorb_or_add_power(powers: &mut Vec<Power>, id: PowerId, amount: i32, from_monster: bool) {
+    if power_is_debuff(id, amount) {
+        if let Some(art) = powers.iter_mut().find(|p| p.id == PowerId::Artifact) {
+            if art.amount > 0 {
+                art.amount -= 1;
+                if art.amount <= 0 {
+                    powers.retain(|p| p.id != PowerId::Artifact);
+                }
+                return;
+            }
+        }
+    }
+    add_power_to_flags(powers, id, amount, from_monster);
+}
+
 pub fn add_power_to_flags(powers: &mut Vec<Power>, id: PowerId, amount: i32, from_monster: bool) {
     // TheBombPower uses a unique ID per play (TheBomb0, TheBomb1, …) so later
     // bombs do not stack onto an earlier fuse.
@@ -293,15 +300,17 @@ pub fn add_power_to_flags(powers: &mut Vec<Power>, id: PowerId, amount: i32, fro
 }
 
 pub fn end_of_turn(powers: &mut Vec<Power>) {
+    // LoseStrengthPower / LoseDexterityPower.atEndOfTurn queue
+    // ApplyPowerAction(Strength/Dexterity, -amount), so Artifact absorbs
+    // the debuff (seed 357 Speed Potion Dex 5 + Ancient Potion Artifact 1:
+    // Glacier+ stays 15). Direct subtraction bypassed Artifact.
     let lose_str = powers
         .iter()
         .find(|p| p.id == PowerId::LoseStrength)
         .map(|p| p.amount)
         .unwrap_or(0);
     if lose_str != 0 {
-        if let Some(s) = powers.iter_mut().find(|p| p.id == PowerId::Strength) {
-            s.amount -= lose_str;
-        }
+        absorb_or_add_power(powers, PowerId::Strength, -lose_str, false);
     }
     let lose_dex = powers
         .iter()
@@ -309,9 +318,7 @@ pub fn end_of_turn(powers: &mut Vec<Power>) {
         .map(|p| p.amount)
         .unwrap_or(0);
     if lose_dex != 0 {
-        if let Some(s) = powers.iter_mut().find(|p| p.id == PowerId::Dexterity) {
-            s.amount -= lose_dex;
-        }
+        absorb_or_add_power(powers, PowerId::Dexterity, -lose_dex, false);
     }
     // RitualPower.atEndOfTurn when onPlayer: ApplyPower Strength (no skipFirst).
     let ritual = powers
@@ -443,17 +450,6 @@ impl Monster {
     }
 
     pub fn add_power(&mut self, id: PowerId, amount: i32) {
-        if power_is_debuff(id, amount) {
-            if let Some(art) = self.powers.iter_mut().find(|p| p.id == PowerId::Artifact) {
-                if art.amount > 0 {
-                    art.amount -= 1;
-                    if art.amount <= 0 {
-                        self.powers.retain(|p| p.id != PowerId::Artifact);
-                    }
-                    return;
-                }
-            }
-        }
-        add_power_to(&mut self.powers, id, amount);
+        absorb_or_add_power(&mut self.powers, id, amount, false);
     }
 }

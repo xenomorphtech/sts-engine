@@ -3932,10 +3932,16 @@ fn apply_card_effect(
         CardId::Go_for_the_Eyes => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
+                    // ForTheEyesAction is queued after DamageAction, before
+                    // Mode Shift's addToBottom ChangeStateAction. Snapshot
+                    // getIntentBaseDmg() before damage so a trip to CLOSE_UP
+                    // (BUFF, ibd -1) does not skip Weak (seed 54 ROLL_ATTACK 9).
+                    let apply_weak = m.intent_base_damage >= 0;
                     damage_monster(m, player, rng, dmg, 1);
-                    // ForTheEyesAction: getIntentBaseDmg() >= 0. Unpublished until createIntent.
-                    if m.intent_base_damage >= 0 {
-                        m.add_power(PowerId::Weak, card.base_magic.max(1) as i32);
+                    if apply_weak {
+                        if let Some(m) = combat.monsters.get_mut(i) {
+                            m.add_power(PowerId::Weak, card.base_magic.max(1) as i32);
+                        }
                     }
                 }
             }
@@ -4391,6 +4397,19 @@ fn apply_card_effect(
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
                     m.add_power(PowerId::LockOn, card.base_magic.max(2) as i32);
+                }
+            }
+        }
+        CardId::Blind => {
+            // Blind.use: unupgraded Weak on the target; upgraded Weak on all.
+            let n = card.base_magic.max(2) as i32;
+            if card.upgraded {
+                for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                    monster.add_power(PowerId::Weak, n);
+                }
+            } else if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    m.add_power(PowerId::Weak, n);
                 }
             }
         }

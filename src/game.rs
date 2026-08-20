@@ -1561,14 +1561,35 @@ impl Game {
         }
         if op == PotionOp::Use {
             match id {
-                PotionId::Strength => self.player.add_power(crate::ids::PowerId::Strength, 2),
-                PotionId::Dexterity => self.player.add_power(crate::ids::PowerId::Dexterity, 2),
+                PotionId::Strength => {
+                    if self.combat.is_some() {
+                        self.player.add_power(crate::ids::PowerId::Strength, 2);
+                    } else {
+                        return;
+                    }
+                }
+                PotionId::Dexterity => {
+                    if self.combat.is_some() {
+                        self.player.add_power(crate::ids::PowerId::Dexterity, 2);
+                    } else {
+                        return;
+                    }
+                }
                 PotionId::Speed => {
+                    // SpeedPotion.use / AbstractPotion.canUse: COMBAT only.
+                    // Using it on Rest/Map consumes the slot in rust and
+                    // Dexterity is wiped on enter_room (seed 357 Glacier+ 10 vs 15).
+                    if self.combat.is_none() {
+                        return;
+                    }
                     self.player.add_power(crate::ids::PowerId::Dexterity, 5);
                     self.player.add_power(crate::ids::PowerId::LoseDexterity, 5);
                 }
                 PotionId::Steroid => {
-                    // Flex Potion: Strength 5 + LoseStrength 5.
+                    // Flex Potion: Strength 5 + LoseStrength 5. Combat only.
+                    if self.combat.is_none() {
+                        return;
+                    }
                     self.player.add_power(crate::ids::PowerId::Strength, 5);
                     self.player.add_power(crate::ids::PowerId::LoseStrength, 5);
                 }
@@ -1672,7 +1693,13 @@ impl Game {
                         self.open_gambling_select();
                     }
                 }
-                PotionId::Focus => self.player.add_power(crate::ids::PowerId::Focus, 2),
+                PotionId::Focus => {
+                    // FocusPotion.use: ApplyPower only if room.phase==COMBAT.
+                    if self.combat.is_none() {
+                        return;
+                    }
+                    self.player.add_power(crate::ids::PowerId::Focus, 2);
+                }
                 PotionId::PotionOfCapacity => {
                     // PotionOfCapacity.use -> IncreaseMaxOrbAction(getPotency()=2).
                     combat::increase_max_orb_slots(&mut self.player, 2);
@@ -4952,7 +4979,8 @@ impl Game {
                 | RelicId::Pen_Nib
                 | RelicId::InkBottle
                 | RelicId::Nunchaku
-                | RelicId::Incense_Burner => 0,
+                | RelicId::Incense_Burner
+                | RelicId::Sundial => 0,
                 RelicId::Matryoshka | RelicId::Omamori => 2,
                 RelicId::NlothsMask => 1,
                 _ => -1,
