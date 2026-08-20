@@ -1101,12 +1101,35 @@ impl Game {
                 }
                 let bonfire = self.grid.as_ref().is_some_and(|g| g.return_event)
                     && self.event.as_ref().is_some_and(|e| e.id == "Bonfire Elementals");
+                let designer_full = self.grid.as_ref().is_some_and(|g| g.return_event)
+                    && self.event.as_ref().is_some_and(|e| {
+                        e.id == "Designer" && e.data.get(6).copied().unwrap_or(0) != 0
+                    });
                 for i in idxs.into_iter().rev() {
                     if i < self.player.deck.len() {
                         if bonfire {
                             self.apply_bonfire_offer(self.player.deck[i].rarity());
                         }
                         self.player.deck.remove(i);
+                    }
+                }
+                if designer_full {
+                    // Designer REMOVE_AND_UPGRADE: shuffle remaining upgradables
+                    // with miscRng.randomLong and upgrade the first.
+                    let seed = self.rng.misc.random_long();
+                    let mut up: Vec<usize> = self
+                        .player
+                        .deck
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| c.can_upgrade())
+                        .map(|(i, _)| i)
+                        .collect();
+                    shuffle_java(&mut up, seed);
+                    if let Some(&i) = up.first() {
+                        if let Some(c) = self.player.deck.get_mut(i) {
+                            c.upgrade();
+                        }
                     }
                 }
             }
@@ -3194,6 +3217,29 @@ impl Game {
                 opts.push("[Desecrate] #rBecome #rCursed #r- #rDecay.".into());
                 opts
             }
+            "Drug Dealer" => {
+                // DrugDealer ctor: JAX, transform 2 if >=2 purgeable, MutagenicStrength.
+                // Transform is disabled below that; ChoiceDriver skips it.
+                let mut opts = vec!["[Ingest] #gObtain #gJ.A.X.".into()];
+                let purgeable = self.player.deck.iter().filter(|c| purgeable_card(c)).count();
+                if purgeable >= 2 {
+                    opts.push("[Study] #gTransform #g2 #gcards.".into());
+                }
+                opts.push("[Inject] #gObtain #gMutagenic #gStrength.".into());
+                opts
+            }
+            "Designer" => {
+                // Designer ctor: two miscRng.randomBoolean(), then INTRO Continue.
+                let upg_one = if self.rng.misc.random_boolean() { 1 } else { 0 };
+                let rem_cards = if self.rng.misc.random_boolean() { 1 } else { 0 };
+                let (adj, clean, full, hp) = if self.ascension >= 15 {
+                    (50, 75, 110, 5)
+                } else {
+                    (40, 60, 90, 3)
+                };
+                data = vec![adj, clean, full, hp, upg_one, rem_cards, 0];
+                vec!["[Continue]".into()]
+            }
             "Lab" => vec!["[Search] #gFind #gsome #gPotions!".into()],
             "NoteForYourself" => {
                 // NoteForYourself ctor: one INTRO option, then CHOOSE take/leave.
@@ -3511,6 +3557,43 @@ impl Game {
         ids.first().copied()
     }
 
+    /// Designer MAIN buttons. Disabled options are omitted (ChoiceDriver skips them).
+    fn designer_main_options(&self) -> Vec<String> {
+        let adj = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(40);
+        let clean = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(60);
+        let full = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(90);
+        let hp = self.event.as_ref().and_then(|e| e.data.get(3).copied()).unwrap_or(3);
+        let upg_one = self.event.as_ref().and_then(|e| e.data.get(4).copied()).unwrap_or(0) != 0;
+        let rem_cards = self.event.as_ref().and_then(|e| e.data.get(5).copied()).unwrap_or(0) != 0;
+        let upgradable = self.player.deck.iter().any(|c| c.can_upgrade());
+        let unbottled = self
+            .player
+            .deck
+            .iter()
+            .filter(|c| purgeable_card(c) && !c.in_bottle)
+            .count();
+        let mut opts = Vec::new();
+        if self.player.gold >= adj && upgradable {
+            if upg_one {
+                opts.push(format!("[Adjust] #y{adj} #yGold: #gUpgrade #g1 #gcard."));
+            } else {
+                opts.push(format!("[Adjust] #y{adj} #yGold: #gUpgrade #g2 #grandom #gcards."));
+            }
+        }
+        if rem_cards {
+            if self.player.gold >= clean && unbottled > 0 {
+                opts.push(format!("[Clean Up] #y{clean} #yGold: #gRemove #g1 #gcard."));
+            }
+        } else if self.player.gold >= clean && unbottled >= 2 {
+            opts.push(format!("[Clean Up] #y{clean} #yGold: #gTransform #g2 #gcards."));
+        }
+        if self.player.gold >= full && unbottled > 0 {
+            opts.push(format!("[Full Service] #y{full} #yGold: #gRemove #g1, #gUpgrade #g1."));
+        }
+        opts.push(format!("[Punch] #rLose #r{hp} #rHP."));
+        opts
+    }
+
     fn pick_deck_index_of_type(&mut self, card_type: crate::ids::CardType) -> Option<usize> {
         let idxs: Vec<usize> = self
             .player
@@ -3719,6 +3802,132 @@ impl Game {
             } else if let Some(event) = self.event.as_mut() {
                 event.screen = 1;
                 event.options = vec!["[Leave]".into()];
+            }
+            return;
+        }
+        if id == "Drug Dealer" {
+            if screen == 0 {
+                let chosen = self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.options.get(*index))
+                    .cloned()
+                    .unwrap_or_default();
+                if chosen.contains("Ingest") || chosen.contains("J.A.X") {
+                    self.obtain_master_deck_card(CardId::J_A_X_);
+                } else if chosen.contains("Study") || chosen.contains("Transform") {
+                    if self.player.deck.iter().filter(|c| purgeable_card(c)).count() >= 2 {
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 1;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                        self.open_grid(GridKind::Transform, 2, true);
+                        return;
+                    }
+                } else if chosen.contains("Inject") || chosen.contains("Mutagen") {
+                    if self.player.has_relic(RelicId::MutagenicStrength) {
+                        if let Some(id) = RelicId::from_sts_id("Circlet") {
+                            self.gain_relic(id);
+                        }
+                    } else {
+                        self.gain_relic(RelicId::MutagenicStrength);
+                    }
+                }
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Leave]".into()];
+                }
+            } else {
+                self.open_map();
+            }
+            return;
+        }
+        if id == "Designer" {
+            match screen {
+                0 => {
+                    let opts = self.designer_main_options();
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = opts;
+                    }
+                }
+                1 => {
+                    let chosen = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.options.get(*index))
+                        .cloned()
+                        .unwrap_or_default();
+                    let adj = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(40);
+                    let clean = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(60);
+                    let full = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(90);
+                    let hp = self.event.as_ref().and_then(|e| e.data.get(3).copied()).unwrap_or(3);
+                    let upg_one = self.event.as_ref().and_then(|e| e.data.get(4).copied()).unwrap_or(0) != 0;
+                    let rem_cards = self.event.as_ref().and_then(|e| e.data.get(5).copied()).unwrap_or(0) != 0;
+                    if chosen.contains("Adjust") {
+                        self.player.gold = (self.player.gold - adj).max(0);
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 2;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                        if upg_one {
+                            self.open_grid(GridKind::Upgrade, 1, true);
+                            return;
+                        }
+                        let seed = self.rng.misc.random_long();
+                        let mut idxs: Vec<usize> = self
+                            .player
+                            .deck
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, c)| c.can_upgrade())
+                            .map(|(i, _)| i)
+                            .collect();
+                        shuffle_java(&mut idxs, seed);
+                        for &i in idxs.iter().take(2) {
+                            if let Some(c) = self.player.deck.get_mut(i) {
+                                c.upgrade();
+                            }
+                        }
+                    } else if chosen.contains("Clean") {
+                        self.player.gold = (self.player.gold - clean).max(0);
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 2;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                        if rem_cards {
+                            self.open_grid(GridKind::Purge, 1, true);
+                        } else {
+                            self.open_grid(GridKind::Transform, 2, true);
+                        }
+                        return;
+                    } else if chosen.contains("Full") {
+                        self.player.gold = (self.player.gold - full).max(0);
+                        if let Some(event) = self.event.as_mut() {
+                            if event.data.len() < 7 {
+                                event.data.resize(7, 0);
+                            }
+                            event.data[6] = 1;
+                            event.screen = 2;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                        self.open_grid(GridKind::Purge, 1, true);
+                        return;
+                    } else if chosen.contains("Punch") {
+                        // DamageInfo(null, hpLoss, HP_LOSS): TungstenRod applies.
+                        let dmg = combat::on_lose_hp_last(&self.player, hp);
+                        self.player.hp = (self.player.hp - dmg).max(0);
+                        combat::red_skull_on_hp_change(&mut self.player);
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 2;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                    } else if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                _ => self.open_map(),
             }
             return;
         }
