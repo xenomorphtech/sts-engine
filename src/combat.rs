@@ -2651,6 +2651,12 @@ pub fn apply_block(block: &mut i32, mut damage: i32) -> i32 {
 }
 
 pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngSet, base: i32, hits: i32) {
+    // AbstractCreature.isDeadOrEscaped includes halfDead; DamageAllEnemies
+    // skips those. Hitting a half-dead Darkling would setMove(COUNT) over
+    // REINCARNATE (seed 8 Sweeping Beam, middle Darkling 0 vs 24 after EOT).
+    if !monster.alive() || monster.half_dead {
+        return;
+    }
     // CurlUpPower: addToBot GainBlock after the unblocked hit, so multi-hit
     // cards (Barrage) land every hit before the block appears.
     let mut pending_curl = 0;
@@ -2712,10 +2718,14 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             if monster.hp <= 0 {
                 monster.hp = 0;
                 if monster.id == MonsterId::Darkling {
-                    monster.half_dead = true;
-                    monster.dead = false;
-                    monster.powers.clear();
-                    monster.set_move(4, Intent::Unknown, 0, 1);
+                    // Darkling.damage: only the first lethal hit while !halfDead
+                    // sets COUNT. Later AOE must not overwrite REINCARNATE.
+                    if !monster.half_dead {
+                        monster.half_dead = true;
+                        monster.dead = false;
+                        monster.powers.clear();
+                        monster.set_move(4, Intent::Unknown, 0, 1);
+                    }
                 } else {
                     monster.dead = true;
                     let spores = monster.power_amount(PowerId::SporeCloud);
@@ -2859,7 +2869,7 @@ fn flush_guardian_defensive_block(combat: &mut Combat) {
 }
 
 pub fn deal_thorns(monster: &mut Monster, amount: i32) {
-    if amount <= 0 || !monster.alive() {
+    if amount <= 0 || !monster.alive() || monster.half_dead {
         return;
     }
     let dmg = apply_block(&mut monster.block, amount);

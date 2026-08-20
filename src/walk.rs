@@ -348,6 +348,18 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
         }
         if rust.mons != java.mons {
             mismatched.push("mons");
+            if let Some(c) = game.combat.as_ref() {
+                for (i, m) in c.monsters.iter().enumerate() {
+                    eprintln!(
+                        "  rust mon[{i}] {} hp={} dead={} half={} move={}",
+                        m.id.sts_id(),
+                        m.hp,
+                        m.dead,
+                        m.half_dead,
+                        m.next_move
+                    );
+                }
+            }
         }
         if rust.hand != java.hand {
             mismatched.push("hand");
