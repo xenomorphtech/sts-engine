@@ -3943,6 +3943,22 @@ fn apply_card_effect(
                 player.block += block;
             }
         }
+        CardId::Deep_Breath => {
+            // DeepBreath.use: if discard nonempty, EmptyDeckShuffleAction
+            // (onShuffle relics, shuffle discard, souls addToTop draw) then
+            // ShuffleAction(draw, false) — a second shuffleRng.randomLong,
+            // no relic trigger. Then DrawCardAction(magic 1/2).
+            if !player.discard.is_empty() {
+                on_shuffle_relics(player);
+                let seed = rng.shuffle.random_long();
+                shuffle_java(&mut player.discard, seed);
+                player.draw.append(&mut player.discard);
+                let seed = rng.shuffle.random_long();
+                shuffle_java(&mut player.draw, seed);
+            }
+            let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, n);
+        }
         CardId::Finesse => {
             if block > 0 {
                 player.block += block;
@@ -4657,9 +4673,31 @@ fn is_end_turn_autoplay(id: CardId) -> bool {
 
 pub fn reshuffle_if_needed(player: &mut Player, rng: &mut RngSet) {
     if player.draw.is_empty() && !player.discard.is_empty() {
-        player.draw.append(&mut player.discard);
+        // EmptyDeckShuffleAction ctor: relic.onShuffle, then shuffle discard
+        // and souls.addToTop into draw. Draw was empty so append+shuffle of
+        // the same cards with the same seed matches.
+        on_shuffle_relics(player);
         let seed = rng.shuffle.random_long();
-        shuffle_java(&mut player.draw, seed);
+        shuffle_java(&mut player.discard, seed);
+        player.draw.append(&mut player.discard);
+    }
+}
+
+/// EmptyDeckShuffleAction constructor: Sundial every 3rd shuffle +2 energy,
+/// Abacus GainBlock 6.
+fn on_shuffle_relics(player: &mut Player) {
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Sundial) {
+        if r.counter < 0 {
+            r.counter = 0;
+        }
+        r.counter += 1;
+        if r.counter == 3 {
+            r.counter = 0;
+            player.energy += 2;
+        }
+    }
+    if player.has_relic(RelicId::TheAbacus) {
+        gain_player_block(player, 6);
     }
 }
 

@@ -893,6 +893,12 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Violence, true) => CardStats {
             cost: 0, damage: -1, block: -1, magic: 4, exhaust: true, ethereal: false, innate: false,
         },
+        (CardId::Deep_Breath, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Deep_Breath, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 2, exhaust: false, ethereal: false, innate: false,
+        },
         (CardId::Discovery, false) => CardStats {
             cost: 1, damage: -1, block: -1, magic: -1, exhaust: true, ethereal: false, innate: false,
         },
