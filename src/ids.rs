@@ -224,6 +224,7 @@ pub enum PowerId {
     HelloWorld,
     StaticDischarge,
     Confusion,
+    StrengthUp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -404,6 +405,10 @@ pub enum MonsterId {
     Snecko,
     Byrd,
     Champ,
+    OrbWalker,
+    Maw,
+    TheCollector,
+    TorchHead,
     Unknown,
 }
 
@@ -458,6 +463,10 @@ impl MonsterId {
             MonsterId::Snecko => "Snecko",
             MonsterId::Byrd => "Byrd",
             MonsterId::Champ => "Champ",
+            MonsterId::OrbWalker => "Orb Walker",
+            MonsterId::Maw => "Maw",
+            MonsterId::TheCollector => "TheCollector",
+            MonsterId::TorchHead => "TorchHead",
             MonsterId::Unknown => "Unknown",
         }
     }
@@ -513,6 +522,9 @@ pub enum EncounterId {
     ThreeByrds,
     ChosenAndByrds,
     Champ,
+    OrbWalker,
+    Maw,
+    Collector,
 }
 
 impl EncounterId {
@@ -566,6 +578,9 @@ impl EncounterId {
             EncounterId::ThreeByrds => "3 Byrds",
             EncounterId::ChosenAndByrds => "Chosen and Byrds",
             EncounterId::Champ => "Champ",
+            EncounterId::OrbWalker => "Orb Walker",
+            EncounterId::Maw => "Maw",
+            EncounterId::Collector => "Collector",
         }
     }
 
@@ -619,6 +634,9 @@ impl EncounterId {
             "3 Byrds" => EncounterId::ThreeByrds,
             "Chosen and Byrds" => EncounterId::ChosenAndByrds,
             "Champ" => EncounterId::Champ,
+            "Orb Walker" => EncounterId::OrbWalker,
+            "Maw" => EncounterId::Maw,
+            "Collector" => EncounterId::Collector,
             _ => return None,
         })
     }

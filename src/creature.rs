@@ -365,6 +365,10 @@ pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {
                 ritual_str += p.amount;
                 p.amount = 0;
             }
+            // GenericStrengthUpPower.atEndOfRound: ApplyPower Strength(amount).
+            PowerId::StrengthUp => {
+                ritual_str += p.amount;
+            }
             PowerId::Slow => {
                 p.amount = 0;
             }

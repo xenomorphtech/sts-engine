@@ -1114,5 +1114,8 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
         EncounterId::ThreeByrds => &[MonsterId::Byrd, MonsterId::Byrd, MonsterId::Byrd],
         EncounterId::ChosenAndByrds => &[MonsterId::Byrd, MonsterId::Chosen],
         EncounterId::Champ => &[MonsterId::Champ],
+        EncounterId::OrbWalker => &[MonsterId::OrbWalker],
+        EncounterId::Maw => &[MonsterId::Maw],
+        EncounterId::Collector => &[MonsterId::TheCollector],
     }
 }

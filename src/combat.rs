@@ -281,6 +281,7 @@ fn is_boss_encounter(id: EncounterId) -> bool {
             | EncounterId::Automaton
             | EncounterId::AwakenedOne
             | EncounterId::Champ
+            | EncounterId::Collector
             | EncounterId::ShieldAndSpear
             | EncounterId::CorruptHeart
     )
@@ -384,6 +385,12 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
             monster.add_power(PowerId::Curiosity, 1);
             monster.add_power(PowerId::Unawakened, -1);
         }
+        MonsterId::OrbWalker => {
+            monster.add_power(
+                PowerId::StrengthUp,
+                if monster.ascension >= 17 { 5 } else { 3 },
+            );
+        }
         _ => {}
     }
 }
@@ -398,6 +405,18 @@ fn apply_group_move(combat: &mut Combat, idx: usize, id: MonsterId, used_move: i
         (MonsterId::Healer, 3) => {
             for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 m.add_power(PowerId::Strength, 2);
+            }
+        }
+        (MonsterId::TheCollector, 3) => {
+            let str = if combat.ascension >= 19 {
+                5
+            } else if combat.ascension >= 4 {
+                4
+            } else {
+                3
+            };
+            for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                m.add_power(PowerId::Strength, str);
             }
         }
         (MonsterId::Centurion, 2) => {
@@ -524,7 +543,19 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
         // Constructor burns monsterHpRng once, then setHp rolls the real range.
         let _ = rng.monster_hp.random_range(hp_min, hp_max);
     }
-    let hp = rng.monster_hp.random_range(hp_min, hp_max);
+    if id == MonsterId::OrbWalker {
+        // OrbWalker ctor: super(..., monsterHpRng.random(90, 96)) then setHp.
+        let _ = rng.monster_hp.random_range(90, 96);
+    }
+    if id == MonsterId::TorchHead {
+        let _ = rng.monster_hp.random_range(38, 40);
+    }
+    let hp = if id == MonsterId::Maw {
+        // Maw ctor passes 300 into super and never calls setHp.
+        300
+    } else {
+        rng.monster_hp.random_range(hp_min, hp_max)
+    };
     Monster {
         id,
         hp,
@@ -555,6 +586,9 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
             5
         } else if id == MonsterId::GremlinWizard {
             // GremlinWizard.currentCharge field initializer is 1, not 0.
+            1
+        } else if id == MonsterId::Maw {
+            // Maw.turnCount field initializer is 1; getMove increments first.
             1
         } else {
             0
@@ -816,6 +850,28 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (440, 440)
             } else {
                 (420, 420)
+            }
+        }
+        MonsterId::OrbWalker => {
+            if a7 {
+                (92, 102)
+            } else {
+                (90, 96)
+            }
+        }
+        MonsterId::Maw => (300, 300),
+        MonsterId::TheCollector => {
+            if a9 {
+                (300, 300)
+            } else {
+                (282, 282)
+            }
+        }
+        MonsterId::TorchHead => {
+            if a9 {
+                (40, 45)
+            } else {
+                (38, 40)
             }
         }
         _ => (40, 44),
@@ -1536,6 +1592,53 @@ impl Monster {
                 }
                 self.extra = (forge_times << 8) | (num_turns & 0xFF);
             }
+            MonsterId::OrbWalker => {
+                let laser = if self.ascension >= 2 { 11 } else { 10 };
+                let claw = if self.ascension >= 2 { 16 } else { 15 };
+                if num < 40 {
+                    if !self.last_two(2) {
+                        self.set_move(2, Intent::Attack, claw, 1);
+                    } else {
+                        self.set_move(1, Intent::AttackDebuff, laser, 1);
+                    }
+                } else if !self.last_two(1) {
+                    self.set_move(1, Intent::AttackDebuff, laser, 1);
+                } else {
+                    self.set_move(2, Intent::Attack, claw, 1);
+                }
+            }
+            MonsterId::Maw => {
+                // extra = turnCount (starts 1). split_triggered = roared.
+                self.extra += 1;
+                let slam = if self.ascension >= 2 { 30 } else { 25 };
+                if !self.split_triggered {
+                    self.set_move(2, Intent::StrongDebuff, 0, 1);
+                } else if num < 50 && !self.last_move(5) {
+                    let hits = (self.extra / 2).max(1);
+                    self.set_move(5, Intent::Attack, 5, hits);
+                } else if !self.last_move(3) && !self.last_move(5) {
+                    self.set_move(3, Intent::Attack, slam, 1);
+                } else {
+                    self.set_move(4, Intent::Buff, 0, 1);
+                }
+            }
+            MonsterId::TheCollector => {
+                let fire = if self.ascension >= 4 { 21 } else { 18 };
+                if self.first_move {
+                    self.set_move(1, Intent::Unknown, 0, 1);
+                } else if self.extra >= 3 && !self.split_triggered {
+                    self.set_move(4, Intent::StrongDebuff, 0, 1);
+                } else if num <= 70 && !self.last_two(2) {
+                    self.set_move(2, Intent::Attack, fire, 1);
+                } else if !self.last_move(3) {
+                    self.set_move(3, Intent::DefendBuff, 0, 1);
+                } else {
+                    self.set_move(2, Intent::Attack, fire, 1);
+                }
+            }
+            MonsterId::TorchHead => {
+                self.set_move(1, Intent::Attack, 7, 1);
+            }
             _ => self.set_move(1, Intent::Attack, 6, 1),
         }
     }
@@ -1590,6 +1693,8 @@ impl Monster {
             || (matches!(self.id, MonsterId::AcidSlimeL) && self.next_move == 3)
             // TheGuardian.takeTurn setMoves the next intent; no RollMoveAction.
             || self.id == MonsterId::TheGuardian
+            // TorchHead.takeTurn SetMoveAction(TACKLE) instead of RollMoveAction.
+            || self.id == MonsterId::TorchHead
     }
 
     pub fn take_turn(&mut self, player: &mut Player, rng: &mut RngSet, ascension: i32) -> Option<Vec<Monster>> {
@@ -2150,6 +2255,76 @@ impl Monster {
             (MonsterId::Darkling, 5) => {
                 self.hp = self.max_hp / 2;
                 self.half_dead = false;
+            }
+            (MonsterId::OrbWalker, 1) => {
+                let dmg = if ascension >= 2 { 11 } else { 10 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+                // MakeTempCardInDiscardAndDeckAction(Burn): draw addToRandomSpot
+                // then discard. cardRandomRng when draw is non-empty.
+                let burn_draw = Card::new(CardId::Burn);
+                if player.draw.is_empty() {
+                    player.draw.push(burn_draw);
+                } else {
+                    let i = rng.card_random.random_int(player.draw.len() as i32 - 1) as usize;
+                    player.draw.insert(i, burn_draw);
+                }
+                player.discard.push(Card::new(CardId::Burn));
+            }
+            (MonsterId::OrbWalker, 2) => {
+                let dmg = if ascension >= 2 { 16 } else { 15 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+            }
+            (MonsterId::Maw, 2) => {
+                let dur = if ascension >= 17 { 5 } else { 3 };
+                player.add_power_from_monster(PowerId::Weak, dur);
+                player.add_power_from_monster(PowerId::Frail, dur);
+                self.split_triggered = true;
+            }
+            (MonsterId::Maw, 3) => {
+                let dmg = if ascension >= 2 { 30 } else { 25 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+            }
+            (MonsterId::Maw, 4) => {
+                let str = if ascension >= 17 { 5 } else { 3 };
+                self.add_power(PowerId::Strength, str);
+            }
+            (MonsterId::Maw, 5) => {
+                let hits = (self.extra / 2).max(1);
+                let _ = hit_player(player, self, rng, 5, hits);
+            }
+            (MonsterId::TheCollector, 1) => {
+                self.first_move = false;
+                self.extra += 1;
+                let mut left = spawn_monster(MonsterId::TorchHead, rng, ascension);
+                left.set_move(1, Intent::Attack, 7, 1);
+                left.offset_x = -185;
+                left.just_spawned = true;
+                let mut right = spawn_monster(MonsterId::TorchHead, rng, ascension);
+                right.set_move(1, Intent::Attack, 7, 1);
+                right.offset_x = -370;
+                right.just_spawned = true;
+                return Some(vec![left, right]);
+            }
+            (MonsterId::TheCollector, 2) => {
+                let dmg = if ascension >= 4 { 21 } else { 18 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+                self.extra += 1;
+            }
+            (MonsterId::TheCollector, 3) => {
+                let block = if ascension >= 9 { 18 } else { 15 };
+                self.block += if ascension >= 19 { block + 5 } else { block };
+                self.extra += 1;
+            }
+            (MonsterId::TheCollector, 4) => {
+                let n = if ascension >= 19 { 5 } else { 3 };
+                player.add_power_from_monster(PowerId::Weak, n);
+                player.add_power_from_monster(PowerId::Vulnerable, n);
+                player.add_power_from_monster(PowerId::Frail, n);
+                self.split_triggered = true;
+                self.extra += 1;
+            }
+            (MonsterId::TorchHead, 1) => {
+                let _ = hit_player(player, self, rng, 7, 1);
             }
             (MonsterId::Transient, 1) => {
                 let _ = hit_player(player, self, rng, 30 + self.extra * 10, 1);

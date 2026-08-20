@@ -135,8 +135,8 @@ fn slime_boss_split_inserts_by_draw_x() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 554,
-                "8 still fails at Darkling reincarnate last_ok={} want > 554: {fail}",
+                fail.last_ok > 674,
+                "8 still fails after Maw/Orb Walker hallways last_ok={} want > 674: {fail}",
                 fail.last_ok
             );
         }
