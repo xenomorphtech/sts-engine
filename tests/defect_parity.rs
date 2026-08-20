@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn feather_watch_apotheosis_lockstep() {
+    // 583493 Eternal Feather rest heal (deck/5)*3. 215484 Pocketwatch
+    // atTurnStartPostDraw +3 if previous turn played <=3. 195259 Apotheosis.
+    for (seed, min_ok) in [("583493", 43), ("215484", 50), ("195259", 44)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Feather/Watch/Apotheosis last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn writhe_innate_flex_swift_shrine_gold_lockstep() {
     // 932701 Writhe is innate (on top after shuffle). 268103 Golden Shrine
     // Pray +50 is gainGold, not RewardItem idol bonus. 620958 Flex Potion

@@ -1268,6 +1268,11 @@ impl Game {
                 {
                     r.counter = -2;
                 }
+                // EternalFeather.onEnterRoom RestRoom: heal (masterDeck/5)*3.
+                if self.player.has_relic(RelicId::Eternal_Feather) {
+                    let heal = (self.player.deck.len() as i32 / 5) * 3;
+                    self.heal_player(heal);
+                }
                 self.screen = Screen::Rest;
             }
             RoomType::Treasure => {

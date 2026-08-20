@@ -3568,6 +3568,29 @@ fn apply_card_effect(
                 player.energy += 3;
             }
         }
+        CardId::Apotheosis => {
+            // ApotheosisAction: upgrade every canUpgrade card in hand/draw/discard/exhaust.
+            for c in player.hand.iter_mut() {
+                if c.can_upgrade() {
+                    c.upgrade();
+                }
+            }
+            for c in player.draw.iter_mut() {
+                if c.can_upgrade() {
+                    c.upgrade();
+                }
+            }
+            for c in player.discard.iter_mut() {
+                if c.can_upgrade() {
+                    c.upgrade();
+                }
+            }
+            for c in player.exhaust.iter_mut() {
+                if c.can_upgrade() {
+                    c.upgrade();
+                }
+            }
+        }
         CardId::HandOfGreed => {
             // GreedAction: damage, then gainGold(magic) if dying and not Minion.
             let mut killed = false;
@@ -3990,6 +4013,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
         monster.create_intent();
     }
+    // Pocketwatch.atTurnStartPostDraw: if previous turn played <=3 cards and
+    // this is not the first turn, DrawCardAction(3) after the turn's draw.
+    let pocketwatch = player.has_relic(RelicId::Pocketwatch)
+        && combat.turn > 1
+        && combat.cards_played_this_turn <= 3;
     combat.cards_played_this_turn = 0;
     combat.skills_this_turn = 0;
     combat.attacks_this_turn = 0;
@@ -4089,6 +4117,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     let draw_n = 5 + player.power_amount(PowerId::DrawCard);
     let statuses = draw_cards_rng(player, draw_n, Some(rng));
     apply_fire_breathing(player, &mut combat.monsters, statuses);
+    if pocketwatch {
+        let n = draw_cards_rng(player, 3, Some(rng));
+        apply_fire_breathing(player, &mut combat.monsters, n);
+    }
 }
 
 
