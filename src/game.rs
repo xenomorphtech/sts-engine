@@ -1110,14 +1110,24 @@ impl Game {
                 };
                 // ChoiceDriver.chooseGrid: forUpgrade/forTransform/forPurge wait
                 // for confirm; otherwise closeCurrentScreen after the click.
-                if matches!(
+                // BetterDrawPileToHandAction(Seek+) opens with numCards=2;
+                // selectedCards stay until the count is met (seed 96 GRID
+                // still open after Choose 3, Melter is the second pick).
+                let combat_multi = matches!(
                     kind,
                     GridKind::DiscardToHand
                         | GridKind::DrawPileToHand
                         | GridKind::SkillFromDeck
-                        | GridKind::Bottle(_)
-                        | GridKind::Library
-                ) || self.grid.as_ref().is_some_and(|g| g.immediate)
+                ) && needed > 1;
+                if !combat_multi
+                    && (matches!(
+                        kind,
+                        GridKind::DiscardToHand
+                            | GridKind::DrawPileToHand
+                            | GridKind::SkillFromDeck
+                            | GridKind::Bottle(_)
+                            | GridKind::Library
+                    ) || self.grid.as_ref().is_some_and(|g| g.immediate))
                 {
                     self.apply_grid(kind, &[pile_i]);
                     return;

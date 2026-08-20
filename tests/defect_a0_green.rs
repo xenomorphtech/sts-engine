@@ -864,6 +864,25 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn seek_upgraded_grid_picks_two() {
+    // 96: Apotheosis upgrades Seek to magic 2. BetterDrawPileToHandAction
+    // GRID stays open after the first Choose (Sweeping Beam); second is
+    // Melter. Rust closed after one pick (hand 3 vs 2).
+    let cfg = default_config(Character::Defect, "96", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 173,
+                "96 still fails at Seek+ GRID last_ok={} want > 173: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn trip_applies_vulnerable() {
     // 496: Trip.use Vulnerable 2 on Guardian. Ball Lightning then hits 7*1.5
     // plus Lightning evoke 8 (214 not 217).
