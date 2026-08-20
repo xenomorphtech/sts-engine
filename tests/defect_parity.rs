@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn essence_of_darkness_lockstep() {
+    // 430181 Essence of Darkness channels Dark per orb slot; a full bar
+    // evokes the Cracked Core Lightning (8) before the third Dark lands.
+    for (seed, min_ok) in [("430181", 48)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Essence of Darkness last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn feather_watch_apotheosis_lockstep() {
     // 583493 Eternal Feather rest heal (deck/5)*3. 215484 Pocketwatch
     // atTurnStartPostDraw +3 if previous turn played <=3. 195259 Apotheosis.

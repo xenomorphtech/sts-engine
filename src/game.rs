@@ -1434,6 +1434,21 @@ impl Game {
                     // PotionOfCapacity.use -> IncreaseMaxOrbAction(getPotency()=2).
                     combat::increase_max_orb_slots(&mut self.player, 2);
                 }
+                PotionId::EssenceOfDarkness => {
+                    // EssenceOfDarknessAction: channel Dark once per orb slot
+                    // (Java iterates player.orbs including EmptyOrbSlot).
+                    if let Some(combat) = self.combat.as_mut() {
+                        let n = self.player.max_orbs;
+                        for _ in 0..n {
+                            combat::channel_orb(
+                                &mut self.player,
+                                combat,
+                                &mut self.rng,
+                                crate::creature::OrbKind::Dark,
+                            );
+                        }
+                    }
+                }
                 PotionId::LiquidMemories => {
                     self.begin_memories_select();
                 }
