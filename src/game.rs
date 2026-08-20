@@ -8,6 +8,8 @@ use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
 
+mod snapshot;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Neow,
@@ -443,13 +445,12 @@ impl Game {
                     });
                 }
             }
-            Screen::Neow | Screen::Event | Screen::Treasure | Screen::BossRelic | Screen::Shop => {
+            Screen::Neow | Screen::Event | Screen::Treasure | Screen::BossRelic => {
                 let n = match self.screen {
                     Screen::Neow => self.neow_options.len(),
                     Screen::Event => self.event.as_ref().map(|e| e.options.len()).unwrap_or(0),
                     Screen::Treasure => 1,
                     Screen::BossRelic => self.boss_relics.len() + 1,
-                    Screen::Shop => 1,
                     _ => 0,
                 };
                 for i in 0..n {
@@ -458,7 +459,6 @@ impl Game {
                         Screen::Event => self.event.as_ref().and_then(|e| e.options.get(i).cloned()),
                         Screen::Treasure => Some("open".into()),
                         Screen::BossRelic => self.boss_relics.get(i).map(|r| r.sts_id().to_string()),
-                        Screen::Shop => Some("shop".into()),
                         _ => None,
                     };
                     actions.push(Action::Choose {
@@ -469,9 +469,49 @@ impl Game {
                         room: None,
                     });
                 }
-                if self.screen == Screen::Shop || self.screen == Screen::BossRelic {
+                if self.screen == Screen::BossRelic {
                     actions.push(Action::Proceed);
                 }
+            }
+            Screen::Shop => {
+                if !self.shop.open {
+                    actions.push(Action::Choose {
+                        index: 0,
+                        label: Some("shop".into()),
+                        x: None,
+                        y: None,
+                        room: None,
+                    });
+                } else {
+                    for (index, kind) in self.shop_affordable().into_iter().enumerate() {
+                        let label = match kind {
+                            ShopKind::Purge => Some("purge".into()),
+                            ShopKind::Card(i) => self
+                                .shop
+                                .cards
+                                .get(i)
+                                .map(|offer| offer.item.sts_id().to_string()),
+                            ShopKind::Relic(i) => self
+                                .shop
+                                .relics
+                                .get(i)
+                                .map(|offer| offer.item.sts_id().to_string()),
+                            ShopKind::Potion(i) => self
+                                .shop
+                                .potions
+                                .get(i)
+                                .map(|offer| offer.item.sts_id().to_string()),
+                        };
+                        actions.push(Action::Choose {
+                            index,
+                            label,
+                            x: None,
+                            y: None,
+                            room: None,
+                        });
+                    }
+                }
+                actions.push(Action::Proceed);
             }
             Screen::Grid => {
                 if let Some(grid) = &self.grid {
