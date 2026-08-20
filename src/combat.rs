@@ -3519,6 +3519,26 @@ fn apply_card_effect(
         CardId::Static_Discharge => {
             player.add_power(PowerId::StaticDischarge, card.base_magic.max(1) as i32);
         }
+        CardId::Core_Surge => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                }
+            }
+            player.add_power(PowerId::Artifact, card.base_magic.max(1) as i32);
+        }
+        CardId::Sunder => {
+            let mut killed = false;
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                    killed = m.hp <= 0 || m.dead;
+                }
+            }
+            if killed {
+                player.energy += 3;
+            }
+        }
         CardId::Barrage => {
             let hits = player.orbs.len() as i32;
             if hits > 0 {

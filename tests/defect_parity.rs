@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn woman_in_blue_reward_screen_lockstep() {
+    // 809652 / 706888 / 874370: Woman in Blue opens CombatReward with
+    // PotionHelper potions, then Proceed returns to the event Leave.
+    for (seed, min_ok) in [("809652", 17), ("706888", 19), ("874370", 19), ("217337", 20)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Woman in Blue last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn reinforced_thunder_static_shrine_lockstep() {
     // 672603 Reinforced Body X block, 44477 Thunder Strike random hits,
     // 29041 Static Discharge channel on hit, 544172 Golden Shrine +50 gold.

@@ -1741,6 +1741,8 @@ impl Game {
                 } else if self.event.as_ref().is_some_and(|e| {
                     (e.id == "SensoryStone" && e.screen == 2)
                         || (e.id == "Wheel of Change" && e.screen == 3)
+                        || e.id == "Woman in Blue"
+                        || e.id == "The Woman in Blue"
                 }) {
                     self.screen = Screen::Event;
                 } else {
@@ -3725,6 +3727,43 @@ impl Game {
             }
             return;
         }
+        if id == "Woman in Blue" || id == "The Woman in Blue" {
+            // WomanInBlue.buttonEffect INTRO: lose gold, add N potion RewardItems,
+            // CombatRewardScreen.open(). RESULT Leave after Proceed.
+            match screen {
+                0 => {
+                    if *index < 3 {
+                        let cost = 20 + *index as i32 * 10;
+                        if self.player.gold >= cost {
+                            self.player.gold -= cost;
+                        }
+                        self.rewards.clear();
+                        self.card_reward.clear();
+                        for _ in 0..=*index {
+                            let p = crate::rewards::get_random_potion_for(&mut self.rng, self.character);
+                            self.rewards.push(Reward::new(RewardKind::Potion(p)));
+                        }
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 1;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                        self.screen = Screen::CombatReward;
+                    } else {
+                        if self.ascension >= 15 {
+                            let dmg = ((self.player.max_hp as f32 * 0.05).ceil() as i32).max(1);
+                            let dmg = combat::on_lose_hp_last(&self.player, dmg);
+                            self.player.hp = (self.player.hp - dmg).max(1);
+                        }
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 1;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                    }
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
         if id == "Bonfire Elementals" {
             match screen {
                 0 => {
@@ -3763,19 +3802,6 @@ impl Game {
                 }
             }
             "Ghosts" => {}
-            "Woman in Blue" | "The Woman in Blue" => {
-                if *index < 3 {
-                    let cost = 20 + *index as i32 * 10;
-                    if self.player.gold >= cost {
-                        self.player.gold -= cost;
-                        for _ in 0..=*index {
-                            if let Some(p) = self.random_potion() {
-                                self.gain_potion(p);
-                            }
-                        }
-                    }
-                }
-            }
             "WeMeetAgain" => {
                 let gold_amt = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
                 let card_idx = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(-1);
