@@ -1376,6 +1376,16 @@ impl Game {
         };
         let choices = self.map_choices();
         if matches!(action, Action::Choose { label: Some(label), .. } if label == "boss") {
+            if self.current_y >= 0 {
+                let current = self
+                    .dungeon
+                    .map
+                    .node_mut(self.current_x, self.current_y);
+                current.taken = true;
+                for edge in &mut current.edges {
+                    edge.taken = true;
+                }
+            }
             self.enter_room(-1, 15, RoomType::Boss);
             return;
         }
@@ -1404,6 +1414,20 @@ impl Game {
         // Map node click always enters. Fruit Juice is usable on the map as a
         // Potion action before this choose; deferring entry left rust on Map
         // while Java was already in the first hallway (191892).
+        if self.dungeon.first_room_chosen && self.current_y >= 0 {
+            let current = self
+                .dungeon
+                .map
+                .node_mut(self.current_x, self.current_y);
+            current.taken = true;
+            if let Some(edge) = current
+                .edges
+                .iter_mut()
+                .find(|edge| edge.dst_x == mx && edge.dst_y == my)
+            {
+                edge.taken = true;
+            }
+        }
         self.enter_room(mx, my, room);
     }
 
