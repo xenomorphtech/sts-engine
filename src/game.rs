@@ -923,6 +923,40 @@ impl Game {
     /// EmptyCage.onEquip: GRID of 2 purgeable master-deck cards. size<=2
     /// deletes them immediately (no overlay). Keep the previous screen so
     /// BossRelic Proceed still runs the act transition (seed 723 doubled Cage).
+    /// TinyHouse.onEquip: upgrade 1 random upgradeable (miscRng), +5 max HP,
+    /// addGoldToRewards(50), addPotionToRewards(getRandomPotion(miscRng)),
+    /// then CombatRewardScreen.open which copies room.rewards and adds CARD
+    /// (TreasureRoomBoss is not TreasureRoom). Seed 906 hp 36 vs 41.
+    fn on_equip_tiny_house(&mut self) {
+        let seed = self.rng.misc.random_long();
+        let mut idxs: Vec<usize> = self
+            .player
+            .deck
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.can_upgrade())
+            .map(|(i, _)| i)
+            .collect();
+        crate::java_util::shuffle_java(&mut idxs, seed);
+        if let Some(&idx) = idxs.first() {
+            if let Some(card) = self.player.deck.get_mut(idx) {
+                card.upgrade();
+            }
+        }
+        self.increase_max_hp(5);
+        self.rewards.clear();
+        self.add_gold_to_rewards(50);
+        let potion = crate::rewards::get_random_potion_misc(&mut self.rng, self.character);
+        self.rewards.push(Reward::new(RewardKind::Potion(potion)));
+        self.rewards.push(Reward {
+            kind: RewardKind::Card,
+            taken: false,
+            relic_link: None,
+        });
+        self.generate_card_reward();
+        self.screen = Screen::CombatReward;
+    }
+
     fn open_empty_cage_grid(&mut self) {
         let idxs: Vec<usize> = self
             .player
@@ -2165,6 +2199,10 @@ impl Game {
                     self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
                     self.screen = Screen::Treasure;
                     self.current_room = RoomType::BossTreasure;
+                } else if self.current_room == RoomType::BossTreasure {
+                    // TinyHouse.onEquip CombatRewardScreen overlay: Proceed
+                    // continues the act transition that BossRelic Skip would.
+                    self.begin_next_act();
                 } else if self.event.as_ref().is_some_and(|e| {
                     (e.id == "SensoryStone" && e.screen == 2)
                         || (e.id == "Wheel of Change" && e.screen == 3)
@@ -2814,6 +2852,10 @@ impl Game {
         if !matches!(action, Action::Proceed | Action::Skip) {
             return;
         }
+        self.begin_next_act();
+    }
+
+    fn begin_next_act(&mut self) {
         // Act 2 transition
         if self.rng.card.counter > 0 && self.rng.card.counter < 250 {
             self.rng.card.set_counter(250);
@@ -5030,6 +5072,7 @@ impl Game {
             RelicId::Bottled_Lightning => self.open_bottle_grid(CardType::SKILL),
             RelicId::Bottled_Tornado => self.open_bottle_grid(CardType::POWER),
             RelicId::Empty_Cage => self.open_empty_cage_grid(),
+            RelicId::Tiny_House => self.on_equip_tiny_house(),
             _ => {}
         }
         if matches!(id, RelicId::Frozen_Egg_2 | RelicId::Molten_Egg_2 | RelicId::Toxic_Egg_2) {

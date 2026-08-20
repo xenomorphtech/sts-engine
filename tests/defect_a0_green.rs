@@ -555,6 +555,24 @@ fn speed_potion_is_combat_only() {
 }
 
 #[test]
+fn tiny_house_opens_combat_reward() {
+    // 906: TinyHouse.onEquip increaseMaxHp(5) and CombatRewardScreen.open
+    // (gold 50, miscRng potion, CARD). Rust stayed on BossRelic at 36 HP.
+    let cfg = default_config(Character::Defect, "906", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 160,
+                "906 still fails at Tiny House last_ok={} want > 160: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn explosive_potion_triggers_gremlin_horn() {
     // 773: ExplosivePotion DamageAllEnemiesAction kills AcidSlime_M.
     // GremlinHorn.onMonsterDeath addToBot Draw+Energy while the other M lives

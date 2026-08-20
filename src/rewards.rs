@@ -172,6 +172,13 @@ pub fn get_random_potion_for(rng: &mut RngSet, character: Character) -> PotionId
     PotionId::from_sts_id(key).unwrap_or(PotionId::Block)
 }
 
+/// PotionHelper.getRandomPotion(miscRng): uniform over the character pool.
+pub fn get_random_potion_misc(rng: &mut RngSet, character: Character) -> PotionId {
+    let pool = character_potion_pool(character);
+    let key = pool[rng.misc.random_int(pool.len() as i32 - 1) as usize].id;
+    PotionId::from_sts_id(key).unwrap_or(PotionId::Block)
+}
+
 pub fn return_random_potion(rng: &mut RngSet, character: Character, limited: bool) -> PotionId {
     let roll = rng.potion.random_range(0, 99);
     let rarity = if roll < 65 {
