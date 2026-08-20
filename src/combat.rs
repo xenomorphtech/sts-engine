@@ -3944,17 +3944,16 @@ fn apply_card_effect(
             }
         }
         CardId::Blizzard => {
-            // Blizzard.use: frostCount from orbsChanneledThisCombat * magicNumber (2, +1 upgraded).
+            // Blizzard.use: baseDamage = frostCount * magic, then calculateCardDamage
+            // (Strength applies even when frostCount is 0 — seed 840 SlaverRed 20 vs 18).
             let frost = combat
                 .orbs_channeled_this_combat
                 .iter()
                 .filter(|k| **k == OrbKind::Frost)
                 .count() as i32;
             let per = frost * card.base_magic.max(2) as i32;
-            if per > 0 {
-                for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    damage_monster(monster, player, rng, per, 1);
-                }
+            for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                damage_monster(monster, player, rng, per, 1);
             }
         }
         CardId::Sweeping_Beam => {

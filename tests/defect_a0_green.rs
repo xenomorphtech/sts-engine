@@ -517,6 +517,24 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn blizzard_applies_strength_with_zero_frost() {
+    // 840: Blizzard.use calculateCardDamage after baseDamage = frostCount*2;
+    // frostCount 0 still gets Strength 2 (Java SlaverRed 18, rust skipped the hit).
+    let cfg = default_config(Character::Defect, "840", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 140,
+                "840 still fails at Blizzard last_ok={} want > 140: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn chrysalis_shuffles_zero_cost_skills_into_draw() {
     // 63: Chrysalis use() rolls 3 SKILLs then queues random-spot inserts
     // (interleaving pick/insert drew Steam Power). Calipers loseBlock(15).
