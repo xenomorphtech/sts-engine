@@ -1787,6 +1787,11 @@ impl Game {
             .unwrap_or(0);
         after_combat_relics(&mut self.player);
         let event_room = self.current_room == RoomType::Event;
+        // MonsterGroup.haveMonstersEscaped: true only if every monster
+        // escaped. Hallway gold and potion then skip (Looter/Mugger run).
+        let all_escaped = self.combat.as_ref().is_some_and(|c| {
+            !c.monsters.is_empty() && c.monsters.iter().all(|m| m.escaped)
+        });
         // AbstractRoom.endBattle gold is `instanceof MonsterRoomBoss/Elite/MonsterRoom`.
         // EventRoom keeps pre-seeded rewards (Mushrooms gold+Odd Mushroom, MindBloom, …)
         // and does not roll hallway gold.
@@ -1797,8 +1802,10 @@ impl Game {
             }
             let boss = self.current_room == RoomType::Boss;
             let elite = self.current_room == RoomType::Elite;
-            let gold = crate::rewards::roll_monster_gold(&mut self.rng, boss, elite, self.ascension);
-            self.add_gold_to_rewards(gold);
+            if boss || elite || !all_escaped {
+                let gold = crate::rewards::roll_monster_gold(&mut self.rng, boss, elite, self.ascension);
+                self.add_gold_to_rewards(gold);
+            }
             if elite {
                 // MonsterRoomElite.returnRandomRelicTier: <50 common, >82 rare, else uncommon.
                 let roll = self.rng.relic.random_range(0, 99);
@@ -1827,11 +1834,14 @@ impl Game {
         let skip_potion = !event_room
             && boss
             && matches!(self.dungeon.act, crate::ids::Act::Beyond | crate::ids::Act::Ending);
+        // Hallway + all escaped: addPotionToRewards still rolls with chance 0.
+        let escaped_hallway = !event_room && !boss && !elite && all_escaped;
         if let Some(p) = crate::rewards::roll_potion(
             &mut self.rng,
             &mut self.potion_blizzard,
             elite,
             skip_potion,
+            escaped_hallway,
             self.character,
             self.rewards.len(),
             self.player.has_relic(RelicId::White_Beast_Statue),

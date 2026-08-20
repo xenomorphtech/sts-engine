@@ -75,6 +75,7 @@ pub fn roll_potion(
     blizzard: &mut i32,
     _elite: bool,
     skip: bool,
+    escaped_hallway: bool,
     character: Character,
     reward_count: usize,
     white_beast: bool,
@@ -85,7 +86,8 @@ pub fn roll_potion(
     if skip {
         return None;
     }
-    let mut chance = 40 + *blizzard;
+    // MonsterRoom && haveMonstersEscaped: chance stays 0, still rolls.
+    let mut chance = if escaped_hallway { 0 } else { 40 + *blizzard };
     // WhiteBeastStatue: chance = 100 (still rolls potionRng; 0-99 never misses).
     if white_beast {
         chance = 100;
