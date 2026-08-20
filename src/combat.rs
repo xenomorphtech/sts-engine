@@ -1,6 +1,6 @@
 use crate::card::Card;
 use crate::content::encounter_monsters;
-use crate::creature::{Intent, Monster, Orb, OrbKind, Player};
+use crate::creature::{power_is_debuff, Intent, Monster, Orb, OrbKind, Player};
 use crate::dungeon::Dungeon;
 use crate::ids::{CardId, CardRarity, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId};
 use crate::java_util::shuffle_java;
@@ -280,6 +280,7 @@ fn is_boss_encounter(id: EncounterId) -> bool {
             | EncounterId::SlimeBoss
             | EncounterId::Automaton
             | EncounterId::AwakenedOne
+            | EncounterId::Champ
             | EncounterId::ShieldAndSpear
             | EncounterId::CorruptHeart
     )
@@ -808,6 +809,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (26, 33)
             } else {
                 (25, 31)
+            }
+        }
+        MonsterId::Champ => {
+            if a9 {
+                (440, 440)
+            } else {
+                (420, 420)
             }
         }
         _ => (40, 44),
@@ -1495,6 +1503,39 @@ impl Monster {
                     self.set_move(6, Intent::Buff, 0, 1);
                 }
             }
+            MonsterId::Champ => {
+                // extra: numTurns in low 8 bits, forgeTimes in the rest.
+                // split_triggered = thresholdReached (HP < max/2 anger).
+                let mut num_turns = (self.extra & 0xFF) + 1;
+                let mut forge_times = self.extra >> 8;
+                let slash = if self.ascension >= 4 { 18 } else { 16 };
+                let slap = if self.ascension >= 4 { 14 } else { 12 };
+                let stance_roll = if self.ascension >= 19 { 30 } else { 15 };
+                if self.hp < self.max_hp / 2 && !self.split_triggered {
+                    self.split_triggered = true;
+                    self.set_move(7, Intent::Buff, 0, 1);
+                } else if !self.last_move(3)
+                    && !self.last_move_before(3)
+                    && self.split_triggered
+                {
+                    self.set_move(3, Intent::Attack, 10, 2);
+                } else if num_turns == 4 && !self.split_triggered {
+                    self.set_move(6, Intent::Debuff, 0, 1);
+                    num_turns = 0;
+                } else if !self.last_move(2) && forge_times < 2 && num <= stance_roll {
+                    forge_times += 1;
+                    self.set_move(2, Intent::DefendBuff, 0, 1);
+                } else if !self.last_move(5) && !self.last_move(2) && num <= 30 {
+                    self.set_move(5, Intent::Buff, 0, 1);
+                } else if !self.last_move(4) && num <= 55 {
+                    self.set_move(4, Intent::AttackDebuff, slap, 1);
+                } else if !self.last_move(1) {
+                    self.set_move(1, Intent::Attack, slash, 1);
+                } else {
+                    self.set_move(4, Intent::AttackDebuff, slap, 1);
+                }
+                self.extra = (forge_times << 8) | (num_turns & 0xFF);
+            }
             _ => self.set_move(1, Intent::Attack, 6, 1),
         }
     }
@@ -1519,6 +1560,10 @@ impl Monster {
 
     fn last_move(&self, move_id: i32) -> bool {
         self.move_history.last() == Some(&move_id)
+    }
+
+    fn last_move_before(&self, move_id: i32) -> bool {
+        self.move_history.len() >= 2 && self.move_history[self.move_history.len() - 2] == move_id
     }
 
     fn last_two(&self, move_id: i32) -> bool {
@@ -1822,6 +1867,62 @@ impl Monster {
             }
             (MonsterId::Byrd, 6) => {
                 self.add_power(PowerId::Strength, 1);
+            }
+            (MonsterId::Champ, 1) => {
+                let dmg = if ascension >= 4 { 18 } else { 16 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+            }
+            (MonsterId::Champ, 2) => {
+                let block = if ascension >= 19 {
+                    20
+                } else if ascension >= 9 {
+                    18
+                } else {
+                    15
+                };
+                let forge = if ascension >= 19 {
+                    7
+                } else if ascension >= 9 {
+                    6
+                } else {
+                    5
+                };
+                self.block += block;
+                self.add_power(PowerId::Metallicize, forge);
+            }
+            (MonsterId::Champ, 3) => {
+                let _ = hit_player(player, self, rng, 10, 2);
+            }
+            (MonsterId::Champ, 4) => {
+                let dmg = if ascension >= 4 { 14 } else { 12 };
+                let _ = hit_player(player, self, rng, dmg, 1);
+                player.add_power_from_monster(PowerId::Frail, 2);
+                player.add_power_from_monster(PowerId::Vulnerable, 2);
+            }
+            (MonsterId::Champ, 5) => {
+                let str = if ascension >= 19 {
+                    4
+                } else if ascension >= 4 {
+                    3
+                } else {
+                    2
+                };
+                self.add_power(PowerId::Strength, str);
+            }
+            (MonsterId::Champ, 6) => {
+                player.add_power_from_monster(PowerId::Weak, 2);
+                player.add_power_from_monster(PowerId::Vulnerable, 2);
+            }
+            (MonsterId::Champ, 7) => {
+                self.powers.retain(|p| !power_is_debuff(p.id, p.amount));
+                let str = if ascension >= 19 {
+                    4
+                } else if ascension >= 4 {
+                    3
+                } else {
+                    2
+                };
+                self.add_power(PowerId::Strength, str * 3);
             }
             (MonsterId::SpikeSlimeS, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 6 } else { 5 }, 1);

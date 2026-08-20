@@ -403,6 +403,7 @@ pub enum MonsterId {
     AwakenedOne,
     Snecko,
     Byrd,
+    Champ,
     Unknown,
 }
 
@@ -456,6 +457,7 @@ impl MonsterId {
             MonsterId::AwakenedOne => "AwakenedOne",
             MonsterId::Snecko => "Snecko",
             MonsterId::Byrd => "Byrd",
+            MonsterId::Champ => "Champ",
             MonsterId::Unknown => "Unknown",
         }
     }
@@ -510,6 +512,7 @@ pub enum EncounterId {
     Snecko,
     ThreeByrds,
     ChosenAndByrds,
+    Champ,
 }
 
 impl EncounterId {
@@ -562,6 +565,7 @@ impl EncounterId {
             EncounterId::Snecko => "Snecko",
             EncounterId::ThreeByrds => "3 Byrds",
             EncounterId::ChosenAndByrds => "Chosen and Byrds",
+            EncounterId::Champ => "Champ",
         }
     }
 
@@ -614,6 +618,7 @@ impl EncounterId {
             "Snecko" => EncounterId::Snecko,
             "3 Byrds" => EncounterId::ThreeByrds,
             "Chosen and Byrds" => EncounterId::ChosenAndByrds,
+            "Champ" => EncounterId::Champ,
             _ => return None,
         })
     }

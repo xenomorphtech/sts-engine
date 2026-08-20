@@ -127,16 +127,16 @@ fn whetstone_upgrades_attacks_at_obtain() {
 
 #[test]
 fn slime_boss_split_inserts_by_draw_x() {
-    // Seed 8: AcidSlime_L split by drawX, then Cursed Key ShowCardAndObtain
-    // of returnRandomCurse on the Act 2 chest (Clumsy in the master deck).
+    // Seed 8: slime split, Cursed Key curse, then Champ Act 2 boss
+    // (Heavy Slash / Defensive Stance / Execute / Slap / Gloat / Taunt / Anger).
     let cfg = default_config(Character::Defect, "8", Unlocks::fixture(), 0);
     match walk_oracle(&cfg) {
         Ok(_) => {}
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 319,
-                "8 still fails at Cursed Key chest curse last_ok={} want > 319: {fail}",
+                fail.last_ok > 441,
+                "8 still fails at Champ Act 2 boss last_ok={} want > 441: {fail}",
                 fail.last_ok
             );
         }
