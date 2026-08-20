@@ -2802,10 +2802,12 @@ pub fn play_owned_card(
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
+        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         apply_card_effect(player, combat, &mut card, target, rng, dungeon);
         flush_curl_up(combat);
         flush_guardian_defensive_block(combat);
         flush_ink_bottle(player, combat, rng);
+        gremlin_horn_on_kills(player, combat, rng, dead_before);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
             let spores = monster.power_amount(PowerId::SporeCloud);
             if spores > 0 {
@@ -3884,6 +3886,35 @@ fn apply_card_effect(
     }
 }
 
+/// GremlinHorn.onMonsterDeath: if this kill did not end combat, +1 energy and draw 1.
+/// Sequential deaths in one card: the last remaining enemy dying does not trigger.
+fn gremlin_horn_on_kills(
+    player: &mut Player,
+    combat: &mut Combat,
+    rng: &mut RngSet,
+    dead_before: usize,
+) {
+    if !player.has_relic(RelicId::Gremlin_Horn) {
+        return;
+    }
+    let dead_after = combat.monsters.iter().filter(|m| m.dead).count();
+    let newly = dead_after.saturating_sub(dead_before);
+    if newly == 0 {
+        return;
+    }
+    let remaining = combat.monsters.iter().filter(|m| m.alive()).count();
+    let triggers = if remaining > 0 {
+        newly
+    } else {
+        newly.saturating_sub(1)
+    };
+    for _ in 0..triggers {
+        player.energy += 1;
+        let n = draw_cards_rng(player, 1, Some(rng));
+        apply_fire_breathing(player, &mut combat.monsters, n);
+    }
+}
+
 fn is_end_turn_autoplay(id: CardId) -> bool {
     matches!(
         id,
@@ -4280,6 +4311,14 @@ fn tick_turn_start_block_relics(player: &mut Player) {
 }
 
 pub fn after_combat_relics(player: &mut Player) {
+    // AbstractRoom.endBattle: Meat on the Bone.onTrigger before onVictory.
+    if player.has_relic(RelicId::Meat_on_the_Bone)
+        && player.hp > 0
+        && (player.hp as f32) <= (player.max_hp as f32) / 2.0
+    {
+        player.hp = (player.hp + 12).min(player.max_hp);
+        red_skull_on_hp_change(player);
+    }
     if player.has_relic(RelicId::Burning_Blood) && player.hp > 0 {
         player.hp = (player.hp + 6).min(player.max_hp);
     }

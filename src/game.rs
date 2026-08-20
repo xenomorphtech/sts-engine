@@ -1673,6 +1673,7 @@ impl Game {
             !event_room && (boss || darklings),
             self.character,
             self.rewards.len(),
+            self.player.has_relic(RelicId::White_Beast_Statue),
         ) {
             self.rewards.push(Reward::new(RewardKind::Potion(p)));
         }
@@ -3574,8 +3575,8 @@ impl Game {
                             event.data = vec![dmg, max_loss];
                             event.options = vec![
                                 "[Outrun] #rBecome #rCursed #r- #rInjury.".into(),
-                                format!("[Hide] #rTake #r{dmg} #rDamage."),
-                                format!("[Smash] #rLose #r{max_loss} #rMax #rHP."),
+                                format!("[Smash] #rTake #r{dmg} #rDamage."),
+                                format!("[Hide] #rLose #r{max_loss} #rMax #rHP."),
                             ];
                         }
                     } else if let Some(event) = self.event.as_mut() {
@@ -3589,8 +3590,13 @@ impl Game {
                     match *index {
                         0 => self.player.deck.push(Card::new(CardId::Injury)),
                         1 => {
+                            // player.damage(DamageInfo) can kill (230296: 20-24 → 0).
                             let dmg = combat::on_lose_hp_last(&self.player, dmg);
-                            self.player.hp = (self.player.hp - dmg).max(1);
+                            self.player.hp = (self.player.hp - dmg).max(0);
+                            if self.player.hp <= 0 {
+                                self.screen = Screen::Terminal;
+                                self.done = true;
+                            }
                         }
                         _ => {
                             self.player.max_hp = (self.player.max_hp - max_loss).max(1);

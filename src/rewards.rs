@@ -77,11 +77,16 @@ pub fn roll_potion(
     boss: bool,
     character: Character,
     reward_count: usize,
+    white_beast: bool,
 ) -> Option<PotionId> {
     // MonsterRoomBoss still calls addPotionToRewards, but observed oracles
     // never drop a boss potion: chance stays 0 so the roll always misses
     // and blizzard ticks +10 (one potionRng call).
     let mut chance = if boss { 0 } else { 40 + *blizzard };
+    // WhiteBeastStatue: chance = 100 (still rolls potionRng; 0-99 never misses).
+    if white_beast {
+        chance = 100;
+    }
     // AbstractRoom.addPotionToRewards: rewards.size() >= 4 forces miss.
     if reward_count >= 4 {
         chance = 0;

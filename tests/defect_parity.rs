@@ -88,6 +88,65 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn gremlin_horn_draws_on_nonfinal_kill() {
+    // 202845 Horn: killing one of three lice draws 1 (Java hand +Strike).
+    for (seed, min_ok) in [("202845", 57)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Gremlin Horn last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn meat_on_the_bone_heals_when_bloodied() {
+    // 328989 Meat on the Bone: hp 29/71 ≤ half → +12 at endBattle (Java 41).
+    for (seed, min_ok) in [("328989", 56)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Meat on the Bone last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn golden_idol_trap_can_kill_and_white_beast_always_drops() {
+    // 230296 Hide/Smash 24 dmg from 20 HP: Java dies, rust .max(1) survived.
+    // 897863 White Beast Statue chance=100 so LiquidMemories drops; rust
+    // skipped the potion and took the card on choose 0.
+    for (seed, min_ok) in [("230296", 55), ("897863", 55)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Idol/White Beast last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn fossilized_helix_buffers_first_hit() {
     // 961743 Helix Buffer 1 absorbs Fat's 5; without it rust HP 43 vs Java 48.
     for (seed, min_ok) in [("961743", 55)] {
