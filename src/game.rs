@@ -5001,7 +5001,10 @@ impl Game {
     }
 
     fn gain_relic(&mut self, id: RelicId) {
-        if id == RelicId::Cursed_Key || id == RelicId::Coffee_Dripper {
+        if id == RelicId::Cursed_Key
+            || id == RelicId::Coffee_Dripper
+            || id == RelicId::Philosophers_Stone
+        {
             self.player.energy_master += 1;
         }
         if id == RelicId::Old_Coin {

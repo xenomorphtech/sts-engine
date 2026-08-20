@@ -82,6 +82,15 @@ impl Combat {
                 }
             }
         }
+        // PhilosopherStone.atBattleStart: Strength 1 on every monster
+        // (seed 645 Looter+Mugger 11 not 10, hp 58 vs 60).
+        if player.has_relic(RelicId::Philosophers_Stone) {
+            for m in &mut monsters {
+                if m.alive() {
+                    m.add_power(PowerId::Strength, 1);
+                }
+            }
+        }
         for (i, monster) in monsters.iter_mut().enumerate() {
             monster.roll_move_group(rng, 0, ally_count, i as i32);
             // AbstractMonster.getMove/setMove fills EnemyMoveInfo only.
@@ -5251,6 +5260,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             let mut parent_idx = i;
             for mut kid in kids {
                 kid.just_spawned = true;
+                // PhilosopherStone.onSpawnMonster: Strength 1 on the new spawn.
+                if player.has_relic(RelicId::Philosophers_Stone) {
+                    kid.add_power(PowerId::Strength, 1);
+                }
                 let pos = smart_spawn_index(&combat.monsters, kid.offset_x);
                 combat.monsters.insert(pos, kid);
                 if pos <= parent_idx {

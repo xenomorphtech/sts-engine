@@ -864,6 +864,24 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn philosophers_stone_gives_enemies_strength() {
+    // 645: PhilosopherStone.atBattleStart Strength 1 on Looter+Mugger
+    // (intent 11 not 10). Missing it, EndTurn is 60 HP vs Java 58.
+    let cfg = default_config(Character::Defect, "645", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 169,
+                "645 still fails at Philosopher's Stone last_ok={} want > 169: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn frozen_core_channels_frost_on_empty_eot() {
     // 870: FrozenCore.onPlayerEndTurn channels Frost if hasEmptyOrb, before
     // TriggerEndOfTurnOrbsAction. Missing it, Parasite 6x2 is 12 not 10.
