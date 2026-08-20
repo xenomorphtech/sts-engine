@@ -522,6 +522,7 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
         stasis_card: None,
         half_dead: false,
         ascension,
+        pending_curl: 0,
     }
 }
 
@@ -548,6 +549,7 @@ fn spawn_monster_at_hp(id: MonsterId, hp: i32, ascension: i32) -> Monster {
         half_dead: false,
         // Split constructors pass currentHealth but keep AbstractDungeon.ascensionLevel.
         ascension,
+        pending_curl: 0,
     }
 }
 
@@ -2306,11 +2308,11 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             dmg_f *= 1.0 + slow as f32 * 0.1;
         }
         let mut dmg = dmg_f.floor() as i32;
-        // Boot.onAttackToChangeDamage: Attack damage 1–4 becomes 5.
+        dmg = apply_block(&mut monster.block, dmg);
+        // Boot.onAttackToChangeDamage after decrementBlock: unblocked Attack 1–4 → 5.
         if dmg > 0 && dmg < 5 && player.has_relic(RelicId::Boot) {
             dmg = 5;
         }
-        dmg = apply_block(&mut monster.block, dmg);
         // ThornsPower.onAttacked: Attack-type hits bounce even if fully blocked or lethal.
         let thorns = monster.power_amount(PowerId::Thorns);
         if thorns > 0 {
@@ -2378,8 +2380,18 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
         }
         maybe_split(monster);
     }
-    if pending_curl > 0 && monster.alive() {
-        monster.block += pending_curl;
+    // Queue Curl Up block; flush_curl_up applies it after the whole card.
+    monster.pending_curl += pending_curl;
+}
+
+fn flush_curl_up(combat: &mut Combat) {
+    for monster in combat.monsters.iter_mut() {
+        if monster.pending_curl > 0 {
+            if monster.alive() {
+                monster.block += monster.pending_curl;
+            }
+            monster.pending_curl = 0;
+        }
     }
 }
 
@@ -2710,6 +2722,7 @@ pub fn play_card(
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
         apply_card_effect(player, combat, &mut card, target, rng, dungeon);
+        flush_curl_up(combat);
         flush_guardian_defensive_block(combat);
         flush_ink_bottle(player, combat, rng);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {

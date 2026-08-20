@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn curl_up_boot_after_block_lockstep() {
+    // 234953 Rip and Tear 7×2 before Curl Up addToBot block; 154632/909358
+    // Boot onAttackToChangeDamage after decrementBlock (unblocked 1–4 → 5).
+    for (seed, min_ok) in [("234953", 9), ("154632", 12), ("909358", 12)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Curl Up/Boot last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn woman_in_blue_reward_screen_lockstep() {
     // 809652 / 706888 / 874370: Woman in Blue opens CombatReward with
     // PotionHelper potions, then Proceed returns to the event Leave.

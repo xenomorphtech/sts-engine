@@ -378,6 +378,9 @@ pub struct Monster {
     pub stasis_card: Option<crate::card::Card>,
     pub half_dead: bool,
     pub ascension: i32,
+    /// CurlUpPower GainBlockAction is addToBot, so later hits of the same card
+    /// (Rip and Tear, Barrage) land before the block appears.
+    pub pending_curl: i32,
 }
 
 impl Monster {
