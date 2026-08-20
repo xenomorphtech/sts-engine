@@ -948,6 +948,8 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Metamorphosis, true) => CardStats {
             cost: 2, damage: -1, block: -1, magic: 5, exhaust: true, ethereal: false, innate: false,
         },
+        (CardId::Mayhem, false) => CardStats::skill(2, -1, 1),
+        (CardId::Mayhem, true) => CardStats::skill(1, -1, 1),
         _ => {
             let def = id.def();
             CardStats {

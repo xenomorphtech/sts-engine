@@ -1057,6 +1057,60 @@ fn odd_mushroom_cuts_vulnerable_to_25_percent() {
 }
 
 #[test]
+fn ornamental_fan_block_before_sharp_hide() {
+    // 872: UseCardAction ctor relics-then-monster-powers after card.use.
+    // Fan GainBlock 4 then Sharp Hide 3 (hp 58 block 1, not 55/4).
+    let cfg = default_config(Character::Defect, "872", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 166,
+                "872 still fails at Fan vs Sharp Hide last_ok={} want > 166: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn mayhem_plays_top_card_at_turn_start() {
+    // 533: MayhemPower.atStartOfTurn queues PlayTopCard after DrawCardAction.
+    // Missing the power left Genetic Algorithm in the deck (hand/block diverge).
+    let cfg = default_config(Character::Defect, "533", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 168,
+                "533 still fails at Mayhem last_ok={} want > 168: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn incense_burner_intangible_cuts_sharp_hide() {
+    // 604: Incense Burner Intangible 1; Guardian Sharp Hide 3. Compile Driver
+    // THORNS is 1 not 3 (Java hp 43 vs rust 41 at seq 166).
+    let cfg = default_config(Character::Defect, "604", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 165,
+                "604 still fails at Intangible Sharp Hide last_ok={} want > 165: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn incense_burner_applies_intangible_every_six_turns() {
     // 493: Incense Burner counter ticks atTurnStart; at 6 apply Intangible
     // so FungiBeast hits for 1 not 9 (hp 24 vs rust 16).

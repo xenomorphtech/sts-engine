@@ -2703,6 +2703,19 @@ fn torii_on_attacked(player: &Player, damage: i32) -> i32 {
     }
 }
 
+/// IntangiblePlayerPower.atDamageFinalReceive + AbstractPlayer.damage
+/// hardcoded IntangiblePlayer check: damage > 1 becomes 1 for every
+/// DamageInfo type (NORMAL, THORNS, HP_LOSS) before decrementBlock.
+/// Sharp Hide / monster Thorns / Burn / Decay skip hit_player and must
+/// still reduce (seed 604 Compile Driver: 3 Sharp Hide → 1, hp 43 not 41).
+fn intangible_player(player: &Player, dmg: i32) -> i32 {
+    if player.power_amount(PowerId::Intangible) > 0 && dmg > 1 {
+        1
+    } else {
+        dmg
+    }
+}
+
 /// BufferPower.onAttackedToChangeDamage after decrementBlock: consume 1 and return 0.
 /// AbstractPlayer.damage: if currentHealth < 1, FairyPotion then Lizard Tail
 /// (blocked by Mark of the Bloom). Returns true if death was prevented.
@@ -2777,10 +2790,7 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
         if dmg < 0 {
             dmg = 0;
         }
-        // IntangiblePlayerPower.atDamageFinalReceive: damage > 1 becomes 1.
-        if player.power_amount(PowerId::Intangible) > 0 && dmg > 1 {
-            dmg = 1;
-        }
+        dmg = intangible_player(player, dmg);
         dmg = apply_block(&mut player.block, dmg);
         dmg = buffer_absorb(player, dmg);
         dmg = torii_on_attacked(player, dmg);
@@ -2940,7 +2950,8 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
         // ThornsPower.onAttacked: Attack-type hits bounce even if fully blocked or lethal.
         let thorns = monster.power_amount(PowerId::Thorns);
         if thorns > 0 {
-            let bounced = apply_block(&mut player.block, thorns);
+            let bounced = intangible_player(player, thorns);
+            let bounced = apply_block(&mut player.block, bounced);
             let bounced = buffer_absorb(player, bounced);
             let bounced = on_lose_hp_last(player, bounced);
             if bounced > 0 {
@@ -3551,8 +3562,70 @@ pub fn play_owned_card(
             if rage > 0 {
                 player.block += rage;
             }
+            combat.attacks_this_turn += 1;
+            // UseCardAction ctor: player powers, then relics, then monster
+            // powers — all addToBot after card.use(). Ornamental Fan GainBlock
+            // therefore lands before Sharp Hide THORNS (seed 872 Cold Snap:
+            // 4 block then hide 3 → hp 58 block 1, not hp 55 block 4).
+            player.powers.retain(|p| p.id != PowerId::PenNib);
+            let apply_pen_nib = if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Pen_Nib)
+            {
+                r.counter += 1;
+                if r.counter == 10 {
+                    r.counter = 0;
+                    false
+                } else {
+                    r.counter == 9
+                }
+            } else {
+                false
+            };
+            if apply_pen_nib {
+                player.add_power(PowerId::PenNib, 1);
+            }
+            if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
+                if r.counter < 0 {
+                    r.counter = 0;
+                }
+                r.counter += 1;
+                if r.counter >= 3 {
+                    r.counter = 0;
+                    player.add_power(PowerId::Dexterity, 1);
+                }
+            }
+            if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
+                if r.counter < 0 {
+                    r.counter = 0;
+                }
+                r.counter += 1;
+                if r.counter % 3 == 0 {
+                    r.counter = 0;
+                    player.add_power(PowerId::Strength, 1);
+                }
+            }
+            if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Nunchaku) {
+                if r.counter < 0 {
+                    r.counter = 0;
+                }
+                r.counter += 1;
+                if r.counter % 10 == 0 {
+                    r.counter = 0;
+                    player.energy += 1;
+                }
+            }
+            if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
+                if r.counter < 0 {
+                    r.counter = 0;
+                }
+                r.counter += 1;
+                if r.counter % 3 == 0 {
+                    r.counter = 0;
+                    player.block += 4;
+                }
+            }
             if sharp_hide > 0 {
-                let dmg = apply_block(&mut player.block, sharp_hide);
+                let dmg = intangible_player(player, sharp_hide);
+                let dmg = apply_block(&mut player.block, dmg);
                 let dmg = buffer_absorb(player, dmg);
                 let dmg = on_lose_hp_last(player, dmg);
                 if dmg > 0 {
@@ -3572,79 +3645,14 @@ pub fn play_owned_card(
             // discard, and draw. updateCost(-1) per Power played.
             reduce_force_field_costs(player);
         }
-        match card.card_type() {
-            CardType::SKILL => {
-                combat.skills_this_turn += 1;
-                for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    let anger = monster.power_amount(PowerId::AngerNob);
-                    if anger > 0 {
-                        monster.add_power(PowerId::Strength, anger);
-                    }
+        if card.card_type() == CardType::SKILL {
+            combat.skills_this_turn += 1;
+            for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                let anger = monster.power_amount(PowerId::AngerNob);
+                if anger > 0 {
+                    monster.add_power(PowerId::Strength, anger);
                 }
             }
-            CardType::ATTACK => {
-                combat.attacks_this_turn += 1;
-                // PenNibPower.onUseCard: remove after the doubled attack lands.
-                player.powers.retain(|p| p.id != PowerId::PenNib);
-                let apply_pen_nib = if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Pen_Nib)
-                {
-                    r.counter += 1;
-                    if r.counter == 10 {
-                        r.counter = 0;
-                        false
-                    } else {
-                        r.counter == 9
-                    }
-                } else {
-                    false
-                };
-                if apply_pen_nib {
-                    player.add_power(PowerId::PenNib, 1);
-                }
-                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
-                    if r.counter < 0 {
-                        r.counter = 0;
-                    }
-                    r.counter += 1;
-                    if r.counter >= 3 {
-                        r.counter = 0;
-                        player.add_power(PowerId::Dexterity, 1);
-                    }
-                }
-                // Shuriken.onUseCard: every 3rd Attack, Strength 1. Counter resets each turn.
-                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
-                    if r.counter < 0 {
-                        r.counter = 0;
-                    }
-                    r.counter += 1;
-                    if r.counter % 3 == 0 {
-                        r.counter = 0;
-                        player.add_power(PowerId::Strength, 1);
-                    }
-                }
-                // Nunchaku.onUseCard: every 10th Attack, GainEnergyAction(1). Counter persists.
-                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Nunchaku) {
-                    if r.counter < 0 {
-                        r.counter = 0;
-                    }
-                    r.counter += 1;
-                    if r.counter % 10 == 0 {
-                        r.counter = 0;
-                        player.energy += 1;
-                    }
-                }
-                if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
-                    if r.counter < 0 {
-                        r.counter = 0;
-                    }
-                    r.counter += 1;
-                    if r.counter % 3 == 0 {
-                        r.counter = 0;
-                        player.block += 4;
-                    }
-                }
-            }
-            _ => {}
         }
     }
 
@@ -3825,7 +3833,7 @@ fn apply_card_effect(
         }
         CardId::Strike_R | CardId::Strike_B | CardId::Bash | CardId::Bludgeon | CardId::Hemokinesis | CardId::Anger => {
             if card.id == CardId::Hemokinesis {
-                let dmg = on_lose_hp_last(player, card.base_magic as i32);
+                let dmg = on_lose_hp_last(player, intangible_player(player, card.base_magic as i32));
                 if dmg > 0 {
                     player.hp -= dmg;
                     red_skull_on_hp_change(player);
@@ -4129,6 +4137,9 @@ fn apply_card_effect(
         }
         CardId::Creative_AI => {
             player.add_power(PowerId::CreativeAI, card.base_magic.max(1) as i32);
+        }
+        CardId::Mayhem => {
+            player.add_power(PowerId::Mayhem, card.base_magic.max(1) as i32);
         }
         CardId::Scrape => {
             if let Some(i) = target {
@@ -4835,7 +4846,7 @@ fn apply_card_effect(
         }
         CardId::J_A_X_ => {
             // JAX.use: LoseHPAction(3) then Strength magic (2, +1 upgraded).
-            let dmg = on_lose_hp_last(player, 3);
+            let dmg = on_lose_hp_last(player, intangible_player(player, 3));
             if dmg > 0 {
                 player.hp -= dmg;
                 red_skull_on_hp_change(player);
@@ -4846,7 +4857,7 @@ fn apply_card_effect(
         }
         CardId::Bloodletting => player.energy += card.base_magic as i32,
         CardId::Offering => {
-            let dmg = on_lose_hp_last(player, 6);
+            let dmg = on_lose_hp_last(player, intangible_player(player, 6));
             if dmg > 0 {
                 player.hp -= dmg;
                 red_skull_on_hp_change(player);
@@ -5019,7 +5030,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 player.add_power_from_monster(PowerId::Weak, 1);
             }
             CardId::Regret => {
-                let dmg = on_lose_hp_last(player, regret_n);
+                let dmg = on_lose_hp_last(player, intangible_player(player, regret_n));
                 if dmg > 0 {
                     player.hp -= dmg;
                     if player.hp < 0 {
@@ -5032,7 +5043,8 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             }
             CardId::Burn | CardId::Decay => {
                 let raw = if id == CardId::Burn && upgraded { 4 } else { 2 };
-                let dmg = apply_block(&mut player.block, raw);
+                let dmg = intangible_player(player, raw);
+                let dmg = apply_block(&mut player.block, dmg);
                 let dmg = buffer_absorb(player, dmg);
                 let dmg = on_lose_hp_last(player, dmg);
                 if dmg > 0 {
@@ -5183,7 +5195,8 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let explosive = combat.monsters[i].power_amount(PowerId::Explosive);
         if explosive > 0 && combat.monsters[i].alive() {
             if explosive == 1 {
-                let dealt = apply_block(&mut player.block, 30);
+                let dealt = intangible_player(player, 30);
+                let dealt = apply_block(&mut player.block, dealt);
                 let dealt = buffer_absorb(player, dealt);
                 let dealt = on_lose_hp_last(player, dealt);
                 if dealt > 0 {
@@ -5389,7 +5402,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     }
     if player.power_amount(PowerId::Brutality) > 0 {
         let n = player.power_amount(PowerId::Brutality);
-        let dmg = on_lose_hp_last(player, n);
+        let dmg = on_lose_hp_last(player, intangible_player(player, n));
         if dmg > 0 {
             player.hp -= dmg;
             red_skull_on_hp_change(player);
@@ -5406,6 +5419,17 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if pocketwatch {
         let n = draw_cards_rng(player, 3, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, n);
+    }
+    // MayhemPower.atStartOfTurn queues a wrapper addToBot whose update
+    // addToBot PlayTopCardAction. DrawCardAction is queued after the wrapper,
+    // so the autoplay is after the turn's draw (seed 533 Genetic Algorithm).
+    let mayhem = player.power_amount(PowerId::Mayhem);
+    if mayhem > 0 {
+        let mut targets = Vec::with_capacity(mayhem as usize);
+        for _ in 0..mayhem {
+            targets.push(random_alive_monster(combat, &mut rng.card_random));
+        }
+        play_top_cards(player, combat, &targets, false, rng, dungeon);
     }
 }
 

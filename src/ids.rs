@@ -225,6 +225,7 @@ pub enum PowerId {
     StaticDischarge,
     Confusion,
     StrengthUp,
+    Mayhem,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
