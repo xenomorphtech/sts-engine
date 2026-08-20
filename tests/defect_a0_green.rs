@@ -514,6 +514,74 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn forethought_puts_card_on_bottom_of_draw() {
+    // 277: Colorless Forethought HAND_SELECT; Choose 6 then Proceed.
+    let cfg = default_config(Character::Defect, "277", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 135,
+                "277 still fails at Forethought last_ok={} want > 135: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn unceasing_top_draws_on_empty_hand() {
+    // 114: last card of the turn empties the hand; Top draws Strike_B.
+    let cfg = default_config(Character::Defect, "114", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 147,
+                "114 still fails at Unceasing Top last_ok={} want > 147: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn stone_calendar_hits_all_on_turn_seven() {
+    // 342: Stone Calendar counter 7 deals 52 THORNS (Guardian 97 vs 45).
+    let cfg = default_config(Character::Defect, "342", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 147,
+                "342 still fails at Stone Calendar last_ok={} want > 147: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn ornithopter_defers_heal_on_gambling_overlay() {
+    // 287: Gambler's Brew HAND_SELECT snapshot is still pre-Ornithopter heal.
+    let cfg = default_config(Character::Defect, "287", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 148,
+                "287 still fails at Ornithopter gambling heal last_ok={} want > 148: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn distilled_chaos_hologram_opens_discard_grid() {
     // 610: Distilled Chaos autoplays Hologram; GRID must open so Choose 1
     // returns Cold Snap and exhausts Hologram.

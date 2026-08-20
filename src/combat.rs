@@ -22,6 +22,8 @@ pub struct Combat {
     pub need_draw_to_hand: bool,
     /// DiscoveryAction combat card-reward overlay.
     pub need_discovery: bool,
+    /// Forethought: HAND_SELECT then moveToBottomOfDeck + freeToPlayOnce.
+    pub need_forethought: bool,
     pub pending_exhaust: Option<Card>,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
@@ -139,6 +141,10 @@ impl Combat {
         if player.has_relic(RelicId::FossilizedHelix) {
             player.add_power(PowerId::Buffer, 1);
         }
+        // StoneCalendar.atBattleStart: counter = 0, then atTurnStart ++.
+        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
+            r.counter = 0;
+        }
         if player.has_relic(RelicId::Happy_Flower) {
             if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Happy_Flower) {
                 r.counter += 1;
@@ -235,6 +241,7 @@ impl Combat {
             need_discard_to_hand: false,
             need_draw_to_hand: false,
             need_discovery: false,
+            need_forethought: false,
             pending_exhaust: None,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
@@ -3418,6 +3425,7 @@ pub fn play_owned_card(
     combat.need_discard_to_hand = false;
     combat.need_draw_to_hand = false;
     combat.need_discovery = false;
+    combat.need_forethought = false;
     combat.draw_after_exhaust = 0;
     let needs_select = (card.id == CardId::Armaments && !card.upgraded && !player.hand.is_empty())
         || (card.id == CardId::True_Grit && card.upgraded && !player.hand.is_empty())
@@ -3426,7 +3434,8 @@ pub fn play_owned_card(
         || (card.id == CardId::Hologram && player.discard.len() > 1)
         || (card.id == CardId::Seek && player.draw.len() > card.base_magic.max(1) as usize)
         || card.id == CardId::Discovery
-        || (card.id == CardId::Purity && !player.hand.is_empty());
+        || (card.id == CardId::Purity && !player.hand.is_empty())
+        || (card.id == CardId::Forethought && !player.hand.is_empty());
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         // Storm channels are addToBot after this card's ApplyPower, so snapshot
@@ -3600,7 +3609,29 @@ pub fn play_owned_card(
         }
     }
     resolve_darklings(combat);
+    if !needs_select {
+        unceasing_top_on_refresh_hand(player, combat, rng);
+    }
     needs_select
+}
+
+/// UnceasingTop.onRefreshHand: if the hand is empty during the player turn
+/// and a pile remains, DrawCardAction(1) (seed 114 Guardian).
+fn unceasing_top_on_refresh_hand(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
+    if !player.has_relic(RelicId::Unceasing_Top) {
+        return;
+    }
+    if !player.hand.is_empty() || combat.all_dead() {
+        return;
+    }
+    if player.power_amount(PowerId::NoDraw) > 0 {
+        return;
+    }
+    if player.draw.is_empty() && player.discard.is_empty() {
+        return;
+    }
+    let n = draw_cards_rng(player, 1, Some(rng));
+    apply_fire_breathing(player, &mut combat.monsters, n);
 }
 
 /// PlayTopCardAction: autoplay the top of the draw pile (shuffle discard first
@@ -4559,6 +4590,12 @@ fn apply_card_effect(
                 combat.need_put_on_deck = true;
             }
         }
+        CardId::Forethought => {
+            if !player.hand.is_empty() {
+                combat.need_forethought = true;
+                combat.need_put_on_deck = true;
+            }
+        }
         CardId::Purity => {
             if !player.hand.is_empty() {
                 combat.need_exhaust_select = true;
@@ -4742,6 +4779,22 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // if currentBlock==0, so it resolves before PlatedArmor/Metallicize addToBot.
     if player.has_relic(RelicId::Orichalcum) && player.block == 0 {
         player.block += 6;
+    }
+    // StoneCalendar.onPlayerEndTurn: 52 THORNS to all enemies when counter==7.
+    if player
+        .relics
+        .iter()
+        .any(|r| r.id == RelicId::StoneCalendar && r.counter == 7)
+    {
+        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
+            deal_thorns(m, 52);
+        }
+        gremlin_horn_on_kills(player, combat, rng, dead_before);
+        flush_spore_cloud(player, combat);
+        if combat.all_dead() {
+            return;
+        }
     }
     let metal = player.power_amount(PowerId::Metallicize);
     if metal > 0 {
@@ -5175,6 +5228,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
 fn tick_turn_start_block_relics(player: &mut Player) {
     // IncenseBurner.atTurnStart: counter 0 onEquip, +1 each turn, Intangible
     // at 6 then reset. Default -1 (never equipped) steps to 1 like Java.
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
+        r.counter += 1;
+    }
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Incense_Burner) {
         if r.counter == -1 {
             r.counter += 2;
@@ -5229,6 +5285,9 @@ pub fn after_combat_relics(player: &mut Player) {
     player.exhaust.clear();
     player.duplication = 0;
     player.orbs.clear();
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
+        r.counter = -1;
+    }
 }
 
 fn focus_of(player: &Player) -> i32 {

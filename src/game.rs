@@ -2290,10 +2290,7 @@ impl Game {
             self.discovery_combat = false;
             self.card_reward.clear();
             self.screen = Screen::Combat;
-            if self.pending_ornithopter_heal {
-                self.pending_ornithopter_heal = false;
-                self.on_use_potion_relics();
-            }
+            self.apply_pending_ornithopter_heal();
             return;
         }
         // FastCardObtainEffect lands before the next stable boundary.
@@ -4643,11 +4640,26 @@ impl Game {
         self.hand_held.clear();
         if self.player.hand.len() <= 1 {
             if let Some(c) = self.player.hand.pop() {
-                self.player.draw.push(c);
+                self.put_card_from_forethought_or_top(c);
             }
             self.finish_put_on_deck();
         } else {
             self.screen = Screen::HandSelect;
+        }
+    }
+
+    fn put_card_from_forethought_or_top(&mut self, mut card: crate::card::Card) {
+        let fore = self
+            .combat
+            .as_ref()
+            .is_some_and(|c| c.need_forethought);
+        if fore {
+            if card.cost > 0 {
+                card.free_to_play_once = true;
+            }
+            self.player.draw.insert(0, card);
+        } else {
+            self.player.draw.push(card);
         }
     }
 
@@ -4674,6 +4686,7 @@ impl Game {
             }
             crate::combat::flush_dark_embrace(&mut self.player, combat, &mut self.rng);
             combat.need_put_on_deck = false;
+            combat.need_forethought = false;
         }
         self.put_on_deck_select = false;
         self.screen = Screen::Combat;
@@ -4753,6 +4766,7 @@ impl Game {
                     }
                     self.memories_select = false;
                     self.screen = Screen::Combat;
+                    self.apply_pending_ornithopter_heal();
                     return;
                 }
                 let by_name = label.as_ref().and_then(|name| {
@@ -4780,11 +4794,14 @@ impl Game {
                     }
                     self.gambling_select = false;
                     self.screen = Screen::Combat;
+                    self.apply_pending_ornithopter_heal();
                     return;
                 }
                 if self.put_on_deck_select {
                     let pending = std::mem::take(&mut self.pending_cards);
-                    self.player.draw.extend(pending);
+                    for card in pending {
+                        self.put_card_from_forethought_or_top(card);
+                    }
                     self.player.hand.append(&mut self.hand_held);
                     self.finish_put_on_deck();
                     return;
@@ -4912,16 +4929,38 @@ impl Game {
     /// AbstractRelic.onUsePotion after potion.use. ToyOrnithopter heals 5
     /// (HealAction in combat, player.heal out of combat — instant here).
     fn on_use_potion_relics(&mut self) {
-        if self.player.has_relic(RelicId::Toy_Ornithopter) {
-            self.heal_player(5);
-            combat::red_skull_on_hp_change(&mut self.player);
+        if !self.player.has_relic(RelicId::Toy_Ornithopter) {
+            return;
+        }
+        // Combat HealAction sits behind potion.use() overlays (Discovery,
+        // Gambler's Brew, Liquid Memories).
+        if self.combat.is_some()
+            && matches!(self.screen, Screen::CardReward | Screen::HandSelect)
+        {
+            self.pending_ornithopter_heal = true;
+            return;
+        }
+        self.heal_player(5);
+        combat::red_skull_on_hp_change(&mut self.player);
+    }
+
+    fn apply_pending_ornithopter_heal(&mut self) {
+        if self.pending_ornithopter_heal {
+            self.pending_ornithopter_heal = false;
+            if self.player.has_relic(RelicId::Toy_Ornithopter) {
+                self.heal_player(5);
+                combat::red_skull_on_hp_change(&mut self.player);
+            }
         }
     }
 
     /// DiscoveryAction is queued before HealAction, so combat Discovery
     /// snapshots must not include the +5 yet.
     fn ornithopter_after_potion(&mut self, discovery_overlay: bool) {
-        if discovery_overlay && self.combat.is_some() {
+        if discovery_overlay
+            && self.combat.is_some()
+            && self.player.has_relic(RelicId::Toy_Ornithopter)
+        {
             self.pending_ornithopter_heal = true;
         } else {
             self.on_use_potion_relics();
