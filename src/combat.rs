@@ -564,6 +564,8 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
         half_dead: false,
         ascension,
         pending_curl: 0,
+        offset_x: 0,
+        just_spawned: false,
     }
 }
 
@@ -591,6 +593,8 @@ fn spawn_monster_at_hp(id: MonsterId, hp: i32, ascension: i32) -> Monster {
         // Split constructors pass currentHealth but keep AbstractDungeon.ascensionLevel.
         ascension,
         pending_curl: 0,
+        offset_x: 0,
+        just_spawned: false,
     }
 }
 
@@ -1858,7 +1862,7 @@ impl Monster {
                 self.hp = 0;
                 self.dead = true;
                 self.set_move(3, Intent::Unknown, 0, 1);
-                return Some(split_into(MonsterId::AcidSlimeM, hp, rng, self.ascension));
+                return Some(split_into(MonsterId::AcidSlimeM, hp, rng, self.ascension, self.offset_x));
             }
             (MonsterId::SpikeSlimeL, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
@@ -1874,7 +1878,7 @@ impl Monster {
                 self.hp = 0;
                 self.dead = true;
                 self.set_move(3, Intent::Unknown, 0, 1);
-                return Some(split_into(MonsterId::SpikeSlimeM, hp, rng, self.ascension));
+                return Some(split_into(MonsterId::SpikeSlimeM, hp, rng, self.ascension, self.offset_x));
             }
 
             (MonsterId::SphericGuardian, 1) => {
@@ -2067,6 +2071,9 @@ impl Monster {
                 self.dead = true;
                 let mut spike = spawn_monster_at_hp(MonsterId::SpikeSlimeL, hp, self.ascension);
                 let mut acid = spawn_monster_at_hp(MonsterId::AcidSlimeL, hp, self.ascension);
+                // SlimeBoss split: SpikeSlime_L(-385, 20), AcidSlime_L(120, -8).
+                spike.offset_x = -385;
+                acid.offset_x = 120;
                 spike.roll_move(rng);
                 acid.roll_move(rng);
                 return Some(vec![spike, acid]);
@@ -2348,15 +2355,19 @@ fn looter_steal(monster: &mut Monster, player: &mut Player, amt: i32) {
     monster.stolen_gold += steal;
 }
 
-fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet, ascension: i32) -> Vec<Monster> {
-    let mut kids = vec![
-        spawn_monster_at_hp(child, hp, ascension),
-        spawn_monster_at_hp(child, hp, ascension),
-    ];
-    for k in &mut kids {
-        k.roll_move(rng);
-    }
-    kids
+fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet, ascension: i32, parent_x: i32) -> Vec<Monster> {
+    let mut left = spawn_monster_at_hp(child, hp, ascension);
+    let mut right = spawn_monster_at_hp(child, hp, ascension);
+    left.offset_x = parent_x - 134;
+    right.offset_x = parent_x + 134;
+    left.roll_move(rng);
+    right.roll_move(rng);
+    vec![left, right]
+}
+
+/// SpawnMonsterAction smart insert: position = count of monsters with drawX < new.drawX.
+fn smart_spawn_index(monsters: &[Monster], offset_x: i32) -> usize {
+    monsters.iter().filter(|mo| offset_x > mo.offset_x).count()
 }
 
 
@@ -4392,9 +4403,12 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         }
     }
 
+    for m in &mut combat.monsters {
+        m.just_spawned = false;
+    }
     let mut i = 0;
     while i < combat.monsters.len() {
-        if !combat.monsters[i].alive() {
+        if !combat.monsters[i].alive() || combat.monsters[i].just_spawned {
             i += 1;
             continue;
         }
@@ -4460,13 +4474,19 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             combat.monsters[i].hp = (combat.monsters[i].hp + regen).min(combat.monsters[i].max_hp);
         }
         if let Some(kids) = spawned {
-            // [left, parent, right] matching SpawnMonsterAction drawX order.
-            combat.monsters.insert(i, kids[0].clone());
-            combat.monsters.insert(i + 2, kids[1].clone());
-            if !skip_roll {
-                combat.monsters[i + 1].roll_move(rng);
+            let mut parent_idx = i;
+            for mut kid in kids {
+                kid.just_spawned = true;
+                let pos = smart_spawn_index(&combat.monsters, kid.offset_x);
+                combat.monsters.insert(pos, kid);
+                if pos <= parent_idx {
+                    parent_idx += 1;
+                }
             }
-            i += 3;
+            if !skip_roll {
+                combat.monsters[parent_idx].roll_move(rng);
+            }
+            i = parent_idx + 1;
             continue;
         }
         if combat.monsters[i].alive() && !skip_roll {

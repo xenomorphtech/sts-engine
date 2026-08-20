@@ -117,8 +117,26 @@ fn whetstone_upgrades_attacks_at_obtain() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 162,
-                "1 still fails at Whetstone Rip and Tear last_ok={} want > 162: {fail}",
+                fail.last_ok > 202,
+                "1 still fails after slime split last_ok={} want > 202: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn slime_boss_split_inserts_by_draw_x() {
+    // Seed 8: AcidSlime_L split SpawnMonsterAction smart-inserts by drawX so
+    // the left child sits before the dead SlimeBoss, not after it.
+    let cfg = default_config(Character::Defect, "8", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 278,
+                "8 still fails after slime split last_ok={} want > 278: {fail}",
                 fail.last_ok
             );
         }
