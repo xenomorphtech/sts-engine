@@ -36,6 +36,10 @@ pub struct Combat {
     pub ascension: i32,
     /// GameActionManager.orbsChanneledThisCombat (Blizzard / Thunder Strike).
     pub orbs_channeled_this_combat: Vec<OrbKind>,
+    /// AbstractCard.energyOnUse snapshotted at play. Duplication/Echo copies
+    /// reuse this (CardQueueItem(tmp, m, card.energyOnUse)) even after the
+    /// original spent the energy (seed 991 Tempest x2).
+    pub energy_on_use: i32,
 }
 
 impl Combat {
@@ -90,6 +94,8 @@ impl Combat {
         player.block = 0;
         player.powers.clear();
         player.pending_static = 0;
+        player.pending_evoke_lightning.clear();
+        player.pending_evoke_dark.clear();
         player.draw = player.deck.clone();
         player.hand.clear();
         player.discard.clear();
@@ -254,6 +260,7 @@ impl Combat {
             pending_ink_bottle: 0,
             ascension,
             orbs_channeled_this_combat: channeled,
+            energy_on_use: -1,
         };
         gremlin_horn_on_kills(player, &mut combat, rng, dead_before_hourglass);
         combat
@@ -2766,6 +2773,16 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
         dmg = apply_block(&mut player.block, dmg);
         dmg = buffer_absorb(player, dmg);
         dmg = torii_on_attacked(player, dmg);
+        // StaticDischargePower.onAttacked is after decrementBlock / Buffer
+        // and before TungstenRod.onLoseHpLast. addToTop(ChannelAction) so
+        // Frost evoke block lands before the next DamageAction (seed 389
+        // Hexaghost Divider 56 HP vs 41 when channels waited until takeTurn
+        // finished). damageAmount > 0 still channels even if Tungsten zeros HP.
+        let static_n = if dmg > 0 {
+            player.power_amount(PowerId::StaticDischarge)
+        } else {
+            0
+        };
         dmg = on_lose_hp_last(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
@@ -2780,12 +2797,12 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
             }
             let _ = try_cheat_death(player);
             total += dmg;
-            // StaticDischargePower.onAttacked: channel Lightning per stack
-            // when the hit is Attack-type unblocked damage.
-            player.pending_static += player.power_amount(PowerId::StaticDischarge);
             if monster.powers.iter().any(|p| p.id == PowerId::PainfulStabs) {
                 player.discard.push(Card::new(CardId::Wound));
             }
+        }
+        for _ in 0..static_n {
+            channel_static_lightning_mid_hit(player);
         }
         // ThornsPower.onAttacked addToTop DamageAction. If this hit is lethal,
         // ExactTextSim death snapshots before that thorns DamageAction (seed 1
@@ -3087,7 +3104,7 @@ fn guardian_mode_shift_on_hp_loss(monster: &mut Monster, lost: i32) {
     }
 }
 
-fn flush_guardian_defensive_block(combat: &mut Combat) {
+pub(crate) fn flush_guardian_defensive_block(combat: &mut Combat) {
     for m in combat.monsters.iter_mut() {
         if m.id == MonsterId::TheGuardian && m.stolen_gold > 0 {
             m.block += m.stolen_gold;
@@ -3138,6 +3155,14 @@ pub fn derived_damage(card: &Card, player: &Player) -> i32 {
         dmg = (dmg as f32 * 0.75).floor() as i32;
     }
     dmg
+}
+
+fn energy_on_use(player: &Player, combat: &Combat) -> i32 {
+    if combat.energy_on_use >= 0 {
+        combat.energy_on_use
+    } else {
+        player.energy
+    }
 }
 
 pub fn derived_block(card: &Card, player: &Player) -> i32 {
@@ -3419,6 +3444,10 @@ pub fn play_owned_card(
     };
     player.energy -= cost as i32;
     card.free_to_play_once = false;
+    // ChangeStateAction("Defensive Mode") is addToBottom of the previous
+    // command (Fire/Explosive potion DamageAction). Flush before this card
+    // deals so Sweeping Beam hits the 20 block (seed 149 Guardian 200 vs 194).
+    flush_guardian_defensive_block(combat);
 
     let plays = if player.duplication > 0 {
         player.duplication -= 1;
@@ -3426,6 +3455,10 @@ pub fn play_owned_card(
     } else {
         1
     };
+    // AbstractCard.energyOnUse = EnergyPanel.totalCount at play. The
+    // Duplication copy is CardQueueItem(tmp, m, card.energyOnUse, true, true)
+    // so X-cost uses the original amount and freeToPlayOnce (seed 991).
+    combat.energy_on_use = player.energy;
     combat.need_exhaust_select = false;
     combat.need_put_on_deck = false;
     combat.need_discard_to_hand = false;
@@ -3446,7 +3479,10 @@ pub fn play_owned_card(
         || (card.id == CardId::Forethought && !player.hand.is_empty())
         || (card.id == CardId::Secret_Technique
             && player.draw.iter().filter(|c| c.card_type() == CardType::SKILL).count() > 1);
-    for _ in 0..plays {
+    for play_i in 0..plays {
+        if play_i > 0 {
+            card.free_to_play_once = true;
+        }
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         // Storm channels are addToBot after this card's ApplyPower, so snapshot
         // the stack now and channel after apply_card_effect (seed 169 Focus).
@@ -3819,7 +3855,7 @@ fn apply_card_effect(
         }
         CardId::Cleave | CardId::Immolate | CardId::Reaper | CardId::Thunderclap | CardId::Whirlwind => {
             let hits = if card.id == CardId::Whirlwind {
-                player.energy
+                energy_on_use(player, combat)
             } else {
                 1
             };
@@ -3877,7 +3913,7 @@ fn apply_card_effect(
             // MulticastAction: if hasOrb, effect = energyOnUse (+2 Chemical X, +1 upgraded).
             // EvokeWithoutRemoving (effect-1) times, then EvokeOrbAction (removes).
             if !player.orbs.is_empty() {
-                let mut effect = player.energy;
+                let mut effect = energy_on_use(player, combat);
                 if player.has_relic(RelicId::Chemical_X) {
                     effect += 2;
                 }
@@ -4012,7 +4048,7 @@ fn apply_card_effect(
             // TempestAction: effect = energyOnUse, +2 Chemical X, +1 if upgraded.
             // If effect > 0: ChannelAction(Lightning) * effect, then energy.use(total)
             // unless freeToPlayOnce. X=0 unupgraded is a no-op besides exhaust.
-            let mut effect = player.energy;
+            let mut effect = energy_on_use(player, combat);
             if player.has_relic(RelicId::Chemical_X) {
                 effect += 2;
             }
@@ -4463,7 +4499,7 @@ fn apply_card_effect(
             player.add_power(PowerId::HelloWorld, 1);
         }
         CardId::Reinforced_Body => {
-            let mut effect = player.energy;
+            let mut effect = energy_on_use(player, combat);
             if player.has_relic(RelicId::Chemical_X) {
                 effect += 2;
             }
@@ -5099,6 +5135,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         for _ in 0..static_n {
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
+        flush_mid_hit_evokes(player, combat, rng);
         apply_group_move(combat, i, id, used_move, rng);
         if player.hp <= 0 && !try_cheat_death(player) {
             player.hp = 0;
@@ -5477,6 +5514,46 @@ fn decrease_max_orb_slots(player: &mut Player, amount: i32) {
         if player.orbs.len() > player.max_orbs as usize {
             player.orbs.pop();
         }
+    }
+}
+
+/// StaticDischargePower.onAttacked addToTop(ChannelAction(Lightning)).
+/// Frost evoke is GainBlockAction addToTop, so block must land before the
+/// next hit. Lightning/Dark evokes need Combat; stash amounts until
+/// `flush_mid_hit_evokes` after take_turn.
+fn channel_static_lightning_mid_hit(player: &mut Player) {
+    if player.max_orbs <= 0 {
+        return;
+    }
+    if player.orbs.len() >= player.max_orbs as usize {
+        let Some(&orb) = player.orbs.first() else {
+            return;
+        };
+        let amt = orb_evoke_amount(orb, focus_of(player));
+        match orb.kind {
+            OrbKind::Frost => gain_player_block(player, amt),
+            OrbKind::Lightning => player.pending_evoke_lightning.push(amt),
+            OrbKind::Dark => player.pending_evoke_dark.push(amt),
+            OrbKind::Plasma => player.energy += amt,
+        }
+        player.orbs.remove(0);
+    }
+    if player.orbs.len() < player.max_orbs as usize {
+        player.orbs.push(Orb {
+            kind: OrbKind::Lightning,
+            evoke: 0,
+        });
+    }
+}
+
+fn flush_mid_hit_evokes(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
+    let lightning = std::mem::take(&mut player.pending_evoke_lightning);
+    for amt in lightning {
+        lightning_hit_player(Some(player), combat, rng, amt);
+    }
+    let dark = std::mem::take(&mut player.pending_evoke_dark);
+    for amt in dark {
+        dark_evoke_hit(combat, amt);
     }
 }
 

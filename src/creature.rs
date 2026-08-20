@@ -57,6 +57,11 @@ pub struct Player {
     pub duplication: i32,
     /// StaticDischargePower.onAttacked: Lightning channels queued during a hit.
     pub pending_static: i32,
+    /// Lightning/Dark evoke amounts deferred from mid-hit Static Discharge
+    /// channels (Frost evoke applies immediately as block). Flushed after
+    /// take_turn so `channel_orb` can borrow Combat.
+    pub pending_evoke_lightning: Vec<i32>,
+    pub pending_evoke_dark: Vec<i32>,
     pub orbs: Vec<Orb>,
     /// Combat orb slots (`AbstractPlayer.maxOrbs`). Reset from `master_max_orbs` in
     /// `preBattlePrep`; Capacitor / Consume mutate this only for the current fight.
@@ -107,6 +112,8 @@ impl Player {
             exhaust: Vec::new(),
             duplication: 0,
             pending_static: 0,
+            pending_evoke_lightning: Vec::new(),
+            pending_evoke_dark: Vec::new(),
             orbs: Vec::new(),
             max_orbs: 0,
             master_max_orbs: 0,
@@ -154,6 +161,8 @@ impl Player {
             exhaust: Vec::new(),
             duplication: 0,
             pending_static: 0,
+            pending_evoke_lightning: Vec::new(),
+            pending_evoke_dark: Vec::new(),
             orbs: Vec::new(),
             max_orbs: 3,
             master_max_orbs: 3,

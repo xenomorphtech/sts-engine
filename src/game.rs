@@ -1836,6 +1836,11 @@ impl Game {
                 _ => {}
             }
             self.on_use_potion_relics();
+            if let Some(combat) = self.combat.as_mut() {
+                // Fire/Explosive DamageAction can trip Mode Shift; GainBlock 20
+                // is addToBottom and must resolve before the next command.
+                combat::flush_guardian_defensive_block(combat);
+            }
         }
         self.player.potions[slot] = PotionInstance {
             id: PotionId::Slot,

@@ -555,6 +555,60 @@ fn speed_potion_is_combat_only() {
 }
 
 #[test]
+fn duplication_tempest_keeps_energy_on_use() {
+    // 991: DuplicationPower queues CardQueueItem(tmp, m, card.energyOnUse).
+    // The copy channels X=3 Lightning after the original spent the energy.
+    let cfg = default_config(Character::Defect, "991", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 153,
+                "991 still fails at Duplication Tempest last_ok={} want > 153: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn guardian_mode_shift_block_applies_before_next_card() {
+    // 149: Fire/Explosive trip Mode Shift; GainBlock 20 is addToBottom of that
+    // potion DamageAction. Sweeping Beam must hit the 20 block (200 vs 194).
+    let cfg = default_config(Character::Defect, "149", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 153,
+                "149 still fails at Guardian Mode Shift block last_ok={} want > 153: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn static_discharge_channels_before_next_divider_hit() {
+    // 389: StaticDischargePower.onAttacked addToTop(ChannelAction). Frost
+    // evoke block lands before remaining Hexaghost Divider hits (56 vs 41).
+    let cfg = default_config(Character::Defect, "389", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 153,
+                "389 still fails at Static Discharge/Divider last_ok={} want > 153: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn empty_cage_opens_purge_grid_once() {
     // 723: EmptyCage.onEquip opens a 2-card purge GRID. Staying on BossRelic
     // treated the next Choose as another relic pick (two Empty Cages).
