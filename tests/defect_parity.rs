@@ -88,6 +88,26 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn machine_learning_all_for_one_fusion_lockstep() {
+    // 395084 Machine Learning extra draw, 631058 All For One 10 damage,
+    // 321898 Fusion channels Plasma.
+    for (seed, min_ok) in [("395084", 7), ("631058", 5), ("321898", 34)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at unimplemented card last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn reboot_creative_ai_scrape_lockstep() {
     // 875398 Reboot reshuffle+draw, 31813 Creative AI start-of-turn power card,
     // 369514 Scrape 7 damage.

@@ -3196,6 +3196,35 @@ fn apply_card_effect(
             channel_orb(player, combat, rng, OrbKind::Frost);
             channel_orb(player, combat, rng, OrbKind::Dark);
         }
+        CardId::Fusion => {
+            for _ in 0..card.base_magic.max(1) {
+                channel_orb(player, combat, rng, OrbKind::Plasma);
+            }
+        }
+        CardId::Machine_Learning => {
+            player.add_power(PowerId::DrawCard, card.base_magic.max(1) as i32);
+        }
+        CardId::All_For_One => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                }
+            }
+            // AllCostToHandAction(0): each discard card with cost==0 (or freeToPlayOnce)
+            // queues DiscardToHandAction.
+            let mut i = 0;
+            while i < player.discard.len() {
+                let c = &player.discard[i];
+                if c.cost == 0 || c.free_to_play_once {
+                    if player.hand.len() < 10 {
+                        let c = player.discard.remove(i);
+                        player.hand.push(c);
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+        }
         CardId::Darkness => {
             channel_orb(player, combat, rng, OrbKind::Dark);
             if card.upgraded {
@@ -3702,7 +3731,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             }
         }
     }
-    let statuses = draw_cards_rng(player, 5, Some(rng));
+    // DrawPower (Machine Learning) bumps gameHandSize; DrawCardAction uses that.
+    let draw_n = 5 + player.power_amount(PowerId::DrawCard);
+    let statuses = draw_cards_rng(player, draw_n, Some(rng));
     apply_fire_breathing(player, &mut combat.monsters, statuses);
 }
 

@@ -720,6 +720,16 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Scrape, true) => CardStats {
             cost: 1, damage: 10, block: -1, magic: 5, exhaust: false, ethereal: false, innate: false,
         },
+        (CardId::Machine_Learning, false) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Machine_Learning, true) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: true,
+        },
+        (CardId::All_For_One, false) => CardStats::attack(2, 10),
+        (CardId::All_For_One, true) => CardStats::attack(2, 14),
+        (CardId::Fusion, false) => CardStats::skill(2, -1, 1),
+        (CardId::Fusion, true) => CardStats::skill(1, -1, 1),
         _ => {
             let def = id.def();
             CardStats {
