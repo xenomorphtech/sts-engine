@@ -514,6 +514,25 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn gremlin_horn_draws_when_eot_orbs_kill() {
+    // 906: Electro lightning kills AcidSlime_M at EOT; Gremlin Horn
+    // DrawCardAction resolves before DiscardAtEndOfTurn. SlimeBoss slam
+    // must not overwrite a thorns-triggered SPLIT (last_ok 97 → split).
+    let cfg = default_config(Character::Defect, "906", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 139,
+                "906 still fails at Horn/SlimeBoss split last_ok={} want > 139: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn odd_mushroom_cuts_vulnerable_to_25_percent() {
     // 89/958: FungiBeast + Odd Mushroom. Vulnerable is 1.25× not 1.5×
     // (hp 40 vs rust 38 / 56 vs 54 after EndTurn).

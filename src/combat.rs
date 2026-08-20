@@ -216,13 +216,14 @@ impl Combat {
             player.add_power(PowerId::Thorns, 3);
         }
         // MercuryHourglass.atTurnStart: DamageAllEnemiesAction THORNS 3.
+        let dead_before_hourglass = monsters.iter().filter(|m| m.dead).count();
         if player.has_relic(RelicId::Mercury_Hourglass) {
             for m in monsters.iter_mut().filter(|m| m.alive()) {
                 deal_thorns(m, 3);
             }
         }
 
-        Self {
+        let mut combat = Self {
             encounter,
             monsters,
             turn: 1,
@@ -240,7 +241,9 @@ impl Combat {
             pending_ink_bottle: 0,
             ascension,
             orbs_channeled_this_combat: channeled,
-        }
+        };
+        gremlin_horn_on_kills(player, &mut combat, rng, dead_before_hourglass);
+        combat
     }
 
     pub fn living(&self) -> impl Iterator<Item = (usize, &Monster)> {
@@ -2332,10 +2335,12 @@ impl Monster {
                 self.set_move(1, Intent::Attack, 30 + self.extra * 10, 1);
             }
             (MonsterId::SlimeBoss, 1) => {
-                // A4+: slam 38, else 35.
+                // A4+: slam 38, else 35. Java queues DamageAction then
+                // setMove(STICKY) before the hit resolves, so Bronze Scales
+                // thorns that cross 50% HP overwrite STICKY with SPLIT.
                 let slam = if self.ascension >= 4 { 38 } else { 35 };
-                let _ = hit_player(player, self, rng, slam, 1);
                 self.set_move(4, Intent::StrongDebuff, 0, 1);
+                let _ = hit_player(player, self, rng, slam, 1);
             }
             (MonsterId::SlimeBoss, 2) => {
                 let slam = if self.ascension >= 4 { 38 } else { 35 };
@@ -3007,14 +3012,20 @@ fn flush_spore_cloud(player: &mut Player, combat: &mut Combat) {
 }
 
 fn maybe_split(monster: &mut Monster) {
-    if monster.dead || monster.split_triggered {
+    if monster.dead {
         return;
     }
+    // SlimeBoss.damage: hp <= max/2 && nextMove != 3. No splitTriggered —
+    // slam's setMove(STICKY) runs before the hit resolves, so later thorns
+    // or lightning can still overwrite STICKY with SPLIT (seed 906).
     if monster.id == MonsterId::SlimeBoss {
         if monster.hp <= monster.max_hp / 2 && monster.next_move != 3 {
             monster.set_move(3, Intent::Unknown, 0, 1);
-            monster.split_triggered = true;
         }
+        return;
+    }
+    // AcidSlime_L / SpikeSlime_L.damage: also require !splitTriggered.
+    if monster.split_triggered {
         return;
     }
     if !matches!(monster.id, MonsterId::AcidSlimeL | MonsterId::SpikeSlimeL) {
@@ -4749,7 +4760,13 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // *then* hand.triggerOnEndOfTurnForPlayingCard. Burn.use queues DamageAction
     // addToBot, so Frost block resolves before each Burn hit. Apply orbs first,
     // then each Burn L-to-R so Fairy/Lizard Tail can revive mid-sequence.
+    // LightningOrb with Electro can kill mid-EOT. GremlinHorn.onMonsterDeath
+    // addToBot DrawCardAction, which resolves before DiscardAtEndOfTurn
+    // (room.endTurn waits until the action queue is empty). The extra card
+    // is then discarded with the rest of the hand (seed 906 AcidSlime_M).
+    let dead_before_orbs = combat.monsters.iter().filter(|m| m.dead).count();
     apply_orb_passives(player, combat, rng);
+    gremlin_horn_on_kills(player, combat, rng, dead_before_orbs);
     flush_spore_cloud(player, combat);
     if player.hp <= 0 {
         return;
@@ -5070,9 +5087,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     }
     tick_turn_start_block_relics(player);
     if player.has_relic(RelicId::Mercury_Hourglass) {
+        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, 3);
         }
+        gremlin_horn_on_kills(player, combat, rng, dead_before);
         flush_spore_cloud(player, combat);
         if combat.all_dead() {
             return;
