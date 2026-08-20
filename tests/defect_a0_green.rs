@@ -514,6 +514,42 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn odd_mushroom_cuts_vulnerable_to_25_percent() {
+    // 89/958: FungiBeast + Odd Mushroom. Vulnerable is 1.25× not 1.5×
+    // (hp 40 vs rust 38 / 56 vs 54 after EndTurn).
+    let cfg = default_config(Character::Defect, "89", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 128,
+                "89 still fails at Odd Mushroom last_ok={} want > 128: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn incense_burner_applies_intangible_every_six_turns() {
+    // 493: Incense Burner counter ticks atTurnStart; at 6 apply Intangible
+    // so FungiBeast hits for 1 not 9 (hp 24 vs rust 16).
+    let cfg = default_config(Character::Defect, "493", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 112,
+                "493 still fails at Incense Burner last_ok={} want > 112: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

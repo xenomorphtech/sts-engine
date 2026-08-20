@@ -2730,11 +2730,20 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
             dmg_f *= 0.75;
         }
         if player.power_amount(PowerId::Vulnerable) > 0 {
-            dmg_f *= 1.5;
+            // VulnerablePower.atDamageReceive: Odd Mushroom 1.25, else 1.5.
+            dmg_f *= if player.has_relic(RelicId::Odd_Mushroom) {
+                1.25
+            } else {
+                1.5
+            };
         }
         let mut dmg = dmg_f.floor() as i32;
         if dmg < 0 {
             dmg = 0;
+        }
+        // IntangiblePlayerPower.atDamageFinalReceive: damage > 1 becomes 1.
+        if player.power_amount(PowerId::Intangible) > 0 && dmg > 1 {
+            dmg = 1;
         }
         dmg = apply_block(&mut player.block, dmg);
         dmg = buffer_absorb(player, dmg);
@@ -2855,7 +2864,12 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             dmg_f *= 0.75;
         }
         if monster.power_amount(PowerId::Vulnerable) > 0 {
-            dmg_f *= 1.5;
+            // VulnerablePower.atDamageReceive: Paper Frog 1.75, else 1.5.
+            dmg_f *= if player.has_relic(RelicId::Paper_Frog) {
+                1.75
+            } else {
+                1.5
+            };
         }
         let slow = monster.power_amount(PowerId::Slow);
         if slow > 0 {
@@ -2867,6 +2881,10 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
         }
         if monster.power_amount(PowerId::Flight) > 0 {
             dmg = (dmg as f32 / 2.0) as i32;
+        }
+        // IntangiblePower.atDamageFinalReceive (Nemesis): damage > 1 becomes 1.
+        if monster.power_amount(PowerId::Intangible) > 0 && dmg > 1 {
+            dmg = 1;
         }
         dmg = apply_block(&mut monster.block, dmg);
         // Boot.onAttackToChangeDamage after decrementBlock: unblocked Attack 1–4 → 5.
@@ -5129,6 +5147,19 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
 
 
 fn tick_turn_start_block_relics(player: &mut Player) {
+    // IncenseBurner.atTurnStart: counter 0 onEquip, +1 each turn, Intangible
+    // at 6 then reset. Default -1 (never equipped) steps to 1 like Java.
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Incense_Burner) {
+        if r.counter == -1 {
+            r.counter += 2;
+        } else {
+            r.counter += 1;
+        }
+        if r.counter == 6 {
+            r.counter = 0;
+            player.add_power(PowerId::Intangible, 1);
+        }
+    }
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::HornCleat) {
         if r.counter >= 0 {
             r.counter += 1;

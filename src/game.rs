@@ -4821,7 +4821,11 @@ impl Game {
         let inst = RelicInstance {
             id,
             counter: match id {
-                RelicId::Happy_Flower | RelicId::Pen_Nib | RelicId::InkBottle | RelicId::Nunchaku => 0,
+                RelicId::Happy_Flower
+                | RelicId::Pen_Nib
+                | RelicId::InkBottle
+                | RelicId::Nunchaku
+                | RelicId::Incense_Burner => 0,
                 RelicId::Matryoshka | RelicId::Omamori => 2,
                 RelicId::NlothsMask => 1,
                 _ => -1,

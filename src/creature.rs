@@ -350,6 +350,10 @@ pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {
                     p.amount -= 1;
                 }
             }
+            // IntangiblePlayerPower.atEndOfRound: always ReducePower, no justApplied.
+            PowerId::Intangible => {
+                p.amount -= 1;
+            }
             // LockOnPower.atEndOfRound always ReducePower(1); no justApplied skip.
             PowerId::LockOn => {
                 p.amount -= 1;
