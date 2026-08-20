@@ -88,6 +88,32 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn reboot_order_boot_shackles_lockstep() {
+    // 883356/642248/249652 first-combat Reboot hand order; 608360 Boot
+    // Weak Strike 4→5; 475701 Dark Shackles Str-9.
+    for (seed, min_ok) in [
+        ("883356", 5),
+        ("642248", 6),
+        ("249652", 6),
+        ("608360", 9),
+        ("475701", 9),
+    ] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at unimplemented card last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn claw_recursion_white_noise_lockon_lockstep() {
     // 497600 Claw (Gash), 446709 White Noise, 214833 Lock-On,
     // 638400 Chaos/Overclock, 324780 Dramatic Entrance, 905059 Good

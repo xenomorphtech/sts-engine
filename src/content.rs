@@ -805,6 +805,20 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::PanicButton, true) => CardStats {
             cost: 0, damage: -1, block: 40, magic: 2, exhaust: true, ethereal: false, innate: false,
         },
+        (CardId::Dark_Shackles, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 9, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Dark_Shackles, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 15, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Reprogram, false) => CardStats::skill(1, -1, 1),
+        (CardId::Reprogram, true) => CardStats::skill(1, -1, 2),
+        (CardId::Aggregate, false) => CardStats::skill(1, -1, 4),
+        (CardId::Aggregate, true) => CardStats::skill(1, -1, 3),
+        (CardId::Hello_World, false) => CardStats::skill(1, -1, 1),
+        (CardId::Hello_World, true) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: true,
+        },
         _ => {
             let def = id.def();
             CardStats {

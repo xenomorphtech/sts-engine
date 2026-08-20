@@ -2299,6 +2299,10 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             dmg_f *= 1.0 + slow as f32 * 0.1;
         }
         let mut dmg = dmg_f.floor() as i32;
+        // Boot.onAttackToChangeDamage: Attack damage 1–4 becomes 5.
+        if dmg > 0 && dmg < 5 && player.has_relic(RelicId::Boot) {
+            dmg = 5;
+        }
         dmg = apply_block(&mut monster.block, dmg);
         // ThornsPower.onAttacked: Attack-type hits bounce even if fully blocked or lethal.
         let thorns = monster.power_amount(PowerId::Thorns);
@@ -3140,18 +3144,18 @@ fn apply_card_effect(
             apply_fire_breathing(player, &mut combat.monsters, n);
         }
         CardId::Reboot => {
-            // ShuffleAllAction: onShuffle relics, PutOnDeckAction(hand, random) via
-            // cardRandomRng, discardPile.shuffle(shuffleRng), souls to draw, then
-            // ShuffleAction(drawPile) via shuffleRng.randomLong, then Draw magic.
+            // ShuffleAllAction finishes (discard.shuffle + souls addToTop to
+            // draw) *before* PutOnDeckAction. ShuffleAction then shuffles the
+            // combined draw. Input order before the final shuffle matters.
+            // CardGroup.shuffle(rng) always burns randomLong(), even on empty.
+            let seed = rng.shuffle.random_long();
+            shuffle_java(&mut player.discard, seed);
+            player.draw.append(&mut player.discard);
             while !player.hand.is_empty() {
                 let i = rng.card_random.random_int(player.hand.len() as i32 - 1) as usize;
                 let c = player.hand.remove(i);
                 player.draw.push(c);
             }
-            // CardGroup.shuffle(rng) always calls rng.randomLong(), even on empty.
-            let seed = rng.shuffle.random_long();
-            shuffle_java(&mut player.discard, seed);
-            player.draw.append(&mut player.discard);
             let seed = rng.shuffle.random_long();
             shuffle_java(&mut player.draw, seed);
             let n = draw_cards_rng(player, card.base_magic.max(4) as i32, Some(rng));
@@ -3453,6 +3457,32 @@ fn apply_card_effect(
                 player.block += block;
             }
             player.add_power(PowerId::NoBlock, card.base_magic.max(2) as i32);
+        }
+        CardId::Dark_Shackles => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    let amt = card.base_magic.max(9) as i32;
+                    let had_art = m.power_amount(PowerId::Artifact) > 0;
+                    m.add_power(PowerId::Strength, -amt);
+                    if !had_art {
+                        m.add_power(PowerId::Shackled, amt);
+                    }
+                }
+            }
+        }
+        CardId::Reprogram => {
+            // Focus -magic, Strength +magic, Dexterity +magic.
+            let n = card.base_magic.max(1) as i32;
+            player.add_power(PowerId::Focus, -n);
+            player.add_power(PowerId::Strength, n);
+            player.add_power(PowerId::Dexterity, n);
+        }
+        CardId::Aggregate => {
+            let div = card.base_magic.max(1) as i32;
+            player.energy += player.draw.len() as i32 / div;
+        }
+        CardId::Hello_World => {
+            player.add_power(PowerId::HelloWorld, 1);
         }
         CardId::Barrage => {
             let hits = player.orbs.len() as i32;
@@ -3923,6 +3953,24 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                     if player.hand.len() < 10 {
                         player.hand.push(Card::new(id));
                     }
+                }
+            }
+        }
+    }
+    // HelloPower.atStartOfTurn: AbstractDungeon.getCard(COMMON, cardRandomRng).
+    let hello = player.power_amount(PowerId::HelloWorld);
+    if hello > 0 {
+        if let Some(dungeon) = dungeon {
+            for _ in 0..hello {
+                if dungeon.common_cards.is_empty() {
+                    break;
+                }
+                let i = rng.card_random.random_int(dungeon.common_cards.len() as i32 - 1) as usize;
+                let id = dungeon.common_cards[i];
+                if player.hand.len() < 10 {
+                    player.hand.push(Card::new(id));
+                } else {
+                    player.discard.push(Card::new(id));
                 }
             }
         }
