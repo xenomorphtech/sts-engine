@@ -517,6 +517,24 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn empty_cage_opens_purge_grid_once() {
+    // 723: EmptyCage.onEquip opens a 2-card purge GRID. Staying on BossRelic
+    // treated the next Choose as another relic pick (two Empty Cages).
+    let cfg = default_config(Character::Defect, "723", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 148,
+                "723 still fails at Empty Cage last_ok={} want > 148: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regen_skips_when_eot_orbs_end_combat() {
     // 714: RegenPower.atEndOfTurn is AbstractRoom.endTurn after orbs.
     // Lethal EOT lightning skips RegenAction (Java hp 14 Regen 2, rust ticked).

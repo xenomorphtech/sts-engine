@@ -920,6 +920,34 @@ impl Game {
         self.screen = Screen::Grid;
     }
 
+    /// EmptyCage.onEquip: GRID of 2 purgeable master-deck cards. size<=2
+    /// deletes them immediately (no overlay). Keep the previous screen so
+    /// BossRelic Proceed still runs the act transition (seed 723 doubled Cage).
+    fn open_empty_cage_grid(&mut self) {
+        let idxs: Vec<usize> = self
+            .player
+            .deck
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| purgeable_card(c) && !c.in_bottle)
+            .map(|(i, _)| i)
+            .collect();
+        if idxs.is_empty() {
+            return;
+        }
+        if idxs.len() <= 2 {
+            for i in idxs.into_iter().rev() {
+                self.player.deck.remove(i);
+            }
+            return;
+        }
+        let prev = self.screen;
+        self.open_grid(GridKind::Purge, 2, false);
+        if let Some(grid) = self.grid.as_mut() {
+            grid.return_screen = Some(prev);
+        }
+    }
+
     fn open_bottle_grid(&mut self, typ: CardType) {
         let any = self
             .player
@@ -4952,6 +4980,7 @@ impl Game {
             RelicId::Bottled_Flame => self.open_bottle_grid(CardType::ATTACK),
             RelicId::Bottled_Lightning => self.open_bottle_grid(CardType::SKILL),
             RelicId::Bottled_Tornado => self.open_bottle_grid(CardType::POWER),
+            RelicId::Empty_Cage => self.open_empty_cage_grid(),
             _ => {}
         }
         if matches!(id, RelicId::Frozen_Egg_2 | RelicId::Molten_Egg_2 | RelicId::Toxic_Egg_2) {
