@@ -362,17 +362,28 @@ impl Dungeon {
     }
 
     fn initialize_shrines(&mut self) {
-        self.shrine_list.extend(
-            [
+        // Exordium puts Wheel of Change last. TheCity and TheBeyond insert
+        // it second (after Match and Keep!). Same index into tmp then picks
+        // a different shrine (seed 8 Act 3: Golden Shrine vs Wheel of Change).
+        let shrines: &[&str] = match self.act {
+            Act::Exordium => &[
                 "Match and Keep!",
                 "Golden Shrine",
                 "Transmorgrifier",
                 "Purifier",
                 "Upgrade Shrine",
                 "Wheel of Change",
-            ]
-            .map(str::to_string),
-        );
+            ],
+            _ => &[
+                "Match and Keep!",
+                "Wheel of Change",
+                "Golden Shrine",
+                "Transmorgrifier",
+                "Purifier",
+                "Upgrade Shrine",
+            ],
+        };
+        self.shrine_list.extend(shrines.iter().map(|s| (*s).to_string()));
     }
 
     fn initialize_card_pools(&mut self, character: Character, unlocks: &Unlocks) {
