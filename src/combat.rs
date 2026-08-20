@@ -3910,6 +3910,16 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if plated > 0 {
         player.block += plated;
     }
+    // RegenPower.atEndOfTurn: RegenAction addToTop — heal then decrement.
+    let regen = player.power_amount(PowerId::Regen);
+    if regen > 0 {
+        player.hp = (player.hp + regen).min(player.max_hp);
+        red_skull_on_hp_change(player);
+        if let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::Regen) {
+            p.amount -= 1;
+        }
+        player.powers.retain(|p| p.id != PowerId::Regen || p.amount > 0);
+    }
     crate::creature::end_of_turn(&mut player.powers);
     // GameActionManager.callEndOfTurnActions: addToBottom(TriggerEndOfTurnOrbsAction)
     // *then* hand.triggerOnEndOfTurnForPlayingCard. Burn.use queues DamageAction

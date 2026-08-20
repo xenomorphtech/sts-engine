@@ -88,6 +88,27 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn entropic_brew_out_of_combat_is_not_limited() {
+    // 861954: Entropic Brew after Wheel of Change. Java returnRandomPotion()
+    // (limited=false); rust always passed true and the next hallway dropped
+    // Regen, shifting the Melter pick.
+    for (seed, min_ok) in [("861954", 46)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Entropic Brew last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn snecko_oil_draws_five_and_randomizes_costs() {
     // 203190 Snecko Oil: draw 5 then cardRandomRng.random(3) per cost>=0 card.
     // Was a no-op (hand 5 vs Java 10).

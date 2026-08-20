@@ -1373,6 +1373,13 @@ impl Game {
                     self.player.add_power(crate::ids::PowerId::Strength, 5);
                     self.player.add_power(crate::ids::PowerId::LoseStrength, 5);
                 }
+                PotionId::Regen => {
+                    // RegenPotion: RegenPower(player, 5). Heals at end of turn
+                    // then decrements (RegenAction).
+                    if self.combat.is_some() {
+                        self.player.add_power(crate::ids::PowerId::Regen, 5);
+                    }
+                }
                 PotionId::Swift => {
                     let statuses = combat::draw_cards_rng(&mut self.player, 3, Some(&mut self.rng));
                     if let Some(combat) = self.combat.as_mut() {
@@ -1532,12 +1539,22 @@ impl Game {
                     return;
                 }
                 PotionId::EntropicBrew => {
+                    // Combat: ObtainPotionAction(returnRandomPotion(true)).
+                    // Out of combat: ObtainPotionEffect(returnRandomPotion()) —
+                    // limited=false, so the first rarity-matching pick is kept.
+                    // 861954 used the brew after Wheel of Change; limited=true
+                    // burned extra potionRng and the next hallway dropped Regen.
+                    let limited = self.combat.is_some();
                     self.player.potions[slot] = PotionInstance {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
                     for _ in 0..self.player.potion_slots {
-                        let p = crate::rewards::return_random_potion(&mut self.rng, self.character, true);
+                        let p = crate::rewards::return_random_potion(
+                            &mut self.rng,
+                            self.character,
+                            limited,
+                        );
                         let _ = self.gain_potion(p);
                     }
                     if let Some(combat) = &self.combat {
