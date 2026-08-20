@@ -676,6 +676,10 @@ mod tests {
         assert_eq!(gdx_round(45.0 * 1.1), 50);
         assert_eq!(gdx_round(55.0 * 1.1), 61);
         assert_eq!(gdx_round(75.0 * 1.1), 83);
+        // Emerald elite IncreaseMaxHpAction(0.25F).
+        assert_eq!(gdx_round(114.0 * 0.25), 29);
+        assert_eq!(gdx_round(42.0 * 0.25), 11);
+        assert_eq!(gdx_round(45.0 * 0.25), 11);
     }
 
     #[test]

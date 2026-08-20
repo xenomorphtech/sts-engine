@@ -2757,7 +2757,19 @@ pub fn play_card(
     if hand_index >= player.hand.len() {
         return false;
     }
-    let mut card = player.hand.remove(hand_index);
+    let card = player.hand.remove(hand_index);
+    play_owned_card(player, combat, card, target, rng, dungeon)
+}
+
+/// UseCardAction for a card already taken off hand or draw (PlayTopCardAction).
+pub fn play_owned_card(
+    player: &mut Player,
+    combat: &mut Combat,
+    mut card: Card,
+    target: Option<usize>,
+    rng: &mut RngSet,
+    dungeon: Option<&Dungeon>,
+) -> bool {
     let cost = if card.free_to_play_once || card.cost_for_turn < 0 {
         0
     } else {
@@ -2911,6 +2923,48 @@ pub fn play_card(
     }
     resolve_darklings(combat);
     needs_select
+}
+
+/// PlayTopCardAction: autoplay the top of the draw pile (shuffle discard first
+/// if the draw pile is empty). Distilled Chaos exhausts=false; Havoc true.
+pub fn play_top_card(
+    player: &mut Player,
+    combat: &mut Combat,
+    target: Option<usize>,
+    exhausts: bool,
+    rng: &mut RngSet,
+    dungeon: Option<&Dungeon>,
+) {
+    if player.draw.is_empty() && player.discard.is_empty() {
+        return;
+    }
+    if player.draw.is_empty() {
+        reshuffle_if_needed(player, rng);
+    }
+    let Some(mut card) = player.draw.pop() else {
+        return;
+    };
+    // NewQueueCardAction autoplay: energy cost 0.
+    card.free_to_play_once = true;
+    if exhausts {
+        card.exhaust = true;
+    }
+    let _ = play_owned_card(player, combat, card, target, rng, dungeon);
+}
+
+/// MonsterGroup.getRandomMonster(null, true, rng): alive, not half-dead.
+pub fn random_alive_monster(combat: &Combat, rng: &mut crate::rng::StsRandom) -> Option<usize> {
+    let alive: Vec<usize> = combat
+        .monsters
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.hp > 0 && !m.dead && !m.escaped && !m.half_dead)
+        .map(|(i, _)| i)
+        .collect();
+    if alive.is_empty() {
+        return None;
+    }
+    Some(alive[rng.random_range(0, alive.len() as i32 - 1) as usize])
 }
 
 fn resolve_darklings(combat: &mut Combat) {

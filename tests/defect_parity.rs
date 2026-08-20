@@ -88,6 +88,47 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn distilled_chaos_plays_top_of_draw() {
+    // 972720 Distilled Chaos autoplays 3 draw-pile cards (two Defends + Strike
+    // → player block 10, Lagavulin block 8→2). Was a no-op.
+    for (seed, min_ok) in [("972720", 47)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at Distilled Chaos last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn emerald_elite_max_hp_uses_gdx_round() {
+    // MonsterRoomElite.applyEmeraldEliteBuff case 1: IncreaseMaxHpAction
+    // MathUtils.round(maxHealth * 0.25F). floor() left Lagavulin 114 at 142
+    // (Java 143) and Sentry 42 at 52 (Java 53).
+    for (seed, min_ok) in [("972720", 46), ("959835", 50), ("836077", 54)] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at emerald elite HP last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn acid_slime_l_a17_move_lockstep() {
     // AcidSlime_L A17 getMove uses num<70 and randomBoolean(0.6), not M's
     // num<80 / 0.5. 420468/982689 were slam vs Java Weak lick.

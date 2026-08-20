@@ -1449,6 +1449,29 @@ impl Game {
                         }
                     }
                 }
+                PotionId::DistilledChaos => {
+                    // DistilledChaosPotion: 3x PlayTopCardAction. Targets are
+                    // rolled up front via cardRandomRng.getRandomMonster.
+                    if let Some(combat) = self.combat.as_mut() {
+                        let mut targets = Vec::new();
+                        for _ in 0..3 {
+                            targets.push(combat::random_alive_monster(
+                                combat,
+                                &mut self.rng.card_random,
+                            ));
+                        }
+                        for t in targets {
+                            combat::play_top_card(
+                                &mut self.player,
+                                combat,
+                                t,
+                                false,
+                                &mut self.rng,
+                                Some(&self.dungeon),
+                            );
+                        }
+                    }
+                }
                 PotionId::LiquidMemories => {
                     self.begin_memories_select();
                 }
@@ -2496,8 +2519,11 @@ impl Game {
                 }
             }
             1 => {
+                // IncreaseMaxHpAction: MathUtils.round(maxHealth * 0.25F), then
+                // increaseMaxHp which heals the bonus. floor() is 1 low on .5
+                // (Lagavulin 114 → 142 vs Java 143; Sentry 42 → 52 vs 53).
                 for m in combat.monsters.iter_mut() {
-                    let bonus = ((m.max_hp as f32) * 0.25).floor() as i32;
+                    let bonus = crate::rewards::gdx_round(m.max_hp as f32 * 0.25);
                     m.max_hp += bonus;
                     m.hp += bonus;
                 }
