@@ -2678,13 +2678,10 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
             let drawn = draw_cards_rng(player, n, Some(rng));
             apply_fire_breathing(player, &mut combat.monsters, drawn);
         }
-        // StormPower.onUseCard: channel Lightning per stack. UseCardAction
-        // fires onUseCard after card.use() queues ApplyPower, so playing Storm
-        // itself does not channel.
-        let storm = player.power_amount(PowerId::Storm);
-        for _ in 0..storm {
-            channel_orb(player, combat, rng, OrbKind::Lightning);
-        }
+        // StormPower.onUseCard queues ChannelAction addToBot after card.use()
+        // ApplyPower, so Focus from this Power applies before the Lightning
+        // channel (and a full orb slot evoking Frost). Count is snapshotted
+        // before apply so playing Storm itself does not channel.
         for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
             let curiosity = monster.power_amount(PowerId::Curiosity);
             if curiosity > 0 {
@@ -2831,9 +2828,19 @@ pub fn play_owned_card(
         || card.id == CardId::Discovery;
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
+        // Storm channels are addToBot after this card's ApplyPower, so snapshot
+        // the stack now and channel after apply_card_effect (seed 169 Focus).
+        let storm = if card.card_type() == CardType::POWER {
+            player.power_amount(PowerId::Storm)
+        } else {
+            0
+        };
         on_use_card(player, combat, &card, rng);
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         apply_card_effect(player, combat, &mut card, target, rng, dungeon);
+        for _ in 0..storm {
+            channel_orb(player, combat, rng, OrbKind::Lightning);
+        }
         flush_curl_up(combat);
         flush_guardian_defensive_block(combat);
         flush_ink_bottle(player, combat, rng);

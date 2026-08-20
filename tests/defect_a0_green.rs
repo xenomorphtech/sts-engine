@@ -90,6 +90,23 @@ fn registry_greens_still_walk() {
 }
 
 #[test]
+fn storm_channels_after_the_power_applies() {
+    // 169: Defragment +1 Focus then Storm channels Lightning, evoking Frost at 6 not 5.
+    let cfg = default_config(Character::Defect, "169", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 111,
+                "169 still fails at Storm+Focus last_ok={} want > 111: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn colorless_potion_discovery_matches_src_pool() {
     // 28: ColorlessPotion DiscoveryAction reads srcColorlessCardPool. Rust shuffled
     // colorlessCardPool in place for returnColorlessCard, then reversed that.
