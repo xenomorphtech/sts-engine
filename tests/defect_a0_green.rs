@@ -517,6 +517,42 @@ fn lagavulin_siphon_keeps_negative_strength() {
 }
 
 #[test]
+fn regen_skips_when_eot_orbs_end_combat() {
+    // 714: RegenPower.atEndOfTurn is AbstractRoom.endTurn after orbs.
+    // Lethal EOT lightning skips RegenAction (Java hp 14 Regen 2, rust ticked).
+    let cfg = default_config(Character::Defect, "714", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 142,
+                "714 still fails at EOT Regen last_ok={} want > 142: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn sharp_hide_hits_after_lethal_attack() {
+    // 723: SharpHide onUseCard queues THORNS before Channel/evoke resolve.
+    // Ball Lightning+ evoke killed Guardian; rust skipped hide (block 6 vs 3).
+    let cfg = default_config(Character::Defect, "723", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 141,
+                "723 still fails at Sharp Hide last_ok={} want > 141: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn distilled_chaos_drops_wait_after_lethal() {
     // 211: DistilledChaosPotion queues PlayTopCardAction (WAIT). After a
     // lethal top card, clearPostCombatActions drops the rest so Glacier

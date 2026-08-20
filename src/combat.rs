@@ -3457,6 +3457,19 @@ pub fn play_owned_card(
         };
         on_use_card(player, combat, &card, rng);
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        // SharpHidePower.onUseCard queues THORNS (DAMAGE, kept after combat)
+        // before Damage/Channel resolve. Snapshot while the owner is alive
+        // (seed 723 Ball Lightning evoke killed Guardian, rust skipped hide).
+        let sharp_hide: i32 = if card.card_type() == CardType::ATTACK {
+            combat
+                .monsters
+                .iter()
+                .filter(|m| m.alive())
+                .map(|m| m.power_amount(PowerId::SharpHide))
+                .sum()
+        } else {
+            0
+        };
         apply_card_effect(player, combat, &mut card, target, rng, dungeon);
         for _ in 0..storm {
             channel_orb(player, combat, rng, OrbKind::Lightning);
@@ -3491,15 +3504,8 @@ pub fn play_owned_card(
             if rage > 0 {
                 player.block += rage;
             }
-            // SharpHidePower.onUseCard: THORNS hit after the attack lands.
-            let hide: i32 = combat
-                .monsters
-                .iter()
-                .filter(|m| m.alive())
-                .map(|m| m.power_amount(PowerId::SharpHide))
-                .sum();
-            if hide > 0 {
-                let dmg = apply_block(&mut player.block, hide);
+            if sharp_hide > 0 {
+                let dmg = apply_block(&mut player.block, sharp_hide);
                 let dmg = buffer_absorb(player, dmg);
                 let dmg = on_lose_hp_last(player, dmg);
                 if dmg > 0 {
@@ -4890,16 +4896,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if plated > 0 {
         player.block += plated;
     }
-    // RegenPower.atEndOfTurn: RegenAction addToTop — heal then decrement.
-    let regen = player.power_amount(PowerId::Regen);
-    if regen > 0 {
-        player.hp = (player.hp + regen).min(player.max_hp);
-        red_skull_on_hp_change(player);
-        if let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::Regen) {
-            p.amount -= 1;
-        }
-        player.powers.retain(|p| p.id != PowerId::Regen || p.amount > 0);
-    }
     crate::creature::end_of_turn(&mut player.powers);
     // GameActionManager.callEndOfTurnActions: addToBottom(TriggerEndOfTurnOrbsAction)
     // *then* hand.triggerOnEndOfTurnForPlayingCard. Burn.use queues DamageAction
@@ -4972,6 +4968,20 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         player.discard.push(card);
         if player.hp <= 0 {
             return;
+        }
+    }
+    // RegenPower.atEndOfTurn is AbstractRoom.endTurn, after
+    // callEndOfTurnActions (orbs + Burn). RegenAction is addToTop only while
+    // phase==COMBAT, so a lethal lightning skips it (seed 714 hp 16 vs 14).
+    if !combat.all_dead() {
+        let regen = player.power_amount(PowerId::Regen);
+        if regen > 0 {
+            player.hp = (player.hp + regen).min(player.max_hp);
+            red_skull_on_hp_change(player);
+            if let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::Regen) {
+                p.amount -= 1;
+            }
+            player.powers.retain(|p| p.id != PowerId::Regen || p.amount > 0);
         }
     }
     // DiscardAtEndOfTurnAction: retain/selfRetain cards are pulled to limbo
