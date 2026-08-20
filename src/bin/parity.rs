@@ -40,7 +40,8 @@ fn run(args: &[String]) -> Result<(), String> {
         .or_else(|| flag(args, "-a"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let cfg = if let (Some(states), Some(commands)) = (flag(args, "--states"), flag(args, "--commands")) {
+    let compare_rng = args.iter().any(|a| a == "--rng");
+    let mut cfg = if let (Some(states), Some(commands)) = (flag(args, "--states"), flag(args, "--commands")) {
         WalkConfig {
             name: flag(args, "--name").unwrap_or_else(|| "parity".into()),
             states: PathBuf::from(states),
@@ -48,6 +49,7 @@ fn run(args: &[String]) -> Result<(), String> {
             character,
             unlocks,
             ascension,
+            compare_rng,
         }
     } else {
         let seed = flag(args, "--seed")
@@ -56,6 +58,7 @@ fn run(args: &[String]) -> Result<(), String> {
             .ok_or_else(|| "need --seed FOLDER or --states/--commands".to_string())?;
         default_config(character, &seed, unlocks, ascension)
     };
+    cfg.compare_rng = compare_rng;
     eprintln!(
         "sts-parity {} {} unlocks={} states={}",
         cfg.character.sts_name(),
@@ -111,7 +114,8 @@ Options:
   -c, --character IRONCLAD|SILENT|DEFECT|WATCHER   (default DEFECT)
   -s, --seed FOLDER                                oracles/<char>/a<asc>/<seed>/
   -a, --ascension N                                default 0
-      --unlocks fixture|all                        default fixture
+      --unlocks fixture|all                        default fixture (Java profile-fixture prefs)
+      --rng                                        compare 13 RNG streams at each boundary
       --states PATH --commands PATH                explicit JSONL pair
       --name LABEL                                 report name
   STS_RUNTIME  override exact-text-sim/runtime"

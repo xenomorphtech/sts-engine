@@ -280,6 +280,7 @@ impl Game {
         // MainMusic.getSong("Exordium") consumes miscRng.random(1)
         let _ = rng.misc.random_int(1);
         let dungeon = Dungeon::generate_exordium(seed, &mut rng, &unlocks, character, ascension);
+        let final_act_available = unlocks.final_act_available;
         let mut game = Self {
             seed,
             ascension,
@@ -332,7 +333,7 @@ impl Game {
             has_ruby_key: false,
             has_emerald_key: false,
             has_sapphire_key: false,
-            final_act_available: true,
+            final_act_available,
             grid: None,
             exhaust_select: false,
             put_on_deck_select: false,

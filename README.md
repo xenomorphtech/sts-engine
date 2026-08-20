@@ -29,8 +29,11 @@ seeds 1/2/3 for determinism:
 - Act 1 Ironclad generation: monster/elite/boss lists, relic pools, map graph,
   Neow, first-combat starter shuffle (hand + draw pile)
 
-`Unlocks::fixture()` reproduces the captured profile (Ironclad unlock level 0,
-Guardian seen). Hexaghost is therefore the Act 1 boss on these seeds.
+`Unlocks::fixture()` loads the Java ExactTextSim profile (`runtime/profile-fixture`,
+or `STS_PROFILE_FIXTURE`): `STSSeenBosses`, `STSUnlocks` card/relic locks, and
+`Settings.isFinalActAvailable` from the three base-character WIN flags. That is
+the same prefs the headless hunts copy into each instance. `--unlocks all` is the
+rust cheat that also hard-unlocks every card and relic.
 
 ## Parity status (seed 2 vs ExactTextSim JSONL)
 

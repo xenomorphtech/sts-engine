@@ -75,7 +75,7 @@ impl Dungeon {
         dungeon.initialize_card_pools(character, unlocks);
         dungeon.initialize_relics(character, unlocks, &mut rng.relic, &[]);
         rng.map = StsRandom::from_seed(seed.wrapping_add(1));
-        dungeon.generate_map(&mut rng.map, ascension, true);
+        dungeon.generate_map(&mut rng.map, ascension, unlocks.final_act_available);
         dungeon
     }
 

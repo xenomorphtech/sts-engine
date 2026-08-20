@@ -47,7 +47,7 @@ fn search_seed2_automaton() {
         return;
     }
     let cmds = sts_engine::load_commands(&cmds_path).unwrap();
-    let mut game = Game::new(2, Character::Ironclad, 0, Unlocks::fixture());
+    let mut game = Game::new(2, Character::Ironclad, 0, Unlocks::guardian_champ());
     if snaps_path.exists() {
         let snaps: Vec<serde_json::Value> = std::io::BufRead::lines(std::io::BufReader::new(
             std::fs::File::open(&snaps_path).unwrap(),
@@ -69,7 +69,7 @@ fn search_seed2_automaton() {
                 break;
             }
         }
-        game = Game::new(2, Character::Ironclad, 0, Unlocks::fixture());
+        game = Game::new(2, Character::Ironclad, 0, Unlocks::guardian_champ());
     }
     let mut start = 0;
     for (i, cmd) in cmds.iter().enumerate() {

@@ -21,6 +21,9 @@ pub struct WalkConfig {
     pub character: Character,
     pub unlocks: Unlocks,
     pub ascension: i32,
+    /// Compare the 13 STS RNG streams (counter + XS128 state) at each boundary.
+    /// Off by default so gameplay-only greens stay greens.
+    pub compare_rng: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -334,6 +337,9 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
         if rust.relics != java.relics {
             mismatched.push("relics");
         }
+        if cfg.compare_rng {
+            mismatched.extend(rng_mismatches(&rust.rng, &java.rng));
+        }
         if !mismatched.is_empty() {
             let start = applied.saturating_sub(4);
             let cmds_around = (start..applied.min(cmds.len()))
@@ -470,6 +476,34 @@ fn rust_rng(game: &Game) -> Vec<(String, String)> {
 
 fn fmt_rng(r: &RngSnapshot) -> String {
     format!("counter={} s0={} s1={}", r.counter, r.state0, r.state1)
+}
+
+const RNG_STREAMS: &[(&str, &'static str)] = &[
+    ("monster", "rng:monster"),
+    ("map", "rng:map"),
+    ("event", "rng:event"),
+    ("merchant", "rng:merchant"),
+    ("card", "rng:card"),
+    ("treasure", "rng:treasure"),
+    ("relic", "rng:relic"),
+    ("potion", "rng:potion"),
+    ("monster_hp", "rng:monster_hp"),
+    ("ai", "rng:ai"),
+    ("shuffle", "rng:shuffle"),
+    ("card_random", "rng:card_random"),
+    ("misc", "rng:misc"),
+];
+
+fn rng_mismatches(rust: &[(String, String)], java: &[(String, String)]) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for (name, label) in RNG_STREAMS {
+        let r = rust.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
+        let j = java.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
+        if r != j {
+            out.push(*label);
+        }
+    }
+    out
 }
 
 fn java_side(snap: &Envelope) -> Side {
@@ -723,6 +757,7 @@ pub fn default_config(character: Character, seed: &str, unlocks: Unlocks, ascens
         character,
         unlocks,
         ascension,
+        compare_rng: false,
     }
 }
 
@@ -741,6 +776,7 @@ pub fn walk_from_runtime(
         character,
         unlocks,
         ascension: 0,
+        compare_rng: false,
     };
     walk_oracle(&cfg)
 }
