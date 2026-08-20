@@ -3187,6 +3187,22 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
             player.hp = (player.hp + 2).min(player.max_hp);
             red_skull_on_hp_change(player);
         }
+        // MummifiedHand.onUseCard: among hand cards with cost>0 and
+        // costForTurn>0 and !freeToPlayOnce, cardRandomRng.random(0, n-1)
+        // then setCostForTurn(0). Played card is already off the hand.
+        if player.has_relic(RelicId::Mummified_Hand) {
+            let idxs: Vec<usize> = player
+                .hand
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.cost > 0 && c.cost_for_turn > 0 && !c.free_to_play_once)
+                .map(|(i, _)| i)
+                .collect();
+            if !idxs.is_empty() {
+                let pick = rng.card_random.random_range(0, idxs.len() as i32 - 1) as usize;
+                player.hand[idxs[pick]].cost_for_turn = 0;
+            }
+        }
         // HeatsinkPower.onUseCard: addToTop(DrawCardAction) for Power cards.
         let n = player.power_amount(PowerId::Heatsink);
         if n > 0 {
@@ -4463,6 +4479,31 @@ fn apply_card_effect(
             player.add_power(PowerId::TheBomb, 3);
             if let Some(p) = player.powers.iter_mut().rev().find(|p| p.id == PowerId::TheBomb) {
                 p.misc = if card.upgraded { 50 } else { 40 };
+            }
+        }
+        CardId::Madness => {
+            // MadnessAction: prefer a card with costForTurn > 0, else cost > 0.
+            // getRandomCard(cardRandomRng) then reject until it qualifies.
+            let better = player.hand.iter().any(|c| c.cost_for_turn > 0);
+            let possible = player.hand.iter().any(|c| c.cost > 0);
+            if better || possible {
+                loop {
+                    if player.hand.is_empty() {
+                        break;
+                    }
+                    let i = rng.card_random.random_int(player.hand.len() as i32 - 1) as usize;
+                    let c = &mut player.hand[i];
+                    let ok = if better {
+                        c.cost_for_turn > 0
+                    } else {
+                        c.cost > 0
+                    };
+                    if ok {
+                        c.cost = 0;
+                        c.cost_for_turn = 0;
+                        break;
+                    }
+                }
             }
         }
         CardId::Thinking_Ahead => {
