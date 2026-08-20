@@ -1304,6 +1304,7 @@ impl Game {
                         *hand_index,
                         *target_index,
                         &mut self.rng,
+                        Some(&self.dungeon),
                     );
                     if combat.all_dead() {
                         self.finish_combat();

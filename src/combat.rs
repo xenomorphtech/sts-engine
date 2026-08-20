@@ -2479,11 +2479,21 @@ pub fn derived_block(card: &Card, player: &Player) -> i32 {
     if card.base_block < 0 {
         return card.base_block as i32;
     }
+    if player.power_amount(PowerId::NoBlock) > 0 {
+        return 0;
+    }
     let mut block = card.base_block as i32 + player.power_amount(PowerId::Dexterity);
     if player.power_amount(PowerId::Frail) > 0 {
         block = (block as f32 * 0.75).floor() as i32;
     }
     block
+}
+
+fn gain_player_block(player: &mut Player, amt: i32) {
+    if amt <= 0 || player.power_amount(PowerId::NoBlock) > 0 {
+        return;
+    }
+    player.block += amt;
 }
 
 pub fn draw_cards(player: &mut Player, n: i32) {
@@ -2511,6 +2521,10 @@ pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngS
         if let Some(card) = player.draw.pop() {
             if matches!(card.card_type(), CardType::STATUS | CardType::CURSE) {
                 statuses += 1;
+            }
+            // VoidCard.triggerWhenDrawn: LoseEnergyAction(1).
+            if card.id == CardId::Void {
+                player.energy = (player.energy - 1).max(0);
             }
             player.hand.push(card);
         }
@@ -2543,6 +2557,13 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
         if n > 0 {
             let drawn = draw_cards_rng(player, n, Some(rng));
             apply_fire_breathing(player, &mut combat.monsters, drawn);
+        }
+        // StormPower.onUseCard: channel Lightning per stack. UseCardAction
+        // fires onUseCard after card.use() queues ApplyPower, so playing Storm
+        // itself does not channel.
+        let storm = player.power_amount(PowerId::Storm);
+        for _ in 0..storm {
+            channel_orb(player, combat, rng, OrbKind::Lightning);
         }
         for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
             let curiosity = monster.power_amount(PowerId::Curiosity);
@@ -2643,6 +2664,7 @@ pub fn play_card(
     hand_index: usize,
     target: Option<usize>,
     rng: &mut RngSet,
+    dungeon: Option<&Dungeon>,
 ) -> bool {
     if hand_index >= player.hand.len() {
         return false;
@@ -2676,7 +2698,7 @@ pub fn play_card(
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
-        apply_card_effect(player, combat, &mut card, target, rng);
+        apply_card_effect(player, combat, &mut card, target, rng, dungeon);
         flush_guardian_defensive_block(combat);
         flush_ink_bottle(player, combat, rng);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
@@ -2828,6 +2850,7 @@ fn apply_card_effect(
     card: &mut Card,
     target: Option<usize>,
     rng: &mut RngSet,
+    dungeon: Option<&Dungeon>,
 ) {
     let dmg = card.base_damage as i32;
     let block = derived_block(card, player);
@@ -3338,6 +3361,98 @@ fn apply_card_effect(
                 d.misc = card.misc;
                 d.base_block = card.base_block;
             }
+        }
+        CardId::Gash => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                }
+            }
+            // GashAction: this card, then discard/draw/hand Claws.
+            let inc = card.base_magic.max(2);
+            card.base_damage += inc;
+            for c in player
+                .hand
+                .iter_mut()
+                .chain(player.draw.iter_mut())
+                .chain(player.discard.iter_mut())
+            {
+                if c.id == CardId::Gash {
+                    c.base_damage += inc;
+                }
+            }
+        }
+        CardId::Turbo => {
+            player.energy += card.base_magic.max(2) as i32;
+            player.discard.push(Card::new(CardId::Void));
+        }
+        CardId::Redo => {
+            // RedoAction: EvokeOrbAction then ChannelAction(same orb, autoEvoke=false).
+            if let Some(orb) = player.orbs.first().copied() {
+                evoke_front(player, combat, rng, true);
+                if player.orbs.len() < player.max_orbs as usize {
+                    player.orbs.push(orb);
+                    combat.orbs_channeled_this_combat.push(orb.kind);
+                }
+            }
+        }
+        CardId::Chaos => {
+            // AbstractOrb.getRandomOrb(true): Dark, Frost, Lightning, Plasma via cardRandomRng.
+            let n = if card.upgraded { 2 } else { 1 };
+            const KINDS: [OrbKind; 4] = [
+                OrbKind::Dark,
+                OrbKind::Frost,
+                OrbKind::Lightning,
+                OrbKind::Plasma,
+            ];
+            for _ in 0..n {
+                let i = rng.card_random.random_int(KINDS.len() as i32 - 1) as usize;
+                channel_orb(player, combat, rng, KINDS[i]);
+            }
+        }
+        CardId::White_Noise => {
+            if let Some(dungeon) = dungeon {
+                if let Some(id) = crate::rewards::random_power_in_combat(dungeon, rng) {
+                    let mut c = Card::new(id);
+                    c.cost_for_turn = 0;
+                    if player.hand.len() < 10 {
+                        player.hand.push(c);
+                    } else {
+                        player.discard.push(c);
+                    }
+                }
+            }
+        }
+        CardId::Lockon => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                    m.add_power(PowerId::LockOn, card.base_magic.max(2) as i32);
+                }
+            }
+        }
+        CardId::Dramatic_Entrance => {
+            for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                damage_monster(monster, player, rng, dmg, 1);
+            }
+        }
+        CardId::Steam_Power => {
+            let n = draw_cards_rng(player, card.base_magic.max(2) as i32, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, n);
+            player.discard.push(Card::new(CardId::Burn));
+        }
+        CardId::Storm => {
+            player.add_power(PowerId::Storm, card.base_magic.max(1) as i32);
+        }
+        CardId::Double_Energy => {
+            player.energy *= 2;
+        }
+        CardId::PanicButton => {
+            // GainBlock then NoBlockPower (modifyBlockLast = 0 for later gains).
+            if block > 0 {
+                player.block += block;
+            }
+            player.add_power(PowerId::NoBlock, card.base_magic.max(2) as i32);
         }
         CardId::Barrage => {
             let hits = player.orbs.len() as i32;
@@ -3957,7 +4072,7 @@ fn apply_evoke(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, orb: 
     let amt = orb_evoke_amount(orb, focus_of(player));
     match orb.kind {
         OrbKind::Lightning => lightning_hit_player(Some(player), combat, rng, amt),
-        OrbKind::Frost => player.block += amt,
+        OrbKind::Frost => gain_player_block(player, amt),
         OrbKind::Dark => dark_evoke_hit(combat, amt),
         OrbKind::Plasma => player.energy += amt,
     }
@@ -3970,7 +4085,7 @@ fn apply_front_orb_passive(player: &mut Player, combat: &mut Combat, rng: &mut R
     let amt = orb_passive_amount(orb.kind, focus_of(player));
     match orb.kind {
         OrbKind::Lightning => lightning_hit_player(Some(player), combat, rng, amt),
-        OrbKind::Frost => player.block += amt,
+        OrbKind::Frost => gain_player_block(player, amt),
         OrbKind::Dark => {
             let gain = dark_passive_gain(focus_of(player));
             if let Some(front) = player.orbs.first_mut() {
@@ -3996,7 +4111,7 @@ fn apply_orb_passives(player: &mut Player, combat: &mut Combat, rng: &mut RngSet
                     lightning_hit(combat, rng, amt);
                 }
             }
-            OrbKind::Frost => player.block += amt,
+            OrbKind::Frost => gain_player_block(player, amt),
             // Dark.onEndOfTurn: this.evokeAmount += this.passiveAmount (6+Focus).
             OrbKind::Dark => player.orbs[i].evoke += dark_passive_gain(focus),
             OrbKind::Plasma => {}
@@ -4050,7 +4165,7 @@ fn dark_evoke_hit(combat: &mut Combat, amount: i32) {
     }
     if let Some(i) = best {
         if let Some(m) = combat.monsters.get_mut(i) {
-            deal_thorns(m, amount);
+            deal_thorns(m, apply_lock_on(m, amount));
         }
     }
 }
@@ -4073,14 +4188,25 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     if electro {
         for i in alive {
             if let Some(m) = combat.monsters.get_mut(i) {
-                deal_thorns(m, amount);
+                let amt = apply_lock_on(m, amount);
+                deal_thorns(m, amt);
             }
         }
         return;
     }
     let pick = rng.card_random.random_int(alive.len() as i32 - 1) as usize;
     if let Some(m) = combat.monsters.get_mut(alive[pick]) {
-        deal_thorns(m, amount);
+        let amt = apply_lock_on(m, amount);
+        deal_thorns(m, amt);
+    }
+}
+
+/// AbstractOrb.applyLockOn: `(int)(dmg * 1.5F)` when the target has Lockon.
+fn apply_lock_on(monster: &Monster, dmg: i32) -> i32 {
+    if monster.power_amount(PowerId::LockOn) > 0 {
+        (dmg as f32 * 1.5) as i32
+    } else {
+        dmg
     }
 }
 

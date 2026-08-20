@@ -752,6 +752,59 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Genetic_Algorithm, true) => CardStats {
             cost: 1, damage: -1, block: 1, magic: 3, exhaust: true, ethereal: false, innate: false,
         },
+        (CardId::Gash, false) => CardStats {
+            cost: 0, damage: 3, block: -1, magic: 2, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Gash, true) => CardStats {
+            cost: 0, damage: 5, block: -1, magic: 2, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Turbo, false) => CardStats::skill(0, -1, 2),
+        (CardId::Turbo, true) => CardStats::skill(0, -1, 3),
+        (CardId::Redo, false) => CardStats::skill(1, -1, -1),
+        (CardId::Redo, true) => CardStats::skill(0, -1, -1),
+        (CardId::Chaos, false) => CardStats::skill(1, -1, 1),
+        (CardId::Chaos, true) => CardStats::skill(1, -1, 2),
+        (CardId::White_Noise, false) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: -1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::White_Noise, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: -1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Lockon, false) => CardStats {
+            cost: 1, damage: 8, block: -1, magic: 2, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Lockon, true) => CardStats {
+            cost: 1, damage: 11, block: -1, magic: 3, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Dramatic_Entrance, false) => CardStats {
+            cost: 0, damage: 8, block: -1, magic: -1, exhaust: true, ethereal: false, innate: true,
+        },
+        (CardId::Dramatic_Entrance, true) => CardStats {
+            cost: 0, damage: 12, block: -1, magic: -1, exhaust: true, ethereal: false, innate: true,
+        },
+        (CardId::Steam_Power, false) => CardStats::skill(0, -1, 2),
+        (CardId::Steam_Power, true) => CardStats::skill(0, -1, 3),
+        (CardId::Storm, false) => CardStats::skill(1, -1, 1),
+        (CardId::Storm, true) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: 1, exhaust: false, ethereal: false, innate: true,
+        },
+        (CardId::Double_Energy, false) => CardStats {
+            cost: 1, damage: -1, block: -1, magic: -1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Double_Energy, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: -1, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Void, false) | (CardId::Void, true) => CardStats {
+            cost: -2, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: true, innate: false,
+        },
+        (CardId::Good_Instincts, false) => CardStats::skill(0, 6, -1),
+        (CardId::Good_Instincts, true) => CardStats::skill(0, 9, -1),
+        (CardId::PanicButton, false) => CardStats {
+            cost: 0, damage: -1, block: 30, magic: 2, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::PanicButton, true) => CardStats {
+            cost: 0, damage: -1, block: 40, magic: 2, exhaust: true, ethereal: false, innate: false,
+        },
         _ => {
             let def = id.def();
             CardStats {

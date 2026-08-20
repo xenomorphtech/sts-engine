@@ -88,6 +88,35 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn claw_recursion_white_noise_lockon_lockstep() {
+    // 497600 Claw (Gash), 446709 White Noise, 214833 Lock-On,
+    // 638400 Chaos/Overclock, 324780 Dramatic Entrance, 905059 Good
+    // Instincts, 948645 Panic Button.
+    for (seed, min_ok) in [
+        ("497600", 7),
+        ("446709", 6),
+        ("214833", 8),
+        ("638400", 6),
+        ("324780", 6),
+        ("905059", 6),
+        ("948645", 6),
+    ] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at unimplemented card last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn flash_panacea_genetic_rip_lockstep() {
     // 989496 Flash of Steel draw, 328727 Panacea Artifact, 160663 Genetic
     // Algorithm 1 block, 31732 Rip and Tear random hits without a target.

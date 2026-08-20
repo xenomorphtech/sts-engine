@@ -218,6 +218,9 @@ pub enum PowerId {
     SelfRepair,
     Heatsink,
     CreativeAI,
+    LockOn,
+    Storm,
+    NoBlock,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -308,6 +308,17 @@ pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {
                     p.amount -= 1;
                 }
             }
+            // LockOnPower.atEndOfRound always ReducePower(1); no justApplied skip.
+            PowerId::LockOn => {
+                p.amount -= 1;
+            }
+            PowerId::NoBlock => {
+                if p.just_applied {
+                    p.just_applied = false;
+                } else {
+                    p.amount -= 1;
+                }
+            }
             PowerId::Shackled => {
                 ritual_str += p.amount;
                 p.amount = 0;
@@ -375,7 +386,10 @@ impl Monster {
     }
 
     pub fn add_power(&mut self, id: PowerId, amount: i32) {
-        let debuff = matches!(id, PowerId::Vulnerable | PowerId::Weak | PowerId::Frail);
+        let debuff = matches!(
+            id,
+            PowerId::Vulnerable | PowerId::Weak | PowerId::Frail | PowerId::LockOn
+        );
         if debuff {
             if let Some(art) = self.powers.iter_mut().find(|p| p.id == PowerId::Artifact) {
                 if art.amount > 0 {
