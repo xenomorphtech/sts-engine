@@ -1327,6 +1327,8 @@ impl Game {
                             self.begin_discard_to_hand_select();
                         } else if combat.need_draw_to_hand {
                             self.begin_draw_to_hand_select();
+                        } else if combat.need_discovery {
+                            self.begin_discovery(None, false);
                         } else {
                             self.begin_armaments_select();
                         }
@@ -1544,6 +1546,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
+                    self.on_use_potion_relics();
                     return;
                 }
                 PotionId::Skill => {
@@ -1552,6 +1555,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
+                    self.on_use_potion_relics();
                     return;
                 }
                 PotionId::Power => {
@@ -1560,6 +1564,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
+                    self.on_use_potion_relics();
                     return;
                 }
                 PotionId::Colorless => {
@@ -1568,6 +1573,7 @@ impl Game {
                         id: PotionId::Slot,
                         slot: slot as i32,
                     };
+                    self.on_use_potion_relics();
                     return;
                 }
                 PotionId::EntropicBrew => {
@@ -1589,6 +1595,7 @@ impl Game {
                         );
                         let _ = self.gain_potion(p);
                     }
+                    self.on_use_potion_relics();
                     if let Some(combat) = &self.combat {
                         if combat.all_dead() {
                             self.finish_combat();
@@ -1598,6 +1605,7 @@ impl Game {
                 }
                 _ => {}
             }
+            self.on_use_potion_relics();
         }
         self.player.potions[slot] = PotionInstance {
             id: PotionId::Slot,
@@ -4336,6 +4344,15 @@ impl Game {
             amount
         };
         self.player.hp = (self.player.hp + amount).min(self.player.max_hp);
+    }
+
+    /// AbstractRelic.onUsePotion after potion.use. ToyOrnithopter heals 5
+    /// (HealAction in combat, player.heal out of combat — instant here).
+    fn on_use_potion_relics(&mut self) {
+        if self.player.has_relic(RelicId::Toy_Ornithopter) {
+            self.heal_player(5);
+            combat::red_skull_on_hp_change(&mut self.player);
+        }
     }
 
     fn gold_with_idol(&self, amount: i32) -> i32 {

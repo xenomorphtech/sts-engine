@@ -88,6 +88,35 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
 }
 
 #[test]
+fn leftover_act1_combat_mechanics() {
+    // 658249 Duplication Glacier: skip ChannelAction after combat ends (block 24 vs 19).
+    // 654484 Lagavulin wake ReducePower Metallicize 8 leaves emerald leftover (Fire Potion 20 vs 16).
+    // 855334 Bronze Scales thorns kill applies Spore Cloud (hp 29 vs 24).
+    // 702849 Toy Ornithopter heals 5 on Regen Potion (hp 7 vs 12).
+    // 625464 Discovery adds the chosen card to hand (missing Loop).
+    for (seed, min_ok) in [
+        ("658249", 57),
+        ("654484", 60),
+        ("855334", 60),
+        ("702849", 62),
+        ("625464", 62),
+    ] {
+        let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
+        match walk_oracle(&cfg) {
+            Ok(_) => {}
+            Err(fail) if fail.mismatched == ["io"] => {}
+            Err(fail) => {
+                assert!(
+                    fail.last_ok > min_ok,
+                    "{seed} still fails at leftover act1 last_ok={} want > {min_ok}: {fail}",
+                    fail.last_ok
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn gremlin_horn_draws_on_nonfinal_kill() {
     // 202845 Horn: killing one of three lice draws 1 (Java hand +Strike).
     for (seed, min_ok) in [("202845", 57)] {

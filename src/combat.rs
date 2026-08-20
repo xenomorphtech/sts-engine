@@ -20,6 +20,8 @@ pub struct Combat {
     pub need_discard_to_hand: bool,
     /// BetterDrawPileToHandAction GRID (Seek).
     pub need_draw_to_hand: bool,
+    /// DiscoveryAction combat card-reward overlay.
+    pub need_discovery: bool,
     pub pending_exhaust: Option<Card>,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
@@ -221,6 +223,7 @@ impl Combat {
             need_put_on_deck: false,
             need_discard_to_hand: false,
             need_draw_to_hand: false,
+            need_discovery: false,
             pending_exhaust: None,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
@@ -2276,6 +2279,11 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
         let thorns = player.power_amount(PowerId::Thorns);
         if thorns > 0 {
             deal_thorns(monster, thorns);
+            let spores = monster.power_amount(PowerId::SporeCloud);
+            if monster.dead && spores > 0 {
+                player.add_power(PowerId::Vulnerable, spores);
+                monster.powers.retain(|p| p.id != PowerId::SporeCloud);
+            }
         }
     }
     if total > 0 {
@@ -2482,11 +2490,18 @@ fn maybe_split(monster: &mut Monster) {
     }
 }
 
-/// Lagavulin.damage: any HP loss while asleep (including THORNS / lightning) stuns and sheds Metallicize.
+/// Lagavulin.damage: any HP loss while asleep (including THORNS / lightning) stuns.
+/// changeState("OPEN") is ReducePowerAction(Metallicize, 8), not a full strip —
+/// emerald Metallicize (act*2+2) can leave leftovers (654484: 12-8=4).
 fn wake_asleep_lagavulin(monster: &mut Monster) {
     if monster.id == MonsterId::Lagavulin && monster.extra < 3 {
         monster.extra = 3;
-        monster.powers.retain(|p| p.id != PowerId::Metallicize);
+        if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Metallicize) {
+            p.amount -= 8;
+            if p.amount <= 0 {
+                monster.powers.retain(|p| p.id != PowerId::Metallicize);
+            }
+        }
         monster.set_move(4, Intent::Stun, 0, 1);
     }
 }
@@ -2792,13 +2807,15 @@ pub fn play_owned_card(
     combat.need_put_on_deck = false;
     combat.need_discard_to_hand = false;
     combat.need_draw_to_hand = false;
+    combat.need_discovery = false;
     combat.draw_after_exhaust = 0;
     let needs_select = (card.id == CardId::Armaments && !card.upgraded && !player.hand.is_empty())
         || (card.id == CardId::True_Grit && card.upgraded && !player.hand.is_empty())
         || card.id == CardId::Thinking_Ahead
         || (card.id == CardId::Burning_Pact && player.hand.len() > 1)
         || (card.id == CardId::Hologram && player.discard.len() > 1)
-        || (card.id == CardId::Seek && player.draw.len() > card.base_magic.max(1) as usize);
+        || (card.id == CardId::Seek && player.draw.len() > card.base_magic.max(1) as usize)
+        || card.id == CardId::Discovery;
     for _ in 0..plays {
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         on_use_card(player, combat, &card, rng);
@@ -3404,6 +3421,9 @@ fn apply_card_effect(
             for _ in 0..card.base_magic.max(2) {
                 channel_orb(player, combat, rng, OrbKind::Frost);
             }
+        }
+        CardId::Discovery => {
+            combat.need_discovery = true;
         }
         CardId::Rainbow => {
             channel_orb(player, combat, rng, OrbKind::Lightning);
@@ -4086,6 +4106,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             player.hand.clear();
             return;
         }
+        flush_spore_cloud(player, combat);
         // ExplosivePower.duringTurn after takeTurn (GameActionManager).
         let fading = combat.monsters[i].power_amount(PowerId::Fading);
         if fading > 0 && combat.monsters[i].alive() {
@@ -4405,6 +4426,12 @@ fn decrease_max_orb_slots(player: &mut Player, amount: i32) {
 }
 
 pub fn channel_orb(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, kind: OrbKind) {
+    // ChannelAction is dropped by GameActionManager.clearPostCombatActions
+    // (658249: duplicated Glacier's last Frost channel after Lightning evoke
+    // killed Jaw Worm — Java block 19, rust kept channeling to 24).
+    if combat.all_dead() {
+        return;
+    }
     if player.max_orbs <= 0 {
         return;
     }
