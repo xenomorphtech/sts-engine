@@ -1867,11 +1867,11 @@ impl Game {
         for i in 0..n {
             match self.player.relics[i].id {
                 RelicId::Cursed_Key if !boss_chest => {
-                    // ExactTextSim delays ShowCardAndObtainEffect; consume cardRng only.
-                    if !self.dungeon.curse_cards.is_empty() {
-                        let n = self.dungeon.curse_cards.len() as i32;
-                        let _ = self.rng.card.random_int(n - 1);
-                    }
+                    // CursedKey.onChestOpen: ShowCardAndObtainEffect(returnRandomCurse()).
+                    // ExactTextSim applies the obtain before the COMBAT_REWARD snapshot
+                    // (seed 8 chest on floor 24 already has Clumsy in the master deck).
+                    let id = self.return_random_curse();
+                    self.obtain_master_deck_card(id);
                 }
                 RelicId::Matryoshka if !boss_chest => {
                     if self.player.relics[i].counter > 0 {

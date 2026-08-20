@@ -286,7 +286,8 @@ pub fn add_power_to_flags(powers: &mut Vec<Power>, id: PowerId, amount: i32, fro
             amount,
             just_applied: from_monster,
             skip_first: id == PowerId::Ritual,
-            misc: 0,
+            // FlightPower.storedAmount: atStartOfTurn restores amount to this.
+            misc: if id == PowerId::Flight { amount } else { 0 },
         });
     }
 }

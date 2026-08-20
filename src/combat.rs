@@ -4522,6 +4522,14 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     let _ = crate::creature::end_of_round(&mut player.powers);
     combat.turn += 1;
     for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+        // FlightPower.atStartOfTurn: amount = storedAmount (Byrd 3, A17 4).
+        // Hits only ReducePower the current amount; the power stays until
+        // stacks hit 0 and onRemove grounds the Byrd (seed 5 Sweeping Beam).
+        if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Flight) {
+            if p.misc > 0 {
+                p.amount = p.misc;
+            }
+        }
         monster.create_intent();
     }
     // Pocketwatch.atTurnStartPostDraw: if previous turn played <=3 cards and
