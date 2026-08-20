@@ -209,8 +209,7 @@ impl Player {
         if id == PowerId::Frail && self.has_relic(crate::ids::RelicId::Turnip) {
             return;
         }
-        let debuff = matches!(id, PowerId::Vulnerable | PowerId::Weak | PowerId::Frail);
-        if debuff {
+        if power_is_debuff(id, amount) {
             if let Some(art) = self.powers.iter_mut().find(|p| p.id == PowerId::Artifact) {
                 if art.amount > 0 {
                     art.amount -= 1;
@@ -226,6 +225,33 @@ impl Player {
 
     pub fn has_relic(&self, id: crate::ids::RelicId) -> bool {
         self.relics.iter().any(|r| r.id == id)
+    }
+}
+
+/// ApplyPowerAction: Artifact absorbs `powerToApply.type == DEBUFF`.
+/// Strength/Dexterity/Focus are DEBUFF when the applied amount is negative
+/// (DexterityPower.updateDescription). Lagavulin siphon is Dex then Strength;
+/// Ancient Potion Artifact 1 eats the Dexterity (seed 213 Defend 5 not 4).
+pub fn power_is_debuff(id: PowerId, amount: i32) -> bool {
+    match id {
+        PowerId::Weak
+        | PowerId::Vulnerable
+        | PowerId::Frail
+        | PowerId::FrailPlayer
+        | PowerId::Poison
+        | PowerId::Constricted
+        | PowerId::Entangled
+        | PowerId::Hex
+        | PowerId::NoDraw
+        | PowerId::LockOn
+        | PowerId::Slow
+        | PowerId::Bias
+        | PowerId::LoseStrength
+        | PowerId::LoseDexterity
+        | PowerId::NoBlock
+        | PowerId::Shackled => true,
+        PowerId::Strength | PowerId::Dexterity | PowerId::Focus => amount < 0,
+        _ => false,
     }
 }
 
@@ -403,11 +429,7 @@ impl Monster {
     }
 
     pub fn add_power(&mut self, id: PowerId, amount: i32) {
-        let debuff = matches!(
-            id,
-            PowerId::Vulnerable | PowerId::Weak | PowerId::Frail | PowerId::LockOn
-        );
-        if debuff {
+        if power_is_debuff(id, amount) {
             if let Some(art) = self.powers.iter_mut().find(|p| p.id == PowerId::Artifact) {
                 if art.amount > 0 {
                     art.amount -= 1;

@@ -1391,6 +1391,12 @@ impl Game {
                     }
                 }
                 PotionId::Block => self.player.block += 12,
+                PotionId::Ancient => {
+                    // AncientPotion.use: ArtifactPower(getPotency()=1) in combat only.
+                    if self.combat.is_some() {
+                        self.player.add_power(crate::ids::PowerId::Artifact, 1);
+                    }
+                }
                 PotionId::Fear => {
                     // FearPotion: VulnerablePower(target, 3, isSourceMonster=false).
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
