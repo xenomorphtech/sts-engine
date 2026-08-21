@@ -2512,6 +2512,24 @@ fn ectoplasm_blocks_claimed_stolen_gold() {
 }
 
 #[test]
+fn sacred_bark_doubles_fruit_juice() {
+    // 729: Fruit Juice is used from the combat reward screen. Sacred Bark
+    // doubles its max/current HP increase from 5 to 10.
+    let cfg = default_config(Character::Defect, "729", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 271,
+                "729 still misses doubled Fruit Juice last_ok={} want > 271: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

@@ -1907,8 +1907,13 @@ impl Game {
                     crate::combat::red_skull_on_hp_change(&mut self.player);
                 }
                 PotionId::FruitJuice => {
-                    self.player.max_hp += 5;
-                    self.player.hp += 5;
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        10
+                    } else {
+                        5
+                    };
+                    self.player.max_hp += potency;
+                    self.player.hp += potency;
                 }
                 PotionId::EssenceOfSteel => {
                     self.player.add_power(crate::ids::PowerId::PlatedArmor, 4);
