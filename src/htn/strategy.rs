@@ -1000,6 +1000,7 @@ fn boss_relic_rank(name: &str) -> i32 {
         "Coffee Dripper" => 75,
         "Fusion Hammer" => 72,
         "Tiny House" => 60,
+        "Busted Crown" => 20,
         "Snecko Eye" => 15,
         "Runic Dome" => 5,
         "Calling Bell" => 8,

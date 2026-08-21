@@ -248,6 +248,7 @@ fn score_state(before: &Game, after: &Game) -> f32 {
     let turns_left = fight_length(fight_kind(after), after.dungeon.act);
     let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
     let mut dealt = 0.0;
+    let mut stripped_block = 0.0;
     let mut dead = 0;
     if let (Some(before_combat), Some(after_combat)) = (&before.combat, &after.combat) {
         for (index, monster) in before_combat.monsters.iter().enumerate() {
@@ -256,6 +257,12 @@ fn score_state(before: &Game, after: &Game) -> f32 {
             }
             let hp_after = after_combat.monsters.get(index).map_or(0, |m| m.hp.max(0));
             dealt += (monster.hp - hp_after).max(0) as f32 * target_priority(monster.id);
+            if monster.power_amount(PowerId::Barricade) > 0 && monster.block >= monster.hp.max(1) {
+                if let Some(monster_after) = after_combat.monsters.get(index) {
+                    stripped_block += (monster.block - monster_after.block).max(0) as f32
+                        * target_priority(monster.id);
+                }
+            }
             if hp_after <= 0 {
                 dead += 1;
             }
@@ -291,6 +298,7 @@ fn score_state(before: &Game, after: &Game) -> f32 {
     }
 
     let mut value = dealt * damage_weight;
+    value += stripped_block * damage_weight * 0.55;
     value += dead as f32 * 900.0;
     value -= unblocked * danger;
     if !turn_advanced {
@@ -703,5 +711,28 @@ mod tests {
         let mut player = Player::defect();
         player.add_power(PowerId::Vulnerable, 1);
         assert_eq!(projected_incoming(&player, &monster), 50);
+    }
+
+    #[test]
+    fn stripping_enemy_block_has_tactical_value() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut before = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        before.combat = Some(Combat::start(
+            EncounterId::SphericGuardian,
+            &mut before.player,
+            &mut before.rng,
+            36,
+            3,
+            0,
+        ));
+        before.screen = Screen::Combat;
+        before.combat.as_mut().unwrap().monsters[0].block = 20;
+        let unchanged = before.clone();
+        let mut stripped = before.clone();
+        stripped.combat.as_mut().unwrap().monsters[0].block = 10;
+
+        assert!(score_state(&before, &stripped) > score_state(&before, &unchanged));
     }
 }
