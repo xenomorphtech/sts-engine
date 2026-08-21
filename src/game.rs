@@ -1816,10 +1816,15 @@ impl Game {
                         .add_power(crate::ids::PowerId::LoseStrength, potency);
                 }
                 PotionId::Regen => {
-                    // RegenPotion: RegenPower(player, 5). Heals at end of turn
-                    // then decrements (RegenAction).
+                    // AbstractPotion.getPotency doubles the base 5 with
+                    // Sacred Bark. Regen heals at end of turn, then decrements.
                     if self.combat.is_some() {
-                        self.player.add_power(crate::ids::PowerId::Regen, 5);
+                        let potency = if self.player.has_relic(RelicId::SacredBark) {
+                            10
+                        } else {
+                            5
+                        };
+                        self.player.add_power(crate::ids::PowerId::Regen, potency);
                     }
                 }
                 PotionId::Swift => {

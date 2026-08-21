@@ -3000,6 +3000,24 @@ fn sacred_bark_doubles_essence_of_steel() {
 }
 
 #[test]
+fn sacred_bark_doubles_regen_potion() {
+    // 664: Regen Potion applies 10 Regeneration with Sacred Bark, healing 10
+    // before the power decrements to 9 at the end of the turn.
+    let cfg = default_config(Character::Defect, "664", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 324,
+                "664 still uses base Regen Potion potency last_ok={} want > 324: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
