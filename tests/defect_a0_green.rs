@@ -667,6 +667,25 @@ fn sacred_bark_doubles_liquid_bronze_thorns() {
 }
 
 #[test]
+fn collector_spawn_initializes_torch_head_moves_and_ai_rng() {
+    // Seed 4 reaches the Collector with both Torch Heads dead. Each summon is
+    // initialized by SpawnMonsterAction in Java, which rolls its fixed move and
+    // consumes aiRng before the Collector's next move selection.
+    let cfg = default_config(Character::Defect, "4", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 489,
+                "4 still fails after Collector summon initialization last_ok={} want > 489: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

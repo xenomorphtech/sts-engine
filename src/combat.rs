@@ -2576,10 +2576,15 @@ impl Monster {
                 left.set_move(1, Intent::Attack, 7, 1);
                 left.offset_x = -185;
                 left.just_spawned = true;
+                // SpawnMonsterAction initializes the new monster before insertion.
+                // AbstractMonster.init rolls its move even though TorchHead's
+                // constructor already selected Tackle, consuming aiRng once.
+                left.roll_move(rng);
                 let mut right = spawn_monster(MonsterId::TorchHead, rng, ascension);
                 right.set_move(1, Intent::Attack, 7, 1);
                 right.offset_x = -370;
                 right.just_spawned = true;
+                right.roll_move(rng);
                 return Some(vec![left, right]);
             }
             (MonsterId::TheCollector, 2) => {
