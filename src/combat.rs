@@ -6467,9 +6467,6 @@ fn dark_evoke_hit(combat: &mut Combat, amount: i32) {
 }
 
 fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut RngSet, amount: i32) {
-    if amount <= 0 {
-        return;
-    }
     let electro = player.is_some_and(|p| p.power_amount(PowerId::Electro) > 0);
     let alive: Vec<usize> = combat
         .monsters
@@ -6482,6 +6479,9 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
         return;
     }
     if electro {
+        if amount <= 0 {
+            return;
+        }
         for i in alive {
             if let Some(m) = combat.monsters.get_mut(i) {
                 let amt = apply_lock_on(m, amount);
@@ -6490,7 +6490,13 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
         }
         return;
     }
+    // LightningOrbPassiveAction/EvokeAction selects a random monster before
+    // constructing its DamageAction, even when negative Focus clamps damage
+    // to zero. The selection still advances cardRandomRng (seed 595).
     let pick = rng.card_random.random_int(alive.len() as i32 - 1) as usize;
+    if amount <= 0 {
+        return;
+    }
     if let Some(m) = combat.monsters.get_mut(alive[pick]) {
         let amt = apply_lock_on(m, amount);
         deal_thorns(m, amt);

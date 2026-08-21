@@ -2146,6 +2146,25 @@ fn all_for_one_returns_cards_after_ink_bottle_draw() {
 }
 
 #[test]
+fn zero_damage_lightning_still_advances_card_random_rng() {
+    // 595: Bias leaves Lightning passives at zero. Java still selects one
+    // target per passive; four such selections determine which slime the
+    // later Cold Snap channel hits when it evokes Lightning.
+    let cfg = default_config(Character::Defect, "595", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 207,
+                "595 still fails at zero-damage Lightning RNG last_ok={} want > 207: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
