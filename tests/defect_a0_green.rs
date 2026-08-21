@@ -2892,6 +2892,24 @@ fn lethal_damage_cancels_static_discharge_channels() {
 }
 
 #[test]
+fn hand_drill_applies_vulnerable_after_breaking_monster_block() {
+    // 547: an earlier block break leaves Shelled Parasite Vulnerable. Rip and
+    // Tear's two random hits then pierce its next 14 block for 6 HP damage.
+    let cfg = default_config(Character::Defect, "547", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 311,
+                "547 still omits Hand Drill Vulnerable last_ok={} want > 311: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

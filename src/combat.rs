@@ -716,6 +716,7 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
         half_dead: false,
         ascension,
         pending_curl: 0,
+        pending_hand_drill: 0,
         offset_x: 0,
         just_spawned: false,
     }
@@ -745,6 +746,7 @@ fn spawn_monster_at_hp(id: MonsterId, hp: i32, ascension: i32) -> Monster {
         // Split constructors pass currentHealth but keep AbstractDungeon.ascensionLevel.
         ascension,
         pending_curl: 0,
+        pending_hand_drill: 0,
         offset_x: 0,
         just_spawned: false,
     }
@@ -3341,7 +3343,11 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
         if monster.power_amount(PowerId::Intangible) > 0 && dmg > 1 {
             dmg = 1;
         }
+        let block_before = monster.block;
         dmg = apply_block(&mut monster.block, dmg);
+        if block_before > 0 && monster.block == 0 && player.has_relic(RelicId::HandDrill) {
+            monster.pending_hand_drill += 1;
+        }
         // Boot.onAttackToChangeDamage after decrementBlock: unblocked Attack 1–4 → 5.
         if dmg > 0 && dmg < 5 && player.has_relic(RelicId::Boot) {
             dmg = 5;
@@ -3456,6 +3462,16 @@ fn flush_curl_up(combat: &mut Combat) {
                 monster.block += monster.pending_curl;
             }
             monster.pending_curl = 0;
+        }
+    }
+}
+
+fn flush_hand_drill(player: &Player, combat: &mut Combat, rng: &mut RngSet) {
+    for monster in &mut combat.monsters {
+        let triggers = monster.pending_hand_drill;
+        monster.pending_hand_drill = 0;
+        for _ in 0..triggers {
+            apply_player_power_to_monster(player, monster, rng, PowerId::Vulnerable, 2);
         }
     }
 }
@@ -4075,6 +4091,9 @@ pub fn play_owned_card(
             dungeon,
             defer_ftl_damage,
         );
+        // AbstractCreature.brokeBlock calls HandDrill.onBlockBroken, whose
+        // ApplyPowerAction is addToBot behind actions already queued by use().
+        flush_hand_drill(player, combat, rng);
         resolve_collector_death(combat);
         for _ in 0..storm {
             channel_orb(player, combat, rng, OrbKind::Lightning);
@@ -4203,6 +4222,7 @@ pub fn play_owned_card(
                     }
                 }
                 flush_curl_up(combat);
+                flush_hand_drill(player, combat, rng);
                 flush_guardian_defensive_block(combat);
                 gremlin_horn_triggers +=
                     gremlin_horn_trigger_count(player, combat, dead_before_ftl);
@@ -5779,6 +5799,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // is then discarded with the rest of the hand (seed 906 AcidSlime_M).
     let dead_before_orbs = combat.monsters.iter().filter(|m| m.dead).count();
     apply_orb_passives(player, combat, rng);
+    flush_hand_drill(player, combat, rng);
     gremlin_horn_on_kills(player, combat, rng, dead_before_orbs);
     flush_spore_cloud(player, combat);
     if player.hp <= 0 {
@@ -6529,6 +6550,7 @@ fn flush_mid_hit_evokes(player: &mut Player, combat: &mut Combat, rng: &mut RngS
     for amt in dark {
         dark_evoke_hit(combat, rng, amt);
     }
+    flush_hand_drill(player, combat, rng);
 }
 
 pub fn channel_orb(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, kind: OrbKind) {
@@ -6603,7 +6625,7 @@ fn apply_orb_passives(player: &mut Player, combat: &mut Combat, rng: &mut RngSet
                 if electro {
                     lightning_hit_player(Some(player), combat, rng, amt);
                 } else {
-                    lightning_hit(combat, rng, amt);
+                    lightning_hit_player(Some(player), combat, rng, amt);
                 }
             }
             OrbKind::Frost => gain_player_block(player, amt),
@@ -6634,10 +6656,6 @@ fn damage_random_alive(player: &mut Player, combat: &mut Combat, rng: &mut RngSe
     if let Some(m) = combat.monsters.get_mut(alive[pick]) {
         damage_monster(m, player, rng, dmg, 1);
     }
-}
-
-fn lightning_hit(combat: &mut Combat, rng: &mut RngSet, amount: i32) {
-    lightning_hit_player(None, combat, rng, amount);
 }
 
 /// DarkOrbEvokeAction ctor: first `!isDeadOrEscaped` monster with lowest `currentHealth`.
@@ -6684,7 +6702,14 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
         for i in alive {
             if let Some(m) = combat.monsters.get_mut(i) {
                 let amt = apply_lock_on(m, amount);
+                let block_before = m.block;
                 deal_thorns(m, rng, amt);
+                if player.is_some_and(|p| p.has_relic(RelicId::HandDrill))
+                    && block_before > 0
+                    && m.block == 0
+                {
+                    m.pending_hand_drill += 1;
+                }
             }
         }
         return;
@@ -6698,7 +6723,14 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     }
     if let Some(m) = combat.monsters.get_mut(alive[pick]) {
         let amt = apply_lock_on(m, amount);
+        let block_before = m.block;
         deal_thorns(m, rng, amt);
+        if player.is_some_and(|p| p.has_relic(RelicId::HandDrill))
+            && block_before > 0
+            && m.block == 0
+        {
+            m.pending_hand_drill += 1;
+        }
     }
 }
 

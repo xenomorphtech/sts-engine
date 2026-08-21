@@ -444,6 +444,9 @@ pub struct Monster {
     /// CurlUpPower GainBlockAction is addToBot, so later hits of the same card
     /// (Rip and Tear, Barrage) land before the block appears.
     pub pending_curl: i32,
+    /// HandDrill.onBlockBroken queues Vulnerable behind the card's existing
+    /// actions, so block breaks are applied after the whole card resolves.
+    pub pending_hand_drill: i32,
     /// Constructor `hb_x` used by SpawnMonsterAction smart insert (`drawX` order).
     pub offset_x: i32,
     /// Spawned this round (split); skip takeTurn until the next monster phase.
