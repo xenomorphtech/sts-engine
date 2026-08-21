@@ -2211,6 +2211,22 @@ impl Game {
             self.player.energy_master -= 1;
         }
         after_combat_relics(&mut self.player);
+        let colosseum_first_fight = self.current_room == RoomType::Event
+            && self
+                .event
+                .as_ref()
+                .is_some_and(|event| event.id == "Colosseum" && event.screen == 2);
+        if colosseum_first_fight {
+            // Colosseum sets rewardAllowed=false for the Slavers. reopen()
+            // returns to POST_COMBAT instead of opening CombatReward.
+            self.rewards.clear();
+            self.combat = None;
+            if let Some(event) = self.event.as_mut() {
+                event.options = vec!["[Flee]".into(), "[Fight]".into()];
+            }
+            self.screen = Screen::Event;
+            return;
+        }
         let event_room = self.current_room == RoomType::Event;
         // MonsterGroup.haveMonstersEscaped: true only if every monster
         // escaped. Hallway gold and potion then skip (Looter/Mugger run).

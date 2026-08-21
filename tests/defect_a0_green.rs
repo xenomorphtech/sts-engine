@@ -2928,6 +2928,24 @@ fn static_discharge_evokes_between_byrd_peck_hits() {
 }
 
 #[test]
+fn colosseum_slavers_reopen_the_event_without_rewards() {
+    // 768: the first Colosseum fight has rewardAllowed=false. Winning must
+    // reopen POST_COMBAT, where choice zero flees, without granting Stack.
+    let cfg = default_config(Character::Defect, "768", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 313,
+                "768 still opens rewards after Colosseum Slavers last_ok={} want > 313: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
