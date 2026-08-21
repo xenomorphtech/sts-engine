@@ -631,6 +631,24 @@ fn the_joust_bet_roll_and_payout_follow_java_screens() {
 }
 
 #[test]
+fn wheel_decay_fires_darkstone_periapt_on_obtain() {
+    // Seed 100's Wheel result grants Decay while Darkstone Periapt is owned.
+    // The curse obtain raises max HP and current HP by 6 before final Leave.
+    let cfg = default_config(Character::Defect, "100", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 311,
+                "100 still fails at Wheel curse obtain last_ok={} want > 311: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

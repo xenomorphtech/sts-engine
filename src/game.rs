@@ -3696,7 +3696,7 @@ impl Game {
                 self.screen = Screen::CombatReward;
             }
             2 => self.heal_player(self.player.max_hp),
-            3 => self.player.deck.push(Card::new(CardId::Decay)),
+            3 => self.obtain_master_deck_card(CardId::Decay),
             4 => {
                 if self.player.deck.iter().any(purgeable_card) {
                     self.open_grid(GridKind::Purge, 1, true);
