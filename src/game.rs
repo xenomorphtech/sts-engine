@@ -5556,6 +5556,7 @@ impl Game {
     fn finish_discard_to_hand(&mut self) {
         if let Some(combat) = self.combat.as_mut() {
             crate::combat::flush_seek_reactions(&mut self.player, combat, &mut self.rng);
+            crate::combat::flush_letter_opener(combat, &mut self.rng);
             if let Some(card) = combat.pending_exhaust.take() {
                 if card.exhaust {
                     crate::combat::exhaust_card(&mut self.player, combat, card, &mut self.rng);

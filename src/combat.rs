@@ -35,6 +35,8 @@ pub struct Combat {
     pub pending_dark_embrace: i32,
     /// InkBottle.onUseCard: addToBot(DrawCardAction) after the card's use() actions.
     pub pending_ink_bottle: i32,
+    /// LetterOpener DamageAllEnemiesAction queued behind an open Hologram GRID.
+    pub pending_letter_opener: i32,
     pub pending_hex_after_seek: i32,
     /// StasisPower.onDeath cards queued in monster death order.
     pub pending_stasis_cards: Vec<Card>,
@@ -307,6 +309,7 @@ impl Combat {
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
             pending_ink_bottle: 0,
+            pending_letter_opener: 0,
             pending_hex_after_seek: 0,
             pending_stasis_cards: Vec::new(),
             ascension,
@@ -3743,8 +3746,15 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
             r.counter += 1;
             if r.counter == 3 {
                 r.counter = 0;
-                for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    deal_thorns(monster, rng, 5);
+                // Hologram's BetterDiscardPileToHandAction is ahead of relic
+                // onUseCard actions. While its GRID is open Letter Opener has
+                // reset its counter, but its damage has not resolved yet.
+                if card.id == CardId::Hologram && player.discard.len() > 1 {
+                    combat.pending_letter_opener += 1;
+                } else {
+                    for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                        deal_thorns(monster, rng, 5);
+                    }
                 }
             }
         }
@@ -3873,6 +3883,14 @@ fn flush_ink_bottle(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) 
     if n > 0 && !combat.all_dead() {
         let drawn = draw_cards_rng(player, n, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, rng, drawn);
+    }
+}
+
+pub fn flush_letter_opener(combat: &mut Combat, rng: &mut RngSet) {
+    for _ in 0..std::mem::take(&mut combat.pending_letter_opener) {
+        for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+            deal_thorns(monster, rng, 5);
+        }
     }
 }
 
