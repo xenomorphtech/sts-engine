@@ -2820,6 +2820,24 @@ fn monster_regeneration_waits_for_the_enemy_turn_to_finish() {
 }
 
 #[test]
+fn sacred_bark_doubles_liquid_memories_selection() {
+    // 270: Sacred Bark raises Liquid Memories to two cards. The first click
+    // selects Compile Driver but leaves GRID open for Glacier as the second.
+    let cfg = default_config(Character::Defect, "270", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 308,
+                "270 still resolves Liquid Memories after one pick last_ok={} want > 308: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

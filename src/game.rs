@@ -1352,8 +1352,33 @@ impl Game {
                 }
             }
             GridKind::DiscardToHand => {
-                for i in idxs.into_iter().rev() {
-                    combat::discard_pile_to_hand(&mut self.player, i);
+                if self.memories_select {
+                    // BetterDiscardPileToHandAction iterates selectedCards in
+                    // click order and sets each moved card's cost for turn.
+                    let room = 10usize.saturating_sub(self.player.hand.len());
+                    let chosen: Vec<Card> = selection_order
+                        .iter()
+                        .take(room)
+                        .filter_map(|&i| self.player.discard.get(i).cloned())
+                        .collect();
+                    let mut remove: Vec<usize> = selection_order
+                        .iter()
+                        .take(room)
+                        .copied()
+                        .filter(|&i| i < self.player.discard.len())
+                        .collect();
+                    remove.sort_unstable();
+                    for i in remove.into_iter().rev() {
+                        self.player.discard.remove(i);
+                    }
+                    for mut card in chosen {
+                        card.cost_for_turn = 0;
+                        self.player.hand.push(card);
+                    }
+                } else {
+                    for i in idxs.into_iter().rev() {
+                        combat::discard_pile_to_hand(&mut self.player, i);
+                    }
                 }
             }
             GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
@@ -1430,6 +1455,7 @@ impl Game {
     }
 
     fn finish_grid(&mut self) {
+        let memories = self.memories_select;
         let back_to_combat = self
             .grid
             .as_ref()
@@ -1443,6 +1469,12 @@ impl Game {
         let back_to_shop = self.grid.as_ref().is_some_and(|g| g.return_shop);
         let return_screen = self.grid.as_ref().and_then(|g| g.return_screen);
         self.grid = None;
+        if memories {
+            self.memories_select = false;
+            self.screen = Screen::Combat;
+            self.apply_pending_ornithopter_heal();
+            return;
+        }
         if back_to_combat {
             self.finish_discard_to_hand();
             return;
@@ -3351,18 +3383,32 @@ impl Game {
         if self.player.discard.is_empty() {
             return;
         }
-        if self.player.discard.len() == 1 {
-            let mut c = self.player.discard.remove(0);
-            c.cost_for_turn = 0;
-            if self.player.hand.len() < 10 {
+        let needed = if self.player.has_relic(RelicId::SacredBark) {
+            2
+        } else {
+            1
+        };
+        if self.player.discard.len() <= needed {
+            while !self.player.discard.is_empty() && self.player.hand.len() < 10 {
+                let mut c = self.player.discard.remove(0);
+                c.cost_for_turn = 0;
                 self.player.hand.push(c);
-            } else {
-                self.player.discard.push(c);
             }
             return;
         }
         self.memories_select = true;
-        self.screen = Screen::HandSelect;
+        self.grid = Some(GridSelect {
+            kind: GridKind::DiscardToHand,
+            needed,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: false,
+            return_screen: None,
+            immediate: false,
+        });
+        self.screen = Screen::Grid;
     }
 
     fn begin_gambling_chip(&mut self) {
@@ -5606,29 +5652,6 @@ impl Game {
     fn step_hand_select(&mut self, action: &Action) {
         match action {
             Action::Choose { index, label, .. } => {
-                if self.memories_select {
-                    let by_name = label.as_ref().and_then(|name| {
-                        let upgraded = name.ends_with('+');
-                        let base = name.trim_end_matches('+');
-                        self.player.discard.iter().position(|c| {
-                            (c.sts_id() == base || c.id.sts_id() == base) && c.upgraded == upgraded
-                        })
-                    });
-                    let idx = by_name.unwrap_or(*index);
-                    if idx < self.player.discard.len() {
-                        let mut c = self.player.discard.remove(idx);
-                        c.cost_for_turn = 0;
-                        if self.player.hand.len() < 10 {
-                            self.player.hand.push(c);
-                        } else {
-                            self.player.discard.push(c);
-                        }
-                    }
-                    self.memories_select = false;
-                    self.screen = Screen::Combat;
-                    self.apply_pending_ornithopter_heal();
-                    return;
-                }
                 let by_name = label.as_ref().and_then(|name| {
                     self.player
                         .hand
@@ -5843,7 +5866,8 @@ impl Game {
         // Combat HealAction sits behind potion.use() overlays (Discovery,
         // Gambler's Brew, Liquid Memories).
         if self.combat.is_some()
-            && matches!(self.screen, Screen::CardReward | Screen::HandSelect)
+            && (matches!(self.screen, Screen::CardReward | Screen::HandSelect)
+                || self.memories_select && self.screen == Screen::Grid)
         {
             self.pending_ornithopter_heal = true;
             return;
