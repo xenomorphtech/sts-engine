@@ -3147,6 +3147,25 @@ fn orange_pellets_cleanses_after_attack_skill_power() {
 }
 
 #[test]
+fn dark_evokes_return_stasis_cards_in_death_order() {
+    // 862: Dualcast evokes Dark twice, killing the right Bronze Orb before
+    // the left. StasisPower.onDeath queues Sweeping Beam then Rip and Tear;
+    // a later monster-index sweep reverses those returned cards.
+    let cfg = default_config(Character::Defect, "862", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 369,
+                "862 still returns Stasis cards by slot last_ok={} want > 369: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

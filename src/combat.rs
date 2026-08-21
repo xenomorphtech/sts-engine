@@ -36,6 +36,8 @@ pub struct Combat {
     /// InkBottle.onUseCard: addToBot(DrawCardAction) after the card's use() actions.
     pub pending_ink_bottle: i32,
     pub pending_hex_after_seek: i32,
+    /// StasisPower.onDeath cards queued in monster death order.
+    pub pending_stasis_cards: Vec<Card>,
     pub ascension: i32,
     /// GameActionManager.orbsChanneledThisCombat (Blizzard / Thunder Strike).
     pub orbs_channeled_this_combat: Vec<OrbKind>,
@@ -306,6 +308,7 @@ impl Combat {
             pending_dark_embrace: 0,
             pending_ink_bottle: 0,
             pending_hex_after_seek: 0,
+            pending_stasis_cards: Vec::new(),
             ascension,
             orbs_channeled_this_combat: channeled,
             energy_on_use: -1,
@@ -4184,6 +4187,7 @@ pub fn play_owned_card(
         }
         let mut gremlin_horn_triggers =
             gremlin_horn_trigger_count(player, combat, dead_before);
+        flush_pending_stasis(player, combat);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
             let spores = monster.power_amount(PowerId::SporeCloud);
             if spores > 0 {
@@ -4274,6 +4278,7 @@ pub fn play_owned_card(
                 flush_guardian_defensive_block(combat);
                 gremlin_horn_triggers +=
                     gremlin_horn_trigger_count(player, combat, dead_before_ftl);
+                flush_pending_stasis(player, combat);
                 for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
                     let spores = monster.power_amount(PowerId::SporeCloud);
                     if spores > 0 {
@@ -6636,6 +6641,7 @@ fn flush_mid_hit_evokes(player: &mut Player, combat: &mut Combat, rng: &mut RngS
             dark_evoke_hit(combat, rng, amt);
         }
     }
+    flush_pending_stasis(player, combat);
     flush_hand_drill(player, combat, rng);
 }
 
@@ -6763,8 +6769,28 @@ fn dark_evoke_hit(combat: &mut Combat, rng: &mut RngSet, amount: i32) {
         }
     }
     if let Some(i) = best {
+        let mut stasis_card = None;
         if let Some(m) = combat.monsters.get_mut(i) {
             deal_thorns(m, rng, apply_lock_on(m, amount));
+            if m.dead {
+                stasis_card = m.stasis_card.take();
+            }
+        }
+        // StasisPower.onDeath queues each stolen card in monster death order.
+        // Preserve that order until the current card's already-queued actions
+        // finish (seed 613 Coolheaded draws before the stolen card returns).
+        if let Some(card) = stasis_card {
+            combat.pending_stasis_cards.push(card);
+        }
+    }
+}
+
+fn flush_pending_stasis(player: &mut Player, combat: &mut Combat) {
+    for card in std::mem::take(&mut combat.pending_stasis_cards) {
+        if player.hand.len() < 10 {
+            player.hand.push(card);
+        } else {
+            player.discard.push(card);
         }
     }
 }
