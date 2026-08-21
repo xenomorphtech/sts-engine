@@ -7174,6 +7174,7 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
         // the action queue. DamageAllEnemiesAction finishes its own target
         // loop first, then those suicides resolve before the next action.
         resolve_collector_death(combat);
+        resolve_darklings(combat);
         return;
     }
     // LightningOrbPassiveAction/EvokeAction selects a random monster before
@@ -7205,6 +7206,9 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     // ahead of later orb passives. Those passives then find no target and do
     // not advance cardRandomRng (seed 298).
     resolve_collector_death(combat);
+    // Darkling.damage synchronously kills the group when this hit makes every
+    // Darkling half-dead, clearing later orb actions (seed 298 Act 3).
+    resolve_darklings(combat);
 }
 
 /// AbstractOrb.applyLockOn: `(int)(dmg * 1.5F)` when the target has Lockon.
