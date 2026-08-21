@@ -1759,8 +1759,15 @@ impl Game {
                     if self.combat.is_none() {
                         return;
                     }
-                    self.player.add_power(crate::ids::PowerId::Dexterity, 5);
-                    self.player.add_power(crate::ids::PowerId::LoseDexterity, 5);
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        10
+                    } else {
+                        5
+                    };
+                    self.player
+                        .add_power(crate::ids::PowerId::Dexterity, potency);
+                    self.player
+                        .add_power(crate::ids::PowerId::LoseDexterity, potency);
                 }
                 PotionId::Steroid => {
                     // Flex Potion: Strength + LoseStrength at getPotency().

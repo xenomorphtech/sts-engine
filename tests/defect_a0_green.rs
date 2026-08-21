@@ -2748,6 +2748,24 @@ fn hand_of_greed_does_not_reward_gremlin_leader_minions() {
 }
 
 #[test]
+fn sacred_bark_doubles_speed_potion() {
+    // 43: Speed Potion with Sacred Bark applies 10 Dexterity and 10 matching
+    // LoseDexterity, so the following Glacier gains 5 more block.
+    let cfg = default_config(Character::Defect, "43", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 308,
+                "43 still uses base Speed Potion potency last_ok={} want > 308: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
