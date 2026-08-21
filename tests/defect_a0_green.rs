@@ -365,6 +365,25 @@ fn thorns_stops_later_hits_after_killing_attacker() {
 }
 
 #[test]
+fn guardian_resets_mode_shift_after_static_discharge_evokes() {
+    // Seed 490's Static Discharge evokes Lightning during Twin Slam. Java
+    // resolves that damage before Offensive Mode applies a fresh Mode Shift
+    // 40; applying it afterward incorrectly starts the next cycle at 32.
+    let cfg = default_config(Character::Defect, "490", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 186,
+                "490 still fails at Guardian/Static Discharge order last_ok={} want > 186: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

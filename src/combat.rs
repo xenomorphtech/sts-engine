@@ -2738,16 +2738,12 @@ impl Monster {
             }
             (MonsterId::TheGuardian, 4) => {
                 // Twin Slam takeTurn queues ChangeState("Offensive Mode") then
-                // two DamageActions. ChangeState queues ApplyPower(ModeShift)
-                // / Reset Threshold addToBottom, so the 8x2 (and player Thorns)
-                // resolve while still defensive; Reset then wipes dmgTaken
-                // (seed 32 Mode Shift 40 not 34, Sweeping Beam 6 vs leftover 20).
-                let _ = hit_player(player, self, rng, 8, 2);
+                // two DamageActions. Enter the open state and set Whirlwind
+                // now, but defer Mode Shift / block loss until queued damage
+                // and its addToTop Static Discharge evokes have resolved.
                 self.split_triggered = false;
-                self.add_power(PowerId::ModeShift, self.extra);
-                self.block = 0;
-                self.powers.retain(|p| p.id != PowerId::SharpHide);
                 self.set_move(5, Intent::Attack, 5, 4);
+                let _ = hit_player(player, self, rng, 8, 2);
             }
             (MonsterId::TheGuardian, 5) => {
                 let _ = hit_player(player, self, rng, 5, 4);
@@ -5535,6 +5531,17 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
         flush_mid_hit_evokes(player, combat, rng);
+        if id == MonsterId::TheGuardian
+            && used_move == 4
+            && combat.monsters[i].alive()
+        {
+            // ChangeState("Offensive Mode") adds these actions to the bottom,
+            // behind Twin Slam and any addToTop Static Discharge channels.
+            let guardian = &mut combat.monsters[i];
+            guardian.powers.retain(|p| p.id != PowerId::SharpHide);
+            guardian.add_power(PowerId::ModeShift, guardian.extra);
+            guardian.block = 0;
+        }
         apply_group_move(combat, i, id, used_move, rng);
         if player.hp <= 0 && !try_cheat_death(player) {
             player.hp = 0;
