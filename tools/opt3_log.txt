@@ -92,3 +92,30 @@ gen 78 top=691.2 median=673.9 sigma=0.60
 gen 79 top=691.6 median=638.2 sigma=0.60
 gen 80 top=670.9 median=646.5 sigma=0.60
 done
+gen 81 top=685.3 median=650.7 sigma=0.60
+gen 82 top=678.7 median=657.7 sigma=0.60
+gen 83 top=657.9 median=641.7 sigma=0.60
+gen 84 top=700.2 median=661.0 sigma=0.60
+  validate [[576, 42.32], [554, 41.99]]
+gen 85 top=641.7 median=610.8 sigma=0.60
+gen 86 top=691.6 median=660.5 sigma=0.60
+gen 87 top=669.4 median=650.5 sigma=0.60
+gen 88 top=668.5 median=646.2 sigma=0.60
+gen 89 top=675.2 median=654.3 sigma=0.60
+gen 90 top=676.5 median=627.4 sigma=0.60
+  validate [[547, 41.84], [558, 41.66]]
+gen 91 top=689.5 median=648.2 sigma=0.60
+gen 92 top=732.1 median=692.8 sigma=0.60
+gen 93 top=691.8 median=655.1 sigma=0.60
+gen 94 top=685.3 median=657.1 sigma=0.60
+gen 95 top=683.4 median=658.2 sigma=0.60
+gen 96 top=672.0 median=637.9 sigma=0.60
+  validate [[557, 41.93], [570, 42.42]]
+gen 97 top=699.9 median=674.9 sigma=0.60
+gen 98 top=684.6 median=644.1 sigma=0.60
+gen 99 top=663.6 median=634.8 sigma=0.60
+gen 100 top=708.0 median=685.2 sigma=0.60
+gen 101 top=689.5 median=663.8 sigma=0.60
+gen 102 top=690.8 median=656.3 sigma=0.60
+  validate [[555, 42.01], [584, 42.11]]
+gen 103 top=687.1 median=661.8 sigma=0.60
