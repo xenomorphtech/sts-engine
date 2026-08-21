@@ -344,7 +344,35 @@ impl Combat {
     }
 
     pub fn all_dead(&self) -> bool {
-        self.monsters.iter().all(|m| !m.alive())
+        // MonsterGroup.areMonstersBasicallyDead does not keep combat open for
+        // MinionPower enemies after every non-minion is dying or gone. We do
+        // not model MinionPower directly, so recover it from the summoner that
+        // remains in the encounter's monster group after death.
+        self.monsters
+            .iter()
+            .all(|m| !m.alive() || self.is_minion(m.id))
+    }
+
+    fn is_minion(&self, id: MonsterId) -> bool {
+        match id {
+            MonsterId::BronzeOrb => self
+                .monsters
+                .iter()
+                .any(|m| m.id == MonsterId::BronzeAutomaton),
+            MonsterId::TorchHead => self
+                .monsters
+                .iter()
+                .any(|m| m.id == MonsterId::TheCollector),
+            MonsterId::GremlinFat
+            | MonsterId::GremlinTsundere
+            | MonsterId::GremlinThief
+            | MonsterId::GremlinWarrior
+            | MonsterId::GremlinWizard => self
+                .monsters
+                .iter()
+                .any(|m| m.id == MonsterId::GremlinLeader),
+            _ => false,
+        }
     }
 
     /// MonsterGroup.showIntent → AbstractMonster.createIntent.
