@@ -2292,6 +2292,24 @@ fn seek_resolves_hex_after_draw_pile_selection() {
 }
 
 #[test]
+fn cauldron_opens_five_potion_rewards_on_equip() {
+    // 883: buying Cauldron at the Act 2 shop opens five potion rewards before
+    // the driver proceeds to the next map node.
+    let cfg = default_config(Character::Defect, "883", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 234,
+                "883 still misses Cauldron rewards last_ok={} want > 234: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

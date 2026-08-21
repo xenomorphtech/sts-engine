@@ -5571,6 +5571,19 @@ impl Game {
             RelicId::Empty_Cage => self.open_empty_cage_grid(),
             RelicId::Tiny_House => self.on_equip_tiny_house(),
             RelicId::Astrolabe => self.open_astrolabe_grid(),
+            RelicId::Cauldron => {
+                // Cauldron.onEquip adds five uniform character-pool potions,
+                // opens CombatRewardScreen, then removes its automatic CARD.
+                self.rewards.clear();
+                for _ in 0..5 {
+                    let potion = crate::rewards::get_random_potion_for(
+                        &mut self.rng,
+                        self.character,
+                    );
+                    self.rewards.push(Reward::new(RewardKind::Potion(potion)));
+                }
+                self.screen = Screen::CombatReward;
+            }
             _ => {}
         }
         if matches!(id, RelicId::Frozen_Egg_2 | RelicId::Molten_Egg_2 | RelicId::Toxic_Egg_2) {
