@@ -5854,6 +5854,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // is then discarded with the rest of the hand (seed 906 AcidSlime_M).
     let dead_before_orbs = combat.monsters.iter().filter(|m| m.dead).count();
     apply_orb_passives(player, combat, rng);
+    // StasisPower.onDeath adds its MakeTempCard action behind the already
+    // queued orb passives, but before AbstractRoom can enqueue the end-turn
+    // discard. Return every card killed by this orb batch now so it is
+    // discarded and reshuffled with the old hand (seed 910 Electrodynamics).
+    flush_pending_stasis(player, combat);
     flush_hand_drill(player, combat, rng);
     gremlin_horn_on_kills(player, combat, rng, dead_before_orbs);
     flush_spore_cloud(player, combat);
@@ -6812,16 +6817,23 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
             return;
         }
         for i in alive {
+            let mut stasis_card = None;
             if let Some(m) = combat.monsters.get_mut(i) {
                 let amt = apply_lock_on(m, amount);
                 let block_before = m.block;
                 deal_thorns(m, rng, amt);
+                if m.dead {
+                    stasis_card = m.stasis_card.take();
+                }
                 if player.is_some_and(|p| p.has_relic(RelicId::HandDrill))
                     && block_before > 0
                     && m.block == 0
                 {
                     m.pending_hand_drill += 1;
                 }
+            }
+            if let Some(card) = stasis_card {
+                combat.pending_stasis_cards.push(card);
             }
         }
         return;
@@ -6833,16 +6845,23 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     if amount <= 0 {
         return;
     }
+    let mut stasis_card = None;
     if let Some(m) = combat.monsters.get_mut(alive[pick]) {
         let amt = apply_lock_on(m, amount);
         let block_before = m.block;
         deal_thorns(m, rng, amt);
+        if m.dead {
+            stasis_card = m.stasis_card.take();
+        }
         if player.is_some_and(|p| p.has_relic(RelicId::HandDrill))
             && block_before > 0
             && m.block == 0
         {
             m.pending_hand_drill += 1;
         }
+    }
+    if let Some(card) = stasis_card {
+        combat.pending_stasis_cards.push(card);
     }
 }
 
