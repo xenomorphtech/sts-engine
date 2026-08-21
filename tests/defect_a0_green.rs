@@ -3091,6 +3091,25 @@ fn lethal_static_lightning_cancels_later_frost_block() {
 }
 
 #[test]
+fn centennial_puzzle_draws_between_multi_hits() {
+    // 980: Byrd Peck is five queued DamageActions. The first hit triggers
+    // Centennial Puzzle and its addToTop draw resolves before a later hit
+    // kills the player, leaving the three drawn cards on the death screen.
+    let cfg = default_config(Character::Defect, "980", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 357,
+                "980 still delays Centennial Puzzle until after Peck last_ok={} want > 357: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

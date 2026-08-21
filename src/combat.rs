@@ -3202,6 +3202,10 @@ fn hit_player_inner(
             if monster.powers.iter().any(|p| p.id == PowerId::PainfulStabs) {
                 player.discard.push(Card::new(CardId::Wound));
             }
+            // Each Java multi-hit is a separate DamageAction. Centennial
+            // Puzzle's addToTop draw therefore resolves after the first HP
+            // loss, before a later hit can kill the player (seed 980 Byrd).
+            centennial_puzzle_was_hp_lost(player, rng);
         }
         // VampireDamageAction adds HealAction to the top after damage(), ahead
         // of the Thorns/Static actions queued by onAttacked. A lethal hit ends
@@ -3238,7 +3242,6 @@ fn hit_player_inner(
     }
     if total > 0 {
         red_skull_on_hp_change(player);
-        centennial_puzzle_was_hp_lost(player, rng);
     }
     total
 }
