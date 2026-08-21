@@ -2566,6 +2566,25 @@ fn toolbox_choice_resolves_before_the_opening_draw() {
 }
 
 #[test]
+fn tempest_hex_inserts_dazed_before_nested_channel_actions() {
+    // 75: TempestAction queues its three ChannelActions after UseCardAction's
+    // Hex reaction. Dazed insertion therefore consumes cardRandomRng before
+    // the full orb slots evoke Lightning into Byrd.
+    let cfg = default_config(Character::Defect, "75", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 278,
+                "75 still resolves Tempest before Hex last_ok={} want > 278: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

@@ -4014,6 +4014,18 @@ pub fn play_owned_card(
         } else {
             0
         };
+        // Tempest.use queues TempestAction, then the UseCardAction constructor
+        // queues Hex's MakeTempCardInDrawPileAction. TempestAction only queues
+        // its ChannelActions when it later runs, so Hex inserts Dazed before a
+        // full slot can evoke Lightning and consume cardRandomRng (seed 75).
+        let hex_before_tempest = if card.id == CardId::Tempest {
+            player.power_amount(PowerId::Hex)
+        } else {
+            0
+        };
+        for _ in 0..hex_before_tempest {
+            add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
+        }
         on_use_card(player, combat, &card, rng);
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         // SharpHidePower.onUseCard queues THORNS (DAMAGE, kept after combat)
@@ -4063,7 +4075,10 @@ pub fn play_owned_card(
         // UseCardAction walks player powers before relics. Hex therefore
         // inserts its Dazed before Ink Bottle's queued draw (seed 444).
         let defer_seek_reactions = card.id == CardId::Seek && combat.need_draw_to_hand;
-        if card.card_type() != CardType::ATTACK && player.power_amount(PowerId::Hex) > 0 {
+        if card.id != CardId::Tempest
+            && card.card_type() != CardType::ATTACK
+            && player.power_amount(PowerId::Hex) > 0
+        {
             let n = player.power_amount(PowerId::Hex);
             if defer_seek_reactions {
                 combat.pending_hex_after_seek += n;
