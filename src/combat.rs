@@ -5722,6 +5722,9 @@ fn apply_card_effect(
                 // NewRipAndTearAction -> AttackDamageRandomEnemyAction: cardRandomRng
                 // getRandomMonster(null, true) per hit.
                 for _ in 0..hits {
+                    if player.hp <= 0 {
+                        break;
+                    }
                     damage_random_alive(player, combat, rng, dmg);
                 }
             } else if let Some(i) = target {

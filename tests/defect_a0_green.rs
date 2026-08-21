@@ -3204,6 +3204,25 @@ fn dagger_suicide_stays_queued_after_a_lethal_attack() {
 }
 
 #[test]
+fn rip_and_tear_stops_after_lethal_spiker_thorns() {
+    // 583: Rip and Tear queues two NewRipAndTearActions. The first random hit
+    // triggers lethal Spiker thorns, so Java leaves the second action queued
+    // without consuming another cardRandomRng roll or damaging the Spiker.
+    let cfg = default_config(Character::Defect, "583", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 569,
+                "583 still resolves Rip and Tear after death last_ok={} want > 569: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
