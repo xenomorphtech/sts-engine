@@ -4814,10 +4814,12 @@ fn apply_card_effect(
             apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Reboot => {
-            // ShuffleAllAction finishes (discard.shuffle + souls addToTop to
-            // draw) *before* PutOnDeckAction. ShuffleAction then shuffles the
-            // combined draw. Input order before the final shuffle matters.
+            // ShuffleAllAction's constructor calls relic.onShuffle once.
+            // It then finishes (discard.shuffle + souls addToTop to draw)
+            // before PutOnDeckAction. ShuffleAction(draw, false) shuffles the
+            // combined draw without another relic hook.
             // CardGroup.shuffle(rng) always burns randomLong(), even on empty.
+            on_shuffle_relics(player);
             let seed = rng.shuffle.random_long();
             shuffle_java(&mut player.discard, seed);
             player.draw.append(&mut player.discard);

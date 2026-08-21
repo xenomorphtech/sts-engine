@@ -3054,6 +3054,24 @@ fn sacred_bark_doubles_fear_potion() {
 }
 
 #[test]
+fn reboot_triggers_shuffle_relics_once() {
+    // 889: each Reboot advances Sundial once. Missing those hooks shifts its
+    // third-shuffle energy proc onto a later Reinforced Body turn.
+    let cfg = default_config(Character::Defect, "889", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 331,
+                "889 still omits Reboot's shuffle hook last_ok={} want > 331: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
