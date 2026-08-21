@@ -1826,7 +1826,14 @@ impl Game {
                         );
                     }
                 }
-                PotionId::LiquidBronze => self.player.add_power(crate::ids::PowerId::Thorns, 3),
+                PotionId::LiquidBronze => {
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        6
+                    } else {
+                        3
+                    };
+                    self.player.add_power(crate::ids::PowerId::Thorns, potency);
+                }
                 PotionId::Duplication => {
                     self.player.duplication += 1;
                 }

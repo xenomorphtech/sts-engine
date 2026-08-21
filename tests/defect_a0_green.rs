@@ -649,6 +649,24 @@ fn wheel_decay_fires_darkstone_periapt_on_obtain() {
 }
 
 #[test]
+fn sacred_bark_doubles_liquid_bronze_thorns() {
+    // Seed 4 uses Liquid Bronze with Sacred Bark before the Collector. Java's
+    // AbstractPotion.getPotency doubles the base 3 to 6 Thorns.
+    let cfg = default_config(Character::Defect, "4", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 472,
+                "4 still fails at Sacred Bark Liquid Bronze last_ok={} want > 472: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
