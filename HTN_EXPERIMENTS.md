@@ -100,3 +100,6 @@ single-acquisition cohorts below and are not numerically comparable to the old
 | Add a known-Act-2-boss acquisition task | fixed source `1787315208666760241` | 8.60% (43/500) | 30.58 | 8.80% (44/500) | 30.78 | 0 | advanced after improving wins and depth |
 | Add a known-Act-2-boss acquisition task | replay source `1787318856394675018` | 9.00% (45/500) | 30.36 | 9.00% (45/500) | 30.35 | 0 | neutral wins with a 0.01 mean-floor tradeoff |
 | Add a known-Act-2-boss acquisition task | fresh source `1787322574873510016` | 7.20% (36/500) | 30.81 | 7.40% (37/500) | 30.74 | 0 | accepted; one more win with a 0.07 mean-floor tradeoff |
+| Extend known-boss acquisition to Act 1 | fixed source `1787315208666760241` | 8.80% (44/500) | 30.78 | 9.80% (49/500) | 30.91 | 0 | advanced after improving wins and depth |
+| Extend known-boss acquisition to Act 1 | replay source `1787318856394675018` | 9.00% (45/500) | 30.35 | 9.80% (49/500) | 30.88 | 0 | advanced after independent confirmation |
+| Extend known-boss acquisition to Act 1 | fresh source `1787322961599519915` | 7.80% (39/500) | 29.91 | 8.80% (44/500) | 30.50 | 0 | accepted; improved all three paired cohorts |

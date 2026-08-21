@@ -136,7 +136,7 @@ impl<'a> DeckPlan<'a> {
         {
             tasks.push(DeckTask::FundExpensiveCards);
         }
-        if self.game.dungeon.act == Act::City {
+        if matches!(self.game.dungeon.act, Act::Exordium | Act::City) {
             tasks.push(DeckTask::PrepareForBoss);
         }
         tasks
@@ -240,6 +240,31 @@ impl<'a> DeckPlan<'a> {
     fn boss_card_value(&self, id: CardId) -> i32 {
         let p = self.profile;
         match self.game.dungeon.boss.as_str() {
+            "Hexaghost" => match id {
+                CardId::Glacier => 50,
+                CardId::Defragment => 30,
+                CardId::Go_for_the_Eyes | CardId::Ball_Lightning | CardId::Doom_and_Gloom => 30,
+                CardId::Cold_Snap => 25,
+                _ => 0,
+            },
+            "The Guardian" => match id {
+                CardId::Glacier => 60,
+                CardId::Reinforced_Body => 45,
+                CardId::Auto_Shields => 35,
+                CardId::Cold_Snap | CardId::Leap => 30,
+                CardId::Defragment => 25,
+                CardId::Go_for_the_Eyes => 20,
+                _ => 0,
+            },
+            "Slime Boss" => match id {
+                CardId::Hyperbeam => 70,
+                CardId::Electrodynamics => 60,
+                CardId::Sunder => 50,
+                CardId::Sweeping_Beam => 45,
+                CardId::Doom_and_Gloom => 35,
+                CardId::Ball_Lightning => 25,
+                _ => 0,
+            },
             "Collector" => {
                 let missing_aoe = (2 - p.aoe).max(0);
                 match id {
@@ -571,5 +596,16 @@ mod tests {
         let champ = card_adjustment(&game, &electrodynamics);
         game.dungeon.boss = "Collector".into();
         assert!(card_adjustment(&game, &electrodynamics) >= champ + 90);
+    }
+
+    #[test]
+    fn known_act_one_boss_changes_the_acquisition_task() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::Exordium;
+        let glacier = Card::new(CardId::Glacier);
+        game.dungeon.boss = "Slime Boss".into();
+        let slime = card_adjustment(&game, &glacier);
+        game.dungeon.boss = "The Guardian".into();
+        assert!(card_adjustment(&game, &glacier) >= slime + 60);
     }
 }
