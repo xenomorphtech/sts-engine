@@ -876,32 +876,33 @@ pub fn score_card(game: &Game, card: &Card) -> i32 {
         s = s.max(defect_pick(card.id));
         s += deckplan::card_adjustment(game, card);
     }
+    let p = params();
     if card.upgraded {
-        s += 25;
+        s += p.upgraded_pick_bonus as i32;
     }
 
     let copies = game.player.deck.iter().filter(|c| c.id == card.id).count() as i32;
     let max_copies = max_copies(card.id);
     if copies >= max_copies {
-        s -= 250;
+        s -= p.copies_full_penalty as i32;
     } else if copies == max_copies - 1 {
-        s -= 40;
+        s -= p.copies_near_penalty as i32;
     }
 
     let metrics = deck_metrics(game);
     let act = game.dungeon.act as i32;
     if is_aoe(card.id) && metrics.aoe < 2 {
-        s += 45;
+        s += p.aoe_bonus as i32;
     }
     if card.base_block > 0 && metrics.block_cards + metrics.frost_src / 2 < 5.max(metrics.size / 5)
     {
-        s += 40;
+        s += p.block_bonus as i32;
     }
     if game.character == Character::Defect && is_channel(card.id) && metrics.channel < 5 {
-        s += 35;
+        s += p.channel_bonus as i32;
     }
     if is_scaling(card.id) && metrics.scaling < 2 + act {
-        s += 40;
+        s += p.scaling_bonus as i32;
     }
     if game.character == Character::Defect && is_focus_source(card.id) {
         let focus_sources = game
@@ -911,12 +912,12 @@ pub fn score_card(game: &Game, card: &Card) -> i32 {
             .filter(|c| is_focus_source(c.id))
             .count();
         if focus_sources < 3 {
-            s += 45;
+            s += p.focus_bonus as i32;
         }
     }
     if act >= 2 && metrics.scaling < 2 && card.card_type() == CardType::ATTACK {
         if card.base_damage >= 14 {
-            s += 45;
+            s += p.act2_damage_bonus as i32;
         }
         if matches!(
             card.id,
@@ -927,31 +928,31 @@ pub fn score_card(game: &Game, card: &Card) -> i32 {
                 | CardId::Hyperbeam
                 | CardId::Rip_and_Tear
         ) {
-            s += 30;
+            s += p.act2_finisher_bonus as i32;
         }
     }
     if act == 1 && card.card_type() == CardType::ATTACK {
         if metrics.attacks - metrics.strikes < 5 {
-            s += 55;
+            s += p.act1_attack_bonus as i32;
         }
         if card.base_damage >= 10 {
-            s += 25;
+            s += p.act1_big_damage_bonus as i32;
         }
     }
     if act == 1 && game.dungeon.floor >= 11 && card.base_block > 0 && metrics.block_cards < 7 {
-        s += 35;
+        s += p.act1_late_block_bonus as i32;
     }
 
     let target_size = match act {
-        1 => 22,
-        2 => 26,
-        3 | 4 => 28,
+        1 => p.target_size_act1 as i32,
+        2 => p.target_size_act2 as i32,
+        3 | 4 => p.target_size_act3 as i32,
         _ => 26,
     };
     if metrics.size >= target_size {
-        s -= 160;
+        s -= p.size_full_penalty as i32;
     } else if metrics.size >= target_size - 4 {
-        s -= 60;
+        s -= p.size_near_penalty as i32;
     }
     s
 }
@@ -991,6 +992,13 @@ fn card_pick(id: CardId) -> i32 {
 }
 
 fn defect_pick(id: CardId) -> i32 {
+    if let Some(v) = params().pick.get(id.sts_id()) {
+        return *v as i32;
+    }
+    defect_pick_base(id)
+}
+
+fn defect_pick_base(id: CardId) -> i32 {
     match id {
         CardId::Defragment => 290,
         CardId::Echo_Form => 280,
@@ -1172,6 +1180,9 @@ fn max_copies(id: CardId) -> i32 {
 }
 
 fn upgrade_score(id: CardId) -> i32 {
+    if let Some(v) = params().upgrade.get(id.sts_id()) {
+        return *v as i32;
+    }
     match id {
         CardId::Defragment => 270,
         CardId::Echo_Form => 260,
@@ -1203,6 +1214,9 @@ fn is_energy_boss_relic(name: &str) -> bool {
 }
 
 fn boss_relic_rank(name: &str) -> i32 {
+    if let Some(v) = params().boss_relic.get(name) {
+        return *v as i32;
+    }
     match name {
         "SlaversCollar" | "Slaver's Collar" => 95,
         "Velvet Choker" => 88,

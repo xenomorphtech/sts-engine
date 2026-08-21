@@ -1,0 +1,1 @@
+start gen 0 fit=404.6 wins500=164 floor=38.30

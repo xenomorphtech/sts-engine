@@ -407,19 +407,20 @@ fn fight_kind(game: &Game) -> FightKind {
 }
 
 fn fight_length(kind: FightKind, act: Act) -> f32 {
+    let p = params();
     match (act, kind) {
-        (Act::Exordium, FightKind::Normal) => 3.3,
-        (Act::Exordium, FightKind::Elite) => 5.3,
-        (Act::Exordium, FightKind::Boss) => 9.5,
-        (Act::City, FightKind::Normal) => 5.0,
-        (Act::City, FightKind::Elite) => 4.5,
-        (Act::City, FightKind::Boss) => 8.0,
-        (Act::Beyond, FightKind::Normal) => 5.5,
-        (Act::Beyond, FightKind::Elite) => 6.0,
-        (Act::Beyond, FightKind::Boss) => 10.0,
-        (Act::Ending, FightKind::Normal) => 5.0,
-        (Act::Ending, FightKind::Elite) => 6.0,
-        (Act::Ending, FightKind::Boss) => 12.0,
+        (Act::Exordium, FightKind::Normal) => p.fl_a1_normal,
+        (Act::Exordium, FightKind::Elite) => p.fl_a1_elite,
+        (Act::Exordium, FightKind::Boss) => p.fl_a1_boss,
+        (Act::City, FightKind::Normal) => p.fl_a2_normal,
+        (Act::City, FightKind::Elite) => p.fl_a2_elite,
+        (Act::City, FightKind::Boss) => p.fl_a2_boss,
+        (Act::Beyond, FightKind::Normal) => p.fl_a3_normal,
+        (Act::Beyond, FightKind::Elite) => p.fl_a3_elite,
+        (Act::Beyond, FightKind::Boss) => p.fl_a3_boss,
+        (Act::Ending, FightKind::Normal) => p.fl_a4_normal,
+        (Act::Ending, FightKind::Elite) => p.fl_a4_elite,
+        (Act::Ending, FightKind::Boss) => p.fl_a4_boss,
     }
 }
 
