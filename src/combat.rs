@@ -770,6 +770,27 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (48, 52)
             }
         }
+        MonsterId::BanditChild => {
+            if a7 {
+                (34, 34)
+            } else {
+                (30, 30)
+            }
+        }
+        MonsterId::BanditLeader => {
+            if a7 {
+                (37, 41)
+            } else {
+                (35, 39)
+            }
+        }
+        MonsterId::BanditBear => {
+            if a7 {
+                (40, 44)
+            } else {
+                (38, 42)
+            }
+        }
         MonsterId::GremlinNob => {
             if ascension >= 8 {
                 (85, 90)
@@ -1015,6 +1036,16 @@ impl Monster {
             MonsterId::Mugger => {
                 let swipe = if self.ascension >= 2 { 11 } else { 10 };
                 self.set_move(1, Intent::Attack, swipe, 1);
+            }
+            MonsterId::BanditChild => {
+                let damage = if self.ascension >= 2 { 6 } else { 5 };
+                self.set_move(1, Intent::Attack, damage, 2);
+            }
+            MonsterId::BanditLeader => {
+                self.set_move(2, Intent::Unknown, 0, 1);
+            }
+            MonsterId::BanditBear => {
+                self.set_move(2, Intent::StrongDebuff, 0, 1);
             }
             MonsterId::AcidSlimeS => {
                 let dmg = if self.ascension >= 2 { 4 } else { 3 };
@@ -1716,6 +1747,9 @@ impl Monster {
             MonsterId::AcidSlimeS
                 | MonsterId::Looter
                 | MonsterId::Mugger
+                | MonsterId::BanditChild
+                | MonsterId::BanditLeader
+                | MonsterId::BanditBear
                 | MonsterId::Transient
                 | MonsterId::SlimeBoss
                 | MonsterId::GremlinWarrior
@@ -1974,6 +2008,50 @@ impl Monster {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
                 self.extra += 1;
                 self.set_move(2, Intent::Defend, 0, 1);
+            }
+            (MonsterId::BanditChild, 1) => {
+                let damage = if ascension >= 2 { 6 } else { 5 };
+                let _ = hit_player(player, self, rng, damage, 2);
+                self.set_move(1, Intent::Attack, damage, 2);
+            }
+            (MonsterId::BanditLeader, 1) => {
+                let slash = if ascension >= 2 { 17 } else { 15 };
+                let agonize = if ascension >= 2 { 12 } else { 10 };
+                let _ = hit_player(player, self, rng, slash, 1);
+                if ascension >= 17 && !self.last_two(1) {
+                    self.set_move(1, Intent::Attack, slash, 1);
+                } else {
+                    self.set_move(3, Intent::AttackDebuff, agonize, 1);
+                }
+            }
+            (MonsterId::BanditLeader, 2) => {
+                let agonize = if ascension >= 2 { 12 } else { 10 };
+                self.set_move(3, Intent::AttackDebuff, agonize, 1);
+            }
+            (MonsterId::BanditLeader, 3) => {
+                let slash = if ascension >= 2 { 17 } else { 15 };
+                let agonize = if ascension >= 2 { 12 } else { 10 };
+                let _ = hit_player(player, self, rng, agonize, 1);
+                player.add_power_from_monster(PowerId::Weak, if ascension >= 17 { 3 } else { 2 });
+                self.set_move(1, Intent::Attack, slash, 1);
+            }
+            (MonsterId::BanditBear, 1) => {
+                let lunge = if ascension >= 2 { 10 } else { 9 };
+                let maul = if ascension >= 2 { 20 } else { 18 };
+                let _ = hit_player(player, self, rng, maul, 1);
+                self.set_move(3, Intent::AttackDefend, lunge, 1);
+            }
+            (MonsterId::BanditBear, 2) => {
+                player.add_power_from_monster(PowerId::Dexterity, if ascension >= 17 { -4 } else { -2 });
+                let lunge = if ascension >= 2 { 10 } else { 9 };
+                self.set_move(3, Intent::AttackDefend, lunge, 1);
+            }
+            (MonsterId::BanditBear, 3) => {
+                let lunge = if ascension >= 2 { 10 } else { 9 };
+                let maul = if ascension >= 2 { 20 } else { 18 };
+                let _ = hit_player(player, self, rng, lunge, 1);
+                self.block += 9;
+                self.set_move(1, Intent::Attack, maul, 1);
             }
             (MonsterId::Snecko, 1) => {
                 player.add_power_from_monster(PowerId::Confusion, 1);

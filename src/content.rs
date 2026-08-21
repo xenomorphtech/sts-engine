@@ -1179,6 +1179,11 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
         EncounterId::BookOfStabbing => &[MonsterId::BookOfStabbing],
         EncounterId::Slavers => &[MonsterId::SlaverBlue, MonsterId::SlaverRed],
         EncounterId::GremlinLeader => &[MonsterId::GremlinNob],
+        EncounterId::MaskedBandits => &[
+            MonsterId::BanditChild,
+            MonsterId::BanditLeader,
+            MonsterId::BanditBear,
+        ],
         EncounterId::ThreeDarklings => &[MonsterId::Darkling, MonsterId::Darkling, MonsterId::Darkling],
         EncounterId::Transient => &[MonsterId::Transient],
         EncounterId::GiantHead => &[MonsterId::GiantHead],

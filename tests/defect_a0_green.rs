@@ -93,6 +93,24 @@ fn registry_greens_still_walk() {
 }
 
 #[test]
+fn masked_bandits_enters_the_three_bandit_combat() {
+    // Seed 340 chooses Fight at Masked Bandits. The event must seed gold +
+    // Red Mask rewards and enter the Pointy/Leader/Bear combat immediately.
+    let cfg = default_config(Character::Defect, "340", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 179,
+                "340 still fails before Masked Bandits combat last_ok={} want > 179: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

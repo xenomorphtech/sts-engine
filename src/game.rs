@@ -3459,6 +3459,10 @@ impl Game {
                     format!("[Eat] #gHeal #g{heal} #gHP. #rBecome #rCursed #r- #rParasite."),
                 ]
             }
+            "Masked Bandits" => vec![
+                "[Pay] #rLose #rALL #rGold.".into(),
+                "[Fight] #gObtain #gRed #gMask.".into(),
+            ],
             "Forgotten Altar" => {
                 // ForgottenAltar ctor: hpLoss = MathUtils.round(max * 0.25),
                 // A15+ 0.35. Golden Idol option is disabled without the relic;
@@ -4013,6 +4017,42 @@ impl Game {
                         event.options = vec!["[Leave]".into()];
                     }
                 }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Masked Bandits" {
+            match screen {
+                0 if *index == 0 => {
+                    self.player.gold = 0;
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec!["[Continue]".into()];
+                    }
+                }
+                0 => {
+                    // MaskedBandits.buttonEffect: event gold/relic are seeded before
+                    // enterCombat. Starting first preserves that miscRng roll because
+                    // Combat::start resets the already-entered event floor streams.
+                    self.rewards.clear();
+                    self.start_combat_encounter(EncounterId::MaskedBandits);
+                    let gold = self.rng.misc.random_range(25, 35);
+                    self.add_gold_to_rewards(gold);
+                    if self.player.has_relic(RelicId::Red_Mask) {
+                        if let Some(id) = RelicId::from_sts_id("Circlet") {
+                            self.add_relic_to_rewards(id);
+                        }
+                    } else {
+                        self.add_relic_to_rewards(RelicId::Red_Mask);
+                    }
+                }
+                1 | 2 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen += 1;
+                        event.options = vec!["[Continue]".into()];
+                    }
+                }
+                3 => self.open_map(),
                 _ => self.open_map(),
             }
             return;
