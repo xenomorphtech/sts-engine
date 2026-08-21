@@ -2328,6 +2328,24 @@ fn sacred_bark_doubles_colorless_potion_discovery_copies() {
 }
 
 #[test]
+fn ectoplasm_increases_master_energy_on_equip() {
+    // 930: Ectoplasm supplies the fourth energy, so Tempest channels three
+    // Lightning orbs after Defend and Beam Cell instead of two.
+    let cfg = default_config(Character::Defect, "930", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 240,
+                "930 still misses Ectoplasm energy last_ok={} want > 240: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

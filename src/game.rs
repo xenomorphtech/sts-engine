@@ -5507,6 +5507,7 @@ impl Game {
     fn gain_relic(&mut self, id: RelicId) {
         if id == RelicId::Cursed_Key
             || id == RelicId::Coffee_Dripper
+            || id == RelicId::Ectoplasm
             || id == RelicId::Fusion_Hammer
             || id == RelicId::Philosophers_Stone
             || id == RelicId::Velvet_Choker
