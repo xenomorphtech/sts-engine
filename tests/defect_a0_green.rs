@@ -2294,15 +2294,17 @@ fn seek_resolves_hex_after_draw_pile_selection() {
 #[test]
 fn cauldron_opens_five_potion_rewards_on_equip() {
     // 883: buying Cauldron at the Act 2 shop opens five potion rewards before
-    // the driver proceeds to the next map node.
+    // the driver proceeds to the next map node. Its reward-screen open also
+    // burns the automatic CARD roll before removing that reward, keeping the
+    // following combat reward aligned.
     let cfg = default_config(Character::Defect, "883", Unlocks::fixture(), 0);
     match walk_oracle(&cfg) {
         Ok(_) => {}
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 234,
-                "883 still misses Cauldron rewards last_ok={} want > 234: {fail}",
+                fail.last_ok > 249,
+                "883 still misses Cauldron reward RNG last_ok={} want > 249: {fail}",
                 fail.last_ok
             );
         }

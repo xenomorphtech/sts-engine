@@ -5609,6 +5609,11 @@ impl Game {
                     );
                     self.rewards.push(Reward::new(RewardKind::Potion(potion)));
                 }
+                // CombatRewardScreen.open rolls its automatic CARD reward
+                // before Cauldron removes that RewardItem. Preserve the card
+                // RNG/blizzard side effects but do not expose the cards.
+                self.generate_card_reward();
+                self.card_reward.clear();
                 self.screen = Screen::CombatReward;
             }
             _ => {}
