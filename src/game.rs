@@ -982,15 +982,23 @@ impl Game {
     }
 
     fn apply_astrolabe_transforms(&mut self, idxs: &[usize]) {
-        let mut idxs = idxs.to_vec();
-        idxs.sort_unstable();
-        idxs.dedup();
-        for i in idxs.into_iter().rev() {
-            if i >= self.player.deck.len() {
-                continue;
+        // Astrolabe.giveCards iterates GridSelectScreen.selectedCards in click
+        // order. Preserve that order for the miscRng transforms: the source
+        // card is temporarily excluded from each roll's pool.
+        let mut selected = Vec::new();
+        for &i in idxs {
+            if !selected.iter().any(|(selected_i, _)| *selected_i == i) {
+                if let Some(card) = self.player.deck.get(i) {
+                    selected.push((i, card.id));
+                }
             }
-            let old = self.player.deck[i].id;
+        }
+        let mut remove_indices: Vec<usize> = selected.iter().map(|(i, _)| *i).collect();
+        remove_indices.sort_unstable();
+        for i in remove_indices.into_iter().rev() {
             self.player.deck.remove(i);
+        }
+        for (_, old) in selected {
             if let Some(id) = self.misc_transform_roll(old) {
                 let mut card = Card::new(id);
                 if card.can_upgrade() {
@@ -1232,9 +1240,14 @@ impl Game {
     }
 
     fn apply_grid(&mut self, kind: GridKind, indices: &[usize]) {
-        let mut idxs: Vec<usize> = indices.to_vec();
+        let mut selection_order = Vec::new();
+        for &i in indices {
+            if !selection_order.contains(&i) {
+                selection_order.push(i);
+            }
+        }
+        let mut idxs = selection_order.clone();
         idxs.sort_unstable();
-        idxs.dedup();
         match kind {
             GridKind::Purge => {
                 let shop_purge = self.grid.as_ref().is_some_and(|g| g.return_shop);
@@ -1295,7 +1308,7 @@ impl Game {
                 if astrolabe {
                     // Astrolabe.giveCards: transformCard(c, true, miscRng) and
                     // obtain immediately (seed 133 Gash+/White Noise+/Steam+).
-                    self.apply_astrolabe_transforms(&idxs);
+                    self.apply_astrolabe_transforms(&selection_order);
                 } else {
                     // Java NeowReward.update TRANSFORM_*: transformCard via
                     // NeowEvent.rng, remove immediately, then queue

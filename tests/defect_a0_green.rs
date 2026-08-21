@@ -1192,6 +1192,25 @@ fn astrolabe_transforms_three_cards() {
 }
 
 #[test]
+fn astrolabe_transforms_in_selection_order() {
+    // 45 selects Skim, Scrape, then Hologram. Java rolls replacements in that
+    // click order; sorting deck indices changes the temporarily excluded card
+    // and resolves the second identical miscRng roll to Skim, not White Noise.
+    let cfg = default_config(Character::Defect, "45", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 184,
+                "45 still fails at Astrolabe selection order last_ok={} want > 184: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn maw_bank_gold_on_boss_treasure_enter() {
     // 683: MawBank.onEnterRoom TreasureRoomBoss +12 after boss rewards Proceed.
     let cfg = default_config(Character::Defect, "683", Unlocks::fixture(), 0);
