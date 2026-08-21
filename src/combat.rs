@@ -3089,8 +3089,10 @@ fn try_cheat_death(player: &mut Player) -> bool {
         return false;
     }
     if let Some(slot) = player.potions.iter().position(|p| p.id == PotionId::Fairy) {
-        // FairyPotion.getPotency=30; healAmt = (int)(maxHealth * 0.30F)
-        let heal = (player.max_hp * 30) / 100;
+        // FairyPotion.use heals getPotency percent; AbstractPotion.getPotency
+        // doubles the base 30 while Sacred Bark is held.
+        let potency = if player.has_relic(RelicId::SacredBark) { 60 } else { 30 };
+        let heal = (player.max_hp * potency) / 100;
         player.hp = heal.max(1).min(player.max_hp);
         player.potions[slot].id = PotionId::Slot;
         red_skull_on_hp_change(player);
