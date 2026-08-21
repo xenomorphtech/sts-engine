@@ -6107,6 +6107,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // is then discarded with the rest of the hand (seed 906 AcidSlime_M).
     let dead_before_orbs = combat.monsters.iter().filter(|m| m.dead).count();
     apply_orb_passives(player, combat, rng);
+    // GremlinLeader.die queues its minion EscapeActions behind the orb
+    // passives already in the action queue, so finish the batch first.
+    resolve_gremlin_leader_death(combat);
     // StasisPower.onDeath adds its MakeTempCard action behind the already
     // queued orb passives, but before AbstractRoom can enqueue the end-turn
     // discard. Return every card killed by this orb batch now so it is
