@@ -50,12 +50,17 @@ impl Card {
         }
         self.upgraded = true;
         self.times_upgraded = self.times_upgraded.saturating_add(1);
+        let unup = crate::content::card_stats(self.id, false);
         let stats = crate::content::card_stats(self.id, true);
         self.cost = stats.cost;
         self.cost_for_turn = stats.cost;
-        self.base_damage = stats.damage;
-        self.base_block = stats.block;
-        self.base_magic = stats.magic;
+        // Java upgradeDamage/upgradeBlock/upgradeMagicNumber add to the
+        // current values. Overwriting from the upgraded catalog wipes
+        // combat mutations (GashAction on Claw, Genetic Algorithm misc
+        // block, Rampage ModifyDamageAction) before Apotheosis/Armaments.
+        self.base_damage += stats.damage - unup.damage;
+        self.base_block += stats.block - unup.block;
+        self.base_magic += stats.magic - unup.magic;
         self.exhaust = stats.exhaust;
         self.ethereal = stats.ethereal;
         self.innate = stats.innate;

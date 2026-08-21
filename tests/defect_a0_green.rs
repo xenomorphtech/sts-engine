@@ -864,6 +864,25 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn apotheosis_keeps_gash_combat_bonus() {
+    // 270: GashAction +2 this combat, then Apotheosis upgradeDamage(2)
+    // on the mutated base. Catalog overwrite reset Gash+ to 5 so
+    // Hexaghost took 5 (hp 158) instead of 7 (hp 156).
+    let cfg = default_config(Character::Defect, "270", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 177,
+                "270 still fails at Gash+/Apotheosis last_ok={} want > 177: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn master_of_strategy_draws_and_exhausts() {
     // 193: Master of Strategy DrawCardAction(3) + exhaust. Rust discarded
     // it and skipped the draws (hand 4 vs 7).
