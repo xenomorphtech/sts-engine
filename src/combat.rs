@@ -383,7 +383,7 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
             monster.add_power(PowerId::Artifact, 3);
             monster.block += 40;
         }
-        MonsterId::SnakePlant => {
+        MonsterId::SnakePlant | MonsterId::WrithingMass => {
             monster.add_power(PowerId::Malleable, 3);
         }
         MonsterId::Byrd => {
@@ -725,6 +725,7 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
         stasis_card: None,
         half_dead: false,
         ascension,
+        pending_reactive: 0,
         pending_curl: 0,
         pending_hand_drill: 0,
         offset_x: 0,
@@ -755,6 +756,7 @@ fn spawn_monster_at_hp(id: MonsterId, hp: i32, ascension: i32) -> Monster {
         half_dead: false,
         // Split constructors pass currentHealth but keep AbstractDungeon.ascensionLevel.
         ascension,
+        pending_reactive: 0,
         pending_curl: 0,
         pending_hand_drill: 0,
         offset_x: 0,
@@ -1001,6 +1003,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
         MonsterId::Darkling => (48, 56),
         MonsterId::Transient => (999, 999),
         MonsterId::GiantHead => (500, 500),
+        MonsterId::WrithingMass => {
+            if a7 {
+                (175, 175)
+            } else {
+                (160, 160)
+            }
+        }
         MonsterId::AwakenedOne => (300, 300),
         MonsterId::Snecko => {
             if a7 {
@@ -1534,6 +1543,62 @@ impl Monster {
                     } else {
                         self.set_move(1, Intent::Debuff, 0, 1);
                     }
+                }
+            }
+            MonsterId::WrithingMass => {
+                let big = if self.ascension >= 2 { 38 } else { 32 };
+                let multi = if self.ascension >= 2 { 9 } else { 7 };
+                let attack_block = if self.ascension >= 2 { 16 } else { 15 };
+                let attack_debuff = if self.ascension >= 2 { 12 } else { 10 };
+                if self.first_move {
+                    self.first_move = false;
+                    if num < 33 {
+                        self.set_move(1, Intent::Attack, multi, 3);
+                    } else if num < 66 {
+                        self.set_move(2, Intent::AttackDefend, attack_block, 1);
+                    } else {
+                        self.set_move(3, Intent::AttackDebuff, attack_debuff, 1);
+                    }
+                } else if num < 10 {
+                    if !self.last_move(0) {
+                        self.set_move(0, Intent::Attack, big, 1);
+                    } else {
+                        let reroll = rng.ai.random_range(10, 99);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    }
+                } else if num < 20 {
+                    if !self.split_triggered && !self.last_move(4) {
+                        self.set_move(4, Intent::StrongDebuff, 0, 1);
+                    } else if rng.ai.random_boolean_chance(0.1) {
+                        self.set_move(0, Intent::Attack, big, 1);
+                    } else {
+                        let reroll = rng.ai.random_range(20, 99);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    }
+                } else if num < 40 {
+                    if !self.last_move(3) {
+                        self.set_move(3, Intent::AttackDebuff, attack_debuff, 1);
+                    } else if rng.ai.random_boolean_chance(0.4) {
+                        let reroll = rng.ai.random_int(19);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    } else {
+                        let reroll = rng.ai.random_range(40, 99);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    }
+                } else if num < 70 {
+                    if !self.last_move(1) {
+                        self.set_move(1, Intent::Attack, multi, 3);
+                    } else if rng.ai.random_boolean_chance(0.3) {
+                        self.set_move(2, Intent::AttackDefend, attack_block, 1);
+                    } else {
+                        let reroll = rng.ai.random_int(39);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    }
+                } else if !self.last_move(2) {
+                    self.set_move(2, Intent::AttackDefend, attack_block, 1);
+                } else {
+                    let reroll = rng.ai.random_int(69);
+                    self.get_move(reroll, rng, missing_hp, allies, index);
                 }
             }
             MonsterId::AwakenedOne => {
@@ -2754,6 +2819,26 @@ impl Monster {
             (MonsterId::GiantHead, 3) => {
                 let _ = hit_player(player, self, rng, 13, 1);
             }
+            (MonsterId::WrithingMass, 0) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 38 } else { 32 }, 1);
+            }
+            (MonsterId::WrithingMass, 1) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 9 } else { 7 }, 3);
+            }
+            (MonsterId::WrithingMass, 2) => {
+                let damage = if ascension >= 2 { 16 } else { 15 };
+                let _ = hit_player(player, self, rng, damage, 1);
+                self.block += damage;
+            }
+            (MonsterId::WrithingMass, 3) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 12 } else { 10 }, 1);
+                player.add_power_from_monster(PowerId::Weak, 2);
+                player.add_power_from_monster(PowerId::Vulnerable, 2);
+            }
+            (MonsterId::WrithingMass, 4) => {
+                self.split_triggered = true;
+                player.deck.push(Card::new(CardId::Parasite));
+            }
             (MonsterId::CorruptHeart, 3) => {
                 player.add_power_from_monster(PowerId::Vulnerable, 2);
                 player.add_power_from_monster(PowerId::Weak, 2);
@@ -3426,6 +3511,12 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
                 pending_flight += 1;
             }
             if !lethal {
+                // ReactivePower.onAttacked has priority 50 and queues a
+                // RollMoveAction before Malleable's GainBlockAction. Defer it
+                // until the card's already-queued actions have resolved.
+                if monster.id == MonsterId::WrithingMass {
+                    monster.pending_reactive += 1;
+                }
                 // MalleablePower.onAttacked: monsters addToBot GainBlock, so
                 // later DamageActions / orb evokes of this card land first
                 // (Cold Snap then Dark evoke on Snake Plant).
@@ -3468,8 +3559,17 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
     monster.pending_curl += pending_curl;
 }
 
-fn flush_curl_up(combat: &mut Combat) {
+fn flush_on_attacked(combat: &mut Combat, rng: &mut RngSet) {
+    let all_dead = combat.all_dead();
     for monster in combat.monsters.iter_mut() {
+        let reactive = monster.pending_reactive;
+        monster.pending_reactive = 0;
+        if !all_dead {
+            for _ in 0..reactive {
+                monster.roll_move(rng);
+                monster.create_intent();
+            }
+        }
         if monster.pending_curl > 0 {
             if monster.alive() {
                 monster.block += monster.pending_curl;
@@ -4201,7 +4301,7 @@ pub fn play_owned_card(
         for _ in 0..storm {
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
-        flush_curl_up(combat);
+        flush_on_attacked(combat, rng);
         flush_guardian_defensive_block(combat);
         // AllCostToHandAction snapshots eligible discard cards after the hit,
         // then queues one DiscardToHandAction per card behind Ink Bottle's
@@ -4335,7 +4435,7 @@ pub fn play_owned_card(
                         damage_monster(m, player, rng, card.base_damage as i32, 1);
                     }
                 }
-                flush_curl_up(combat);
+                flush_on_attacked(combat, rng);
                 flush_hand_drill(player, combat, rng);
                 flush_guardian_defensive_block(combat);
                 gremlin_horn_triggers +=
