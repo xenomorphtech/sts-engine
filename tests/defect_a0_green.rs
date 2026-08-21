@@ -2310,6 +2310,24 @@ fn cauldron_opens_five_potion_rewards_on_equip() {
 }
 
 #[test]
+fn sacred_bark_doubles_colorless_potion_discovery_copies() {
+    // 15: Sacred Bark makes Colorless Potion create two copies of the chosen
+    // Jack of All Trades instead of one.
+    let cfg = default_config(Character::Defect, "15", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 238,
+                "15 still misses Sacred Bark potion potency last_ok={} want > 238: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

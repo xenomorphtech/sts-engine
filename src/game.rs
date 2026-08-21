@@ -134,6 +134,7 @@ pub struct Game {
     discovery_combat: bool,
     discovery_typ: Option<crate::ids::CardType>,
     discovery_colorless: bool,
+    discovery_copies: usize,
     /// ToyOrnithopter HealAction is addToBot after DiscoveryAction, so the
     /// CARD_REWARD snapshot is still pre-heal (seed 45).
     pending_ornithopter_heal: bool,
@@ -355,6 +356,7 @@ impl Game {
             discovery_combat: false,
             discovery_typ: None,
             discovery_colorless: false,
+            discovery_copies: 1,
             pending_ornithopter_heal: false,
         };
         game.neow_options = vec![NeowOption {
@@ -1957,7 +1959,7 @@ impl Game {
                     self.begin_memories_select();
                 }
                 PotionId::Attack => {
-                    self.begin_discovery(Some(crate::ids::CardType::ATTACK), false);
+                    self.begin_potion_discovery(Some(crate::ids::CardType::ATTACK), false);
                     self.player.potions[slot] = PotionInstance {
                         id: PotionId::Slot,
                         slot: slot as i32,
@@ -1966,7 +1968,7 @@ impl Game {
                     return;
                 }
                 PotionId::Skill => {
-                    self.begin_discovery(Some(crate::ids::CardType::SKILL), false);
+                    self.begin_potion_discovery(Some(crate::ids::CardType::SKILL), false);
                     self.player.potions[slot] = PotionInstance {
                         id: PotionId::Slot,
                         slot: slot as i32,
@@ -1975,7 +1977,7 @@ impl Game {
                     return;
                 }
                 PotionId::Power => {
-                    self.begin_discovery(Some(crate::ids::CardType::POWER), false);
+                    self.begin_potion_discovery(Some(crate::ids::CardType::POWER), false);
                     self.player.potions[slot] = PotionInstance {
                         id: PotionId::Slot,
                         slot: slot as i32,
@@ -1984,7 +1986,7 @@ impl Game {
                     return;
                 }
                 PotionId::Colorless => {
-                    self.begin_discovery(None, true);
+                    self.begin_potion_discovery(None, true);
                     self.player.potions[slot] = PotionInstance {
                         id: PotionId::Slot,
                         slot: slot as i32,
@@ -2429,7 +2431,15 @@ impl Game {
         self.discovery_combat = self.combat.is_some();
         self.discovery_typ = typ;
         self.discovery_colorless = colorless;
+        self.discovery_copies = 1;
         self.screen = Screen::CardReward;
+    }
+
+    fn begin_potion_discovery(&mut self, typ: Option<crate::ids::CardType>, colorless: bool) {
+        self.begin_discovery(typ, colorless);
+        if self.player.has_relic(RelicId::SacredBark) {
+            self.discovery_copies = 2;
+        }
     }
 
     fn generate_card_reward(&mut self) {
@@ -2532,10 +2542,12 @@ impl Game {
                 if let Some(mut card) = card {
                     if self.discovery_combat {
                         card.cost_for_turn = 0;
-                        if self.player.hand.len() < 10 {
-                            self.player.hand.push(card);
-                        } else {
-                            self.player.discard.push(card);
+                        for _ in 0..self.discovery_copies.max(1) {
+                            if self.player.hand.len() < 10 {
+                                self.player.hand.push(card.clone());
+                            } else {
+                                self.player.discard.push(card.clone());
+                            }
                         }
                         crate::rewards::burn_discovery_rng(
                             &self.dungeon,
@@ -2563,6 +2575,7 @@ impl Game {
     fn finish_card_reward(&mut self) {
         if self.discovery_combat {
             self.discovery_combat = false;
+            self.discovery_copies = 1;
             self.card_reward.clear();
             self.screen = Screen::Combat;
             self.apply_pending_ornithopter_heal();
