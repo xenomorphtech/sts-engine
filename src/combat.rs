@@ -351,6 +351,7 @@ fn is_elite_encounter(id: EncounterId) -> bool {
             | EncounterId::Slavers
             | EncounterId::GremlinLeader
             | EncounterId::GiantHead
+            | EncounterId::Reptomancer
     )
 }
 
@@ -618,6 +619,12 @@ fn spawn_encounter(encounter: EncounterId, rng: &mut RngSet, ascension: i32) -> 
         for (monster, x) in monsters.iter_mut().zip([-366, -170, 35]) {
             monster.offset_x = gremlin_draw_x(monster.id, x);
         }
+    } else if encounter == EncounterId::Reptomancer {
+        // MonsterHelper: left Dagger(POSX[1]), Reptomancer, right
+        // Dagger(POSX[0]). Reptomancer itself is constructed at x=-20.
+        for (monster, x) in monsters.iter_mut().zip([-220, -20, 210]) {
+            monster.offset_x = x;
+        }
     }
     monsters
 }
@@ -680,6 +687,11 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
     }
     if id == MonsterId::TorchHead {
         let _ = rng.monster_hp.random_range(38, 40);
+    }
+    if id == MonsterId::Reptomancer {
+        // Constructor passes monsterHpRng.random(180, 190) to super, then
+        // calls setHp for the actual ascension range.
+        let _ = rng.monster_hp.random_range(180, 190);
     }
     let hp = if id == MonsterId::Maw {
         // Maw ctor passes 300 into super and never calls setHp.
@@ -1007,6 +1019,14 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
         MonsterId::Darkling => (48, 56),
         MonsterId::Transient => (999, 999),
         MonsterId::GiantHead => (500, 500),
+        MonsterId::Reptomancer => {
+            if ascension >= 8 {
+                (190, 200)
+            } else {
+                (180, 190)
+            }
+        }
+        MonsterId::Dagger => (20, 25),
         MonsterId::WrithingMass => {
             if a7 {
                 (175, 175)
@@ -1554,6 +1574,40 @@ impl Monster {
                     } else {
                         self.set_move(1, Intent::Debuff, 0, 1);
                     }
+                }
+            }
+            MonsterId::Reptomancer => {
+                let bite = if self.ascension >= 3 { 16 } else { 13 };
+                let big = if self.ascension >= 3 { 34 } else { 30 };
+                if self.first_move {
+                    self.first_move = false;
+                    self.set_move(2, Intent::Unknown, 0, 1);
+                } else if num < 33 {
+                    if !self.last_move(1) {
+                        self.set_move(1, Intent::AttackDebuff, bite, 2);
+                    } else {
+                        let reroll = rng.ai.random_range(33, 99);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    }
+                } else if num < 66 {
+                    if !self.last_two(2) && allies <= 4 {
+                        self.set_move(2, Intent::Unknown, 0, 1);
+                    } else {
+                        self.set_move(1, Intent::AttackDebuff, bite, 2);
+                    }
+                } else if !self.last_move(3) {
+                    self.set_move(3, Intent::Attack, big, 1);
+                } else {
+                    let reroll = rng.ai.random_range(0, 65);
+                    self.get_move(reroll, rng, missing_hp, allies, index);
+                }
+            }
+            MonsterId::Dagger => {
+                if self.first_move {
+                    self.first_move = false;
+                    self.set_move(1, Intent::AttackDebuff, 9, 1);
+                } else {
+                    self.set_move(2, Intent::Attack, 25, 1);
                 }
             }
             MonsterId::WrithingMass => {
@@ -2852,6 +2906,31 @@ impl Monster {
             (MonsterId::GiantHead, 3) => {
                 let _ = hit_player(player, self, rng, 13, 1);
             }
+            (MonsterId::Reptomancer, 1) => {
+                let dmg = if ascension >= 3 { 16 } else { 13 };
+                let _ = hit_player(player, self, rng, dmg, 2);
+                player.add_power_from_monster(PowerId::Weak, 1);
+            }
+            (MonsterId::Reptomancer, 2) => {
+                if let Some(slots) = gremlin_slots {
+                    let mut dagger = spawn_monster(MonsterId::Dagger, rng, ascension);
+                    dagger.offset_x = slots[0];
+                    dagger.roll_move(rng);
+                    return Some(vec![dagger]);
+                }
+            }
+            (MonsterId::Reptomancer, 3) => {
+                let _ = hit_player(player, self, rng, if ascension >= 3 { 34 } else { 30 }, 1);
+            }
+            (MonsterId::Dagger, 1) => {
+                let _ = hit_player(player, self, rng, 9, 1);
+                player.discard.push(Card::new(CardId::Wound));
+            }
+            (MonsterId::Dagger, 2) => {
+                let _ = hit_player(player, self, rng, 25, 1);
+                self.hp = 0;
+                self.dead = true;
+            }
             (MonsterId::SpireGrowth, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
             }
@@ -3246,6 +3325,16 @@ fn next_gremlin_summon_slots(monsters: &[Monster]) -> [i32; 2] {
         }
     }
     available
+}
+
+fn next_reptomancer_summon_slot(monsters: &[Monster]) -> Option<i32> {
+    // Reptomancer.daggers is scanned in this fixed order. A dead historical
+    // Dagger releases its slot even though it remains in MonsterGroup.
+    [210, -220, 180, -250].into_iter().find(|slot_x| {
+        !monsters
+            .iter()
+            .any(|m| m.id == MonsterId::Dagger && m.alive() && m.offset_x == *slot_x)
+    })
 }
 
 
@@ -4407,6 +4496,7 @@ pub fn play_owned_card(
         // ApplyPowerAction is addToBot behind actions already queued by use().
         flush_hand_drill(player, combat, rng);
         resolve_collector_death(combat);
+        resolve_reptomancer_death(combat);
         for _ in 0..storm {
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
@@ -4790,6 +4880,21 @@ fn resolve_collector_death(combat: &mut Combat) {
         return;
     }
     // TheCollector.die queues SuicideAction for every surviving summon.
+    for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+        monster.hp = 0;
+        monster.dead = true;
+    }
+}
+
+fn resolve_reptomancer_death(combat: &mut Combat) {
+    if !combat
+        .monsters
+        .iter()
+        .any(|m| m.id == MonsterId::Reptomancer && m.dead)
+    {
+        return;
+    }
+    // Reptomancer.die pushes SuicideAction for every surviving Dagger.
     for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
         monster.hp = 0;
         monster.dead = true;
@@ -5676,6 +5781,8 @@ fn apply_card_effect(
                         ) && combat.monsters.iter().any(|m| m.id == MonsterId::GremlinLeader))
                         || (m.id == MonsterId::BronzeOrb
                             && combat.monsters.iter().any(|m| m.id == MonsterId::BronzeAutomaton))
+                        || (m.id == MonsterId::Dagger
+                            && combat.monsters.iter().any(|m| m.id == MonsterId::Reptomancer))
                 });
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
@@ -6339,6 +6446,8 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let used_move = combat.monsters[i].next_move;
         let gremlin_slots = if id == MonsterId::GremlinLeader && used_move == 2 {
             Some(next_gremlin_summon_slots(&combat.monsters))
+        } else if id == MonsterId::Reptomancer && used_move == 2 {
+            next_reptomancer_summon_slot(&combat.monsters).map(|x| [x, 0])
         } else {
             None
         };
@@ -7174,6 +7283,7 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
         // the action queue. DamageAllEnemiesAction finishes its own target
         // loop first, then those suicides resolve before the next action.
         resolve_collector_death(combat);
+        resolve_reptomancer_death(combat);
         resolve_darklings(combat);
         return;
     }
@@ -7206,6 +7316,7 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     // ahead of later orb passives. Those passives then find no target and do
     // not advance cardRandomRng (seed 298).
     resolve_collector_death(combat);
+    resolve_reptomancer_death(combat);
     // Darkling.damage synchronously kills the group when this hit makes every
     // Darkling half-dead, clearing later orb actions (seed 298 Act 3).
     resolve_darklings(combat);
