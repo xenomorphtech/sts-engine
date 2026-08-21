@@ -337,7 +337,10 @@ impl Combat {
     }
 
     pub fn living(&self) -> impl Iterator<Item = (usize, &Monster)> {
-        self.monsters.iter().enumerate().filter(|(_, m)| m.alive())
+        self.monsters
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.alive() && !m.half_dead)
     }
 
     pub fn all_dead(&self) -> bool {
@@ -3845,7 +3848,10 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             monster.hp -= dmg;
             if monster.hp <= 0 {
                 monster.hp = 0;
-                if monster.id == MonsterId::Darkling {
+                if awakened_one_first_death(monster) {
+                    // AwakenedOne.damage leaves the first form half-dead until
+                    // move 3 performs REBIRTH during the monster phase.
+                } else if monster.id == MonsterId::Darkling {
                     // Darkling.damage: only the first lethal hit while !halfDead
                     // sets COUNT. Later AOE must not overwrite REINCARNATE.
                     if !monster.half_dead {
@@ -4066,7 +4072,9 @@ fn deal_thorns_inner(monster: &mut Monster, amount: i32) -> bool {
         monster.hp -= dmg;
         if monster.hp <= 0 {
             monster.hp = 0;
-            if monster.id == MonsterId::Darkling {
+            if awakened_one_first_death(monster) {
+                // See the normal-damage branch above.
+            } else if monster.id == MonsterId::Darkling {
                 monster.half_dead = true;
                 monster.dead = false;
                 monster.powers.clear();
@@ -4081,6 +4089,26 @@ fn deal_thorns_inner(monster: &mut Monster, amount: i32) -> bool {
     }
     maybe_split(monster);
     mugger_died
+}
+
+/// AwakenedOne.damage while the room cannot lose: first-form lethal damage
+/// clears its removable powers and leaves move 3 half-dead for REBIRTH.
+fn awakened_one_first_death(monster: &mut Monster) -> bool {
+    if monster.id != MonsterId::AwakenedOne || monster.extra != 0 || monster.half_dead {
+        return false;
+    }
+    monster.half_dead = true;
+    monster.dead = false;
+    monster.powers.retain(|p| {
+        !power_is_debuff(p.id, p.amount)
+            && !matches!(
+                p.id,
+                PowerId::Curiosity | PowerId::Unawakened | PowerId::Shackled
+            )
+    });
+    monster.set_move(3, Intent::Unknown, 0, 1);
+    monster.first_move = true;
+    true
 }
 
 /// Player-sourced ApplyPowerAction against a monster. SadisticPower observes
@@ -4582,7 +4610,12 @@ pub fn play_owned_card(
             // actions resolve. Once that original ends combat, the queue is
             // no longer advanced, even for cards without an enemy target
             // (seed 384: Dualcast must not evoke the following Frost orb).
-            if combat.all_dead() || combat.force_end_turn {
+            if combat.all_dead()
+                || combat.force_end_turn
+                || combat.monsters.iter().any(|m| {
+                    m.id == MonsterId::AwakenedOne && m.half_dead && m.extra == 0
+                })
+            {
                 break;
             }
             // GameActionManager rejects a queued duplicate whose ENEMY target
