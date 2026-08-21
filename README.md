@@ -66,8 +66,17 @@ Proceed). The engine matches that headless timing.
 cargo test --manifest-path sts-engine/Cargo.toml
 cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-replay -- 2
 cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-bench
+cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-htn -- --seed 0 --count 100 --concurrent 6 --a0
 cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-parity -- --character DEFECT --seed 338612
 ```
+
+`sts-htn --count N` runs `N` consecutive seeds in one process, starting at
+`--seed`, and reports aggregate win rate, floors reached, remaining-monster HP,
+and simulation throughput. `--concurrent N` selects the worker count; `--a0`
+and `--a20` are shortcuts for `--ascension 0` and `--ascension 20`. The
+character defaults to Defect, and the unlock profile is loaded once per batch.
+Pass `--random-seeds` to generate a fresh unique cohort; the reported
+`seed_source` can be supplied later with `--seed-source N` for an exact replay.
 
 `sts-parity` lockstep-replays an ExactTextSim oracle and prints the first
 mismatch with screen, event options, rewards, card-reward list, pending cards,
@@ -119,4 +128,3 @@ transcripts, not “Defect is done” and not a claim that HTN wins Act 4.
 - `Unlocks::fixture()` — captured ExactTextSim profile
 - `Unlocks::all()` — research default; every card and relic is in the pool so
   a seed alone determines the run
-

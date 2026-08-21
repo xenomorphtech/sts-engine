@@ -49,7 +49,10 @@ impl HtnAgent {
                     .cloned()
                     .collect();
                 if nodes.is_empty() {
-                    return legal.iter().find(|a| !matches!(a, Action::Potion { .. })).cloned();
+                    return legal
+                        .iter()
+                        .find(|a| !matches!(a, Action::Potion { .. }))
+                        .cloned();
                 }
                 Some(strategy::map_choice(game, &nodes))
             }
@@ -58,14 +61,22 @@ impl HtnAgent {
             Screen::BossRelic => Some(strategy::boss_relic(game, legal)),
             Screen::Shop => Some(self.enter_shop(game, legal)),
             Screen::Rest => Some(strategy::rest_choice(game, legal)),
-            Screen::Treasure => legal.iter().find(|a| matches!(a, Action::Choose { .. })).cloned(),
+            Screen::Treasure => legal
+                .iter()
+                .find(|a| matches!(a, Action::Choose { .. }))
+                .cloned(),
             Screen::Event | Screen::Neow => Some(strategy::event_choice(game, legal)),
             Screen::HandSelect => Some(strategy::hand_select(game, legal)),
             Screen::Grid => legal
                 .iter()
                 .find(|a| matches!(a, Action::Proceed))
                 .cloned()
-                .or_else(|| legal.iter().find(|a| matches!(a, Action::Choose { .. })).cloned()),
+                .or_else(|| {
+                    legal
+                        .iter()
+                        .find(|a| matches!(a, Action::Choose { .. }))
+                        .cloned()
+                }),
             Screen::ActTransition => Some(Action::Proceed),
             Screen::Terminal => Some(Action::Quit),
         }
@@ -73,16 +84,13 @@ impl HtnAgent {
 
     fn enter_shop(&mut self, game: &Game, legal: &[Action]) -> Action {
         let floor = game.dungeon.floor;
-        if self.visited_shop_floors.contains(&floor) {
-            if let Some(p) = legal.iter().find(|a| matches!(a, Action::Proceed)) {
-                return p.clone();
-            }
-        }
         if let Some(shop) = legal.iter().find(|a| {
             matches!(a, Action::Choose { label: Some(l), .. } if l.eq_ignore_ascii_case("shop"))
         }) {
-            self.visited_shop_floors.push(floor);
-            return shop.clone();
+            if !self.visited_shop_floors.contains(&floor) {
+                self.visited_shop_floors.push(floor);
+                return shop.clone();
+            }
         }
         strategy::shop_choice(game, legal)
     }
@@ -111,8 +119,15 @@ impl HtnAgent {
 }
 
 fn find_potion(legal: &[Action], want: &[PotionId]) -> Option<Action> {
-    legal.iter().find(|a| match a {
-        Action::Potion { action: PotionOp::Use, .. } => true,
-        _ => false,
-    }).filter(|_| !want.is_empty()).cloned()
+    legal
+        .iter()
+        .find(|a| match a {
+            Action::Potion {
+                action: PotionOp::Use,
+                ..
+            } => true,
+            _ => false,
+        })
+        .filter(|_| !want.is_empty())
+        .cloned()
 }

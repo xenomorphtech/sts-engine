@@ -3968,7 +3968,7 @@ pub fn play_card(
 /// Java `AbstractCard.canUse` for STATUS/CURSE with cost -2 (Dazed, Wound, Burn).
 /// PlayTopCard still queues them; GameActionManager then skips onUseCard/Hex/InkBottle
 /// and UseCardAction discards (ethereal does not exhaust on this path).
-fn status_or_curse_unplayable(card: &Card, player: &Player) -> bool {
+pub(crate) fn status_or_curse_unplayable(card: &Card, player: &Player) -> bool {
     if card.card_type() == CardType::STATUS && card.cost_for_turn < -1 {
         !player.has_relic(RelicId::Medical_Kit)
     } else if card.card_type() == CardType::CURSE && card.cost_for_turn < -1 {
@@ -3998,6 +3998,25 @@ pub fn play_owned_card(
         }
         flush_dark_embrace(player, combat, rng);
         return false;
+    }
+    if card.cost_for_turn < -1
+        && ((card.card_type() == CardType::STATUS && player.has_relic(RelicId::Medical_Kit))
+            || (card.card_type() == CardType::CURSE && player.has_relic(RelicId::Blue_Candle)))
+    {
+        // Medical Kit / Blue Candle set exhaustOnUseOnce on otherwise
+        // unplayable cards. Without this, Hex + Unceasing Top can cycle a
+        // playable Dazed forever between hand and discard.
+        card.exhaust = true;
+        if card.card_type() == CardType::CURSE {
+            let damage = buffer_absorb(player, intangible_player(player, 1));
+            let damage = on_lose_hp_last(player, damage);
+            if damage > 0 {
+                player.hp = (player.hp - damage).max(0);
+                let _ = try_cheat_death(player);
+                red_skull_on_hp_change(player);
+                centennial_puzzle_was_hp_lost(player, rng);
+            }
+        }
     }
     let cost = if card.free_to_play_once || card.cost_for_turn < 0 {
         0
@@ -4037,6 +4056,7 @@ pub fn play_owned_card(
     combat.need_skill_from_deck = false;
     combat.skill_from_deck.clear();
     combat.draw_after_exhaust = 0;
+    let mut rebound_card = false;
     let needs_select = (card.id == CardId::Armaments && !card.upgraded && !player.hand.is_empty())
         || (card.id == CardId::True_Grit && card.upgraded && !player.hand.is_empty())
         || card.id == CardId::Thinking_Ahead
@@ -4054,6 +4074,10 @@ pub fn play_owned_card(
     let mut all_for_one_after_original = Vec::new();
     let mut gremlin_horn_after_original = 0;
     for play_i in 0..plays {
+        // ReboundPower is applied by Rebound's queued card effect before
+        // onAfterUseCard. Snapshot the power that existed before this play so
+        // a newly played Rebound does not rebound itself; a later card does.
+        let rebound_before_play = player.power_amount(PowerId::Rebound) > 0;
         if play_i > 0 {
             card.free_to_play_once = true;
         }
@@ -4137,6 +4161,15 @@ pub fn play_owned_card(
             dungeon,
             defer_ftl_damage,
         );
+        if rebound_before_play {
+            if card.card_type() != CardType::POWER {
+                rebound_card = true;
+            }
+            if let Some(power) = player.powers.iter_mut().find(|p| p.id == PowerId::Rebound) {
+                power.amount -= 1;
+            }
+            player.powers.retain(|p| p.id != PowerId::Rebound || p.amount > 0);
+        }
         // OrangePellets.onUseCard adds RemoveDebuffsAction to the bottom,
         // behind the completing card's use() actions (seed 118 Defragment).
         if orange_pellets_after_card {
@@ -4333,6 +4366,8 @@ pub fn play_owned_card(
             original.free_to_play_once = false;
             if original.exhaust {
                 exhaust_card(player, combat, original, rng);
+            } else if rebound_card {
+                player.draw.push(original);
             } else {
                 player.discard.push(original);
             }
@@ -4373,6 +4408,8 @@ pub fn play_owned_card(
         // The original already reached its pile before the queued copy.
     } else if card.exhaust {
         exhaust_card(player, combat, card, rng);
+    } else if rebound_card {
+        player.draw.push(card);
     } else if card.card_type() != CardType::POWER {
         player.discard.push(card);
     }
@@ -4987,6 +5024,14 @@ fn apply_card_effect(
         CardId::Biased_Cognition => {
             player.add_power(PowerId::Focus, card.base_magic.max(4) as i32);
             player.add_power(PowerId::Bias, 1);
+        }
+        CardId::Rebound => {
+            if let Some(i) = target {
+                if let Some(m) = combat.monsters.get_mut(i) {
+                    damage_monster(m, player, rng, dmg, 1);
+                }
+            }
+            player.add_power(PowerId::Rebound, 1);
         }
         CardId::Glacier => {
             if block > 0 {
@@ -5854,6 +5899,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // is then discarded with the rest of the hand (seed 906 AcidSlime_M).
     let dead_before_orbs = combat.monsters.iter().filter(|m| m.dead).count();
     apply_orb_passives(player, combat, rng);
+    // StasisPower.onDeath adds its MakeTempCard action behind the already
+    // queued orb passives, but before AbstractRoom can enqueue the end-turn
+    // discard. Return every card killed by this orb batch now so it is
+    // discarded and reshuffled with the old hand (seed 910 Electrodynamics).
+    flush_pending_stasis(player, combat);
     flush_hand_drill(player, combat, rng);
     gremlin_horn_on_kills(player, combat, rng, dead_before_orbs);
     flush_spore_cloud(player, combat);
@@ -6812,16 +6862,23 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
             return;
         }
         for i in alive {
+            let mut stasis_card = None;
             if let Some(m) = combat.monsters.get_mut(i) {
                 let amt = apply_lock_on(m, amount);
                 let block_before = m.block;
                 deal_thorns(m, rng, amt);
+                if m.dead {
+                    stasis_card = m.stasis_card.take();
+                }
                 if player.is_some_and(|p| p.has_relic(RelicId::HandDrill))
                     && block_before > 0
                     && m.block == 0
                 {
                     m.pending_hand_drill += 1;
                 }
+            }
+            if let Some(card) = stasis_card {
+                combat.pending_stasis_cards.push(card);
             }
         }
         return;
@@ -6833,16 +6890,23 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     if amount <= 0 {
         return;
     }
+    let mut stasis_card = None;
     if let Some(m) = combat.monsters.get_mut(alive[pick]) {
         let amt = apply_lock_on(m, amount);
         let block_before = m.block;
         deal_thorns(m, rng, amt);
+        if m.dead {
+            stasis_card = m.stasis_card.take();
+        }
         if player.is_some_and(|p| p.has_relic(RelicId::HandDrill))
             && block_before > 0
             && m.block == 0
         {
             m.pending_hand_drill += 1;
         }
+    }
+    if let Some(card) = stasis_card {
+        combat.pending_stasis_cards.push(card);
     }
 }
 

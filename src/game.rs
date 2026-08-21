@@ -374,12 +374,31 @@ impl Game {
         game
     }
 
+    pub fn has_ruby_key(&self) -> bool {
+        self.has_ruby_key
+    }
+
+    pub fn has_emerald_key(&self) -> bool {
+        self.has_emerald_key
+    }
+
+    pub fn has_sapphire_key(&self) -> bool {
+        self.has_sapphire_key
+    }
+
+    pub fn final_act_available(&self) -> bool {
+        self.final_act_available
+    }
+
     pub fn legal_actions(&self) -> Vec<Action> {
         let mut actions = Vec::new();
         match self.screen {
             Screen::Combat => {
                 if let Some(combat) = &self.combat {
                     for (i, card) in self.player.hand.iter().enumerate() {
+                        if crate::combat::status_or_curse_unplayable(card, &self.player) {
+                            continue;
+                        }
                         if card.cost_for_turn > self.player.energy as i16 && card.cost_for_turn >= 0 {
                             continue;
                         }
@@ -445,23 +464,77 @@ impl Game {
                 }
             }
             Screen::Rest => {
-                for (i, kind) in self.campfire_options().into_iter().enumerate() {
+                if self.rest_smithing {
+                    if self.rest_smith_picked {
+                        actions.push(Action::Proceed);
+                    } else {
+                        for (i, card) in self.player.deck.iter().filter(|card| card.can_upgrade()).enumerate() {
+                            actions.push(Action::Choose {
+                                index: i,
+                                label: Some(card.sts_id().to_string()),
+                                x: None,
+                                y: None,
+                                room: None,
+                            });
+                        }
+                        if actions.is_empty() {
+                            actions.push(Action::Proceed);
+                        }
+                    }
+                } else if self.rest_selected {
+                    actions.push(Action::Proceed);
+                } else {
+                    for (i, kind) in self.campfire_options().into_iter().enumerate() {
+                        actions.push(Action::Choose {
+                            index: i,
+                            label: Some(kind.into()),
+                            x: None,
+                            y: None,
+                            room: None,
+                        });
+                    }
+                }
+            }
+            Screen::Shop => {
+                if !self.shop.open {
                     actions.push(Action::Choose {
-                        index: i,
-                        label: Some(kind.into()),
+                        index: 0,
+                        label: Some("shop".into()),
                         x: None,
                         y: None,
                         room: None,
                     });
+                } else {
+                    for (index, kind) in self.shop_affordable().into_iter().enumerate() {
+                        let label = match kind {
+                            ShopKind::Purge => Some("purge".to_string()),
+                            ShopKind::Card(i) => {
+                                self.shop.cards.get(i).map(|offer| offer.item.sts_id().to_string())
+                            }
+                            ShopKind::Relic(i) => {
+                                self.shop.relics.get(i).map(|offer| offer.item.sts_id().to_string())
+                            }
+                            ShopKind::Potion(i) => {
+                                self.shop.potions.get(i).map(|offer| offer.item.sts_id().to_string())
+                            }
+                        };
+                        actions.push(Action::Choose {
+                            index,
+                            label,
+                            x: None,
+                            y: None,
+                            room: None,
+                        });
+                    }
                 }
+                actions.push(Action::Proceed);
             }
-            Screen::Neow | Screen::Event | Screen::Treasure | Screen::BossRelic | Screen::Shop => {
+            Screen::Neow | Screen::Event | Screen::Treasure | Screen::BossRelic => {
                 let n = match self.screen {
                     Screen::Neow => self.neow_options.len(),
                     Screen::Event => self.event.as_ref().map(|e| e.options.len()).unwrap_or(0),
                     Screen::Treasure => 1,
                     Screen::BossRelic => self.boss_relics.len() + 1,
-                    Screen::Shop => 1,
                     _ => 0,
                 };
                 for i in 0..n {
@@ -470,7 +543,6 @@ impl Game {
                         Screen::Event => self.event.as_ref().and_then(|e| e.options.get(i).cloned()),
                         Screen::Treasure => Some("open".into()),
                         Screen::BossRelic => self.boss_relics.get(i).map(|r| r.sts_id().to_string()),
-                        Screen::Shop => Some("shop".into()),
                         _ => None,
                     };
                     actions.push(Action::Choose {
@@ -481,7 +553,7 @@ impl Game {
                         room: None,
                     });
                 }
-                if self.screen == Screen::Shop || self.screen == Screen::BossRelic {
+                if self.screen == Screen::BossRelic {
                     actions.push(Action::Proceed);
                 }
             }
@@ -493,6 +565,9 @@ impl Game {
                     } else {
                         let cards = self.grid_card_indices(grid.kind);
                         for (i, &pile_i) in cards.iter().enumerate() {
+                            if grid.picked.contains(&pile_i) {
+                                continue;
+                            }
                             let label = match grid.kind {
                                 GridKind::DiscardToHand => {
                                     self.player.discard.get(pile_i).map(|c| c.sts_id().to_string())
@@ -2940,6 +3015,7 @@ impl Game {
                         }
                     }
                     Some("Smith") => {
+                        self.rest_selected = true;
                         self.rest_smithing = true;
                         self.rest_smith_picked = false;
                     }
