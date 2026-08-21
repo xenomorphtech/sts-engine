@@ -3712,6 +3712,38 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
     }
 }
 
+fn pen_nib_on_attack(player: &mut Player) {
+    player.powers.retain(|p| p.id != PowerId::PenNib);
+    let apply_pen_nib = if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Pen_Nib)
+    {
+        r.counter += 1;
+        if r.counter == 10 {
+            r.counter = 0;
+            false
+        } else {
+            r.counter == 9
+        }
+    } else {
+        false
+    };
+    if apply_pen_nib {
+        player.add_power(PowerId::PenNib, 1);
+    }
+}
+
+fn shuriken_on_attack(player: &mut Player) {
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
+        if r.counter < 0 {
+            r.counter = 0;
+        }
+        r.counter += 1;
+        if r.counter % 3 == 0 {
+            r.counter = 0;
+            player.add_power(PowerId::Strength, 1);
+        }
+    }
+}
+
 fn add_to_random_spot(pile: &mut Vec<Card>, card: Card, rng: &mut RngSet) {
     if pile.is_empty() {
         pile.push(card);
@@ -3976,21 +4008,11 @@ pub fn play_owned_card(
             // powers — all addToBot after card.use(). Ornamental Fan GainBlock
             // therefore lands before Sharp Hide THORNS (seed 872 Cold Snap:
             // 4 block then hide 3 → hp 58 block 1, not hp 55 block 4).
-            player.powers.retain(|p| p.id != PowerId::PenNib);
-            let apply_pen_nib = if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Pen_Nib)
-            {
-                r.counter += 1;
-                if r.counter == 10 {
-                    r.counter = 0;
-                    false
-                } else {
-                    r.counter == 9
-                }
-            } else {
-                false
-            };
-            if apply_pen_nib {
-                player.add_power(PowerId::PenNib, 1);
+            // FTL's DamageInfo is calculated before these onUseCard hooks.
+            // Its deferred hit behind Sharp Hide must therefore use the old
+            // Pen Nib/Strength state, not powers granted by this same attack.
+            if !defer_ftl_damage {
+                pen_nib_on_attack(player);
             }
             if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
                 if r.counter < 0 {
@@ -4002,15 +4024,8 @@ pub fn play_owned_card(
                     player.add_power(PowerId::Dexterity, 1);
                 }
             }
-            if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
-                if r.counter < 0 {
-                    r.counter = 0;
-                }
-                r.counter += 1;
-                if r.counter % 3 == 0 {
-                    r.counter = 0;
-                    player.add_power(PowerId::Strength, 1);
-                }
+            if !defer_ftl_damage {
+                shuriken_on_attack(player);
             }
             if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Nunchaku) {
                 if r.counter < 0 {
@@ -4071,6 +4086,10 @@ pub fn play_owned_card(
                         }
                     }
                 }
+            }
+            if defer_ftl_damage {
+                pen_nib_on_attack(player);
+                shuriken_on_attack(player);
             }
         }
         combat.cards_played_this_turn += 1;
