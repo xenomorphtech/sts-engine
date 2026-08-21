@@ -217,12 +217,20 @@ pub fn reward_cards(
     n: usize,
     boss: bool,
     elite: bool,
+    shop: bool,
     upgrade_chance: f32,
     player: &Player,
 ) -> Vec<Card> {
     let mut out = Vec::new();
     // MonsterRoom: rare 3 / uncommon 37. MonsterRoomElite: rare 10 / uncommon 40.
-    let (rare_cut, uncommon_cut) = if elite { (10, 50) } else { (3, 40) };
+    // ShopRoom overrides the rare chance to 9 while retaining uncommon 37.
+    let (rare_cut, uncommon_cut) = if elite {
+        (10, 50)
+    } else if shop {
+        (9, 46)
+    } else {
+        (3, 40)
+    };
     for _ in 0..n {
         let mut roll = rng.card.random_int(99);
         roll += *blizz;

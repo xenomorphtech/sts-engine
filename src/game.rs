@@ -2567,6 +2567,7 @@ impl Game {
     fn generate_card_reward(&mut self) {
         let boss = self.current_room == RoomType::Boss;
         let elite = self.current_room == RoomType::Elite;
+        let shop = self.current_room == RoomType::Shop;
         // TheCity: A12+ 0.125 else 0.25. TheBeyond/TheEnding: A12+ 0.25 else 0.5.
         let upgrade_chance = match self.dungeon.act {
             crate::ids::Act::Exordium => 0.0,
@@ -2601,6 +2602,7 @@ impl Game {
             n.max(0) as usize,
             boss,
             elite,
+            shop,
             upgrade_chance,
             &self.player,
         );

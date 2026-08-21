@@ -2766,6 +2766,24 @@ fn sacred_bark_doubles_speed_potion() {
 }
 
 #[test]
+fn orrery_uses_shop_room_card_rarity_odds() {
+    // 43: Orrery's fifth reward is rolled while the current room is ShopRoom.
+    // Adjusted roll 40 is uncommon under ShopRoom's 9/37 odds, producing FTL.
+    let cfg = default_config(Character::Defect, "43", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 347,
+                "43 still uses hallway rarity odds in the shop last_ok={} want > 347: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
