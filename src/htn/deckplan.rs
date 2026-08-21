@@ -1,6 +1,6 @@
 use crate::card::Card;
 use crate::game::Game;
-use crate::ids::{CardId, CardType, RelicId};
+use crate::ids::{Act, CardId, CardType, RelicId};
 
 /// Long-lived deck-building tasks shared by rewards, shops, and boss relics.
 /// Acquisitions are valued as package components rather than in isolation.
@@ -12,6 +12,7 @@ enum DeckTask {
     ScalePowers,
     ExploitZeroCost,
     FundExpensiveCards,
+    PrepareForBoss,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -24,6 +25,7 @@ struct DeckProfile {
     frost: i32,
     lightning: i32,
     dark: i32,
+    aoe: i32,
     focus: i32,
     orb_slots: i32,
     zero_cost: i32,
@@ -64,6 +66,7 @@ impl DeckProfile {
         self.frost += i32::from(is_frost_source(card.id));
         self.lightning += i32::from(is_lightning_source(card.id));
         self.dark += i32::from(is_dark_source(card.id));
+        self.aoe += i32::from(is_aoe_source(card.id));
         self.focus += i32::from(matches!(
             card.id,
             CardId::Defragment | CardId::Biased_Cognition
@@ -132,6 +135,9 @@ impl<'a> DeckPlan<'a> {
             || self.has(RelicId::Snecko_Eye)
         {
             tasks.push(DeckTask::FundExpensiveCards);
+        }
+        if self.game.dungeon.act == Act::City {
+            tasks.push(DeckTask::PrepareForBoss);
         }
         tasks
     }
@@ -227,6 +233,42 @@ impl<'a> DeckPlan<'a> {
                     0
                 }
             }
+            DeckTask::PrepareForBoss => self.boss_card_value(card.id),
+        }
+    }
+
+    fn boss_card_value(&self, id: CardId) -> i32 {
+        let p = self.profile;
+        match self.game.dungeon.boss.as_str() {
+            "Collector" => {
+                let missing_aoe = (2 - p.aoe).max(0);
+                match id {
+                    CardId::Electrodynamics => 45 * missing_aoe,
+                    CardId::Hyperbeam => 30 * missing_aoe,
+                    CardId::Sweeping_Beam => 24 * missing_aoe,
+                    CardId::Doom_and_Gloom => 18 * missing_aoe,
+                    CardId::Chill => 20 * missing_aoe,
+                    _ => 0,
+                }
+            }
+            "Automaton" => match id {
+                CardId::Buffer => 75,
+                CardId::Reinforced_Body => 35,
+                CardId::Glacier => 25,
+                CardId::BootSequence => 20,
+                CardId::Doom_and_Gloom | CardId::Darkness => 25,
+                CardId::Echo_Form => 30,
+                _ => 0,
+            },
+            "Champ" => match id {
+                CardId::Echo_Form => 50,
+                CardId::Defragment => 30,
+                CardId::Doom_and_Gloom | CardId::Darkness => 35,
+                CardId::Loop | CardId::Creative_AI => 25,
+                CardId::Biased_Cognition => 20,
+                _ => 0,
+            },
+            _ => 0,
         }
     }
 
@@ -395,6 +437,18 @@ fn is_channel(id: CardId) -> bool {
     )
 }
 
+fn is_aoe_source(id: CardId) -> bool {
+    matches!(
+        id,
+        CardId::Electrodynamics
+            | CardId::Hyperbeam
+            | CardId::Sweeping_Beam
+            | CardId::Doom_and_Gloom
+            | CardId::Blizzard
+            | CardId::Chill
+    )
+}
+
 fn is_frost_source(id: CardId) -> bool {
     matches!(
         id,
@@ -506,5 +560,16 @@ mod tests {
         game.player.deck.push(Card::new(CardId::Doom_and_Gloom));
         game.player.deck.push(Card::new(CardId::Defragment));
         assert!(shop_purge_value(&game) > early + 80);
+    }
+
+    #[test]
+    fn known_act_two_boss_changes_the_acquisition_task() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        let electrodynamics = Card::new(CardId::Electrodynamics);
+        game.dungeon.boss = "Champ".into();
+        let champ = card_adjustment(&game, &electrodynamics);
+        game.dungeon.boss = "Collector".into();
+        assert!(card_adjustment(&game, &electrodynamics) >= champ + 90);
     }
 }

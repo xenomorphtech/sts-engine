@@ -97,3 +97,6 @@ single-acquisition cohorts below and are not numerically comparable to the old
 | Upgrade Fission and Biased Cognition below the proven core | replay source `1787318856394675018` | 9.00% (45/500) | 30.36 | 9.60% (48/500) | 30.42 | 0 | advanced after independent improvement |
 | Upgrade Fission and Biased Cognition below the proven core | fresh source `1787322079969279673` | 6.40% (32/500) | 30.15 | 6.20% (31/500) | 30.00 | 0 | rejected: one fewer win and lower mean floor |
 | Raise Act 2 rest thresholds to 88%, and 90% near its boss | fixed source `1787315208666760241` | 8.60% (43/500) | 30.58 | 7.80% (39/500) | 30.49 | 0 | rejected before fresh testing; extra health did not offset displaced upgrades |
+| Add a known-Act-2-boss acquisition task | fixed source `1787315208666760241` | 8.60% (43/500) | 30.58 | 8.80% (44/500) | 30.78 | 0 | advanced after improving wins and depth |
+| Add a known-Act-2-boss acquisition task | replay source `1787318856394675018` | 9.00% (45/500) | 30.36 | 9.00% (45/500) | 30.35 | 0 | neutral wins with a 0.01 mean-floor tradeoff |
+| Add a known-Act-2-boss acquisition task | fresh source `1787322574873510016` | 7.20% (36/500) | 30.81 | 7.40% (37/500) | 30.74 | 0 | accepted; one more win with a 0.07 mean-floor tradeoff |
