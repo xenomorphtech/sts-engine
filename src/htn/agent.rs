@@ -66,7 +66,7 @@ impl HtnAgent {
                 .find(|a| matches!(a, Action::Proceed))
                 .cloned()
                 .or_else(|| legal.iter().find(|a| matches!(a, Action::Choose { .. })).cloned()),
-            Screen::ActTransition => Some(Action::Proceed),
+            Screen::DoorUnlock | Screen::ActTransition => Some(Action::Proceed),
             Screen::Terminal => Some(Action::Quit),
         }
     }

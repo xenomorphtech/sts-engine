@@ -22,6 +22,7 @@ pub enum Screen {
     Shop,
     HandSelect,
     Grid,
+    DoorUnlock,
     ActTransition,
     Terminal,
 }
@@ -607,7 +608,7 @@ impl Game {
                 }
                 actions.push(Action::Proceed);
             }
-            Screen::ActTransition | Screen::Terminal => {
+            Screen::DoorUnlock | Screen::ActTransition | Screen::Terminal => {
                 actions.push(Action::Proceed);
             }
         }
@@ -696,6 +697,11 @@ impl Game {
             Screen::Shop => self.step_shop(action),
             Screen::HandSelect => self.step_hand_select(action),
             Screen::Grid => self.step_grid(action),
+            Screen::DoorUnlock => {
+                if matches!(action, Action::Proceed) {
+                    self.begin_next_act();
+                }
+            }
             Screen::ActTransition => {
                 self.done = true;
                 self.screen = Screen::Terminal;
@@ -2660,9 +2666,25 @@ impl Game {
                     self.reset_player_between_rooms();
                     self.dungeon.floor += 1;
                     self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
-                    self.screen = Screen::Treasure;
-                    self.current_room = RoomType::BossTreasure;
-                    // TreasureRoomBoss is a real onEnterRoom (seed 683 MawBank +12).
+                    if self.dungeon.act == crate::ids::Act::Beyond {
+                        self.current_room = RoomType::Victory;
+                        self.event = Some(EventState {
+                            id: "SpireHeart".into(),
+                            screen: 0,
+                            options: vec!["[Continue]".into()],
+                            data: Vec::new(),
+                            library_cards: Vec::new(),
+                            match_cards: Vec::new(),
+                            match_chosen: None,
+                            match_attempts: 0,
+                        });
+                        self.screen = Screen::Event;
+                    } else {
+                        self.screen = Screen::Treasure;
+                        self.current_room = RoomType::BossTreasure;
+                    }
+                    // Both destination rooms are real room entries (seed 683
+                    // TreasureRoomBoss MawBank +12; Beyond's VictoryRoom too).
                     self.maw_bank_on_enter_room();
                 } else if self.current_room == RoomType::BossTreasure {
                     // TinyHouse.onEquip CombatRewardScreen overlay: Proceed
@@ -3456,7 +3478,7 @@ impl Game {
             self.final_act_available && !self.has_emerald_key,
         );
         self.screen = Screen::Map;
-        self.done = next == crate::ids::Act::Ending && self.dungeon.act == crate::ids::Act::Ending;
+        self.done = false;
     }
 
     fn start_combat_encounter(&mut self, encounter: EncounterId) {
@@ -4444,6 +4466,48 @@ impl Game {
                 return;
             }
         };
+        if id == "SpireHeart" {
+            match screen {
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec!["[Attack] #b???".into()];
+                    }
+                }
+                1 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Continue]".into()];
+                    }
+                }
+                2 => {
+                    let go_to_ending = self.final_act_available
+                        && self.has_ruby_key
+                        && self.has_emerald_key
+                        && self.has_sapphire_key;
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = if go_to_ending { 4 } else { 3 };
+                        event.options = vec![if go_to_ending {
+                            "[Approach Door]".into()
+                        } else {
+                            "[Continue]".into()
+                        }];
+                    }
+                }
+                3 => {
+                    self.done = true;
+                    self.screen = Screen::Terminal;
+                }
+                4 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.options.clear();
+                    }
+                    self.screen = Screen::DoorUnlock;
+                }
+                _ => {}
+            }
+            return;
+        }
         if id == "Tomb of Lord Red Mask" && screen == 0 && *index == 1 {
             // TombRedMask INTRO's third raw button is Leave. ChoiceDriver
             // omits the disabled first button when the player has no mask, so

@@ -112,6 +112,7 @@ pub enum RoomType {
     Treasure,
     Boss,
     BossTreasure,
+    Victory,
     Neow,
     Empty,
 }
@@ -127,6 +128,7 @@ impl RoomType {
             RoomType::Treasure => "com.megacrit.cardcrawl.rooms.TreasureRoom",
             RoomType::Boss => "com.megacrit.cardcrawl.rooms.MonsterRoomBoss",
             RoomType::BossTreasure => "com.megacrit.cardcrawl.rooms.TreasureRoomBoss",
+            RoomType::Victory => "com.megacrit.cardcrawl.rooms.VictoryRoom",
             RoomType::Neow => "com.megacrit.cardcrawl.neow.NeowRoom",
             RoomType::Empty => "com.megacrit.cardcrawl.rooms.EmptyRoom",
         }
@@ -142,6 +144,7 @@ impl RoomType {
             RoomType::Treasure => "TreasureRoom",
             RoomType::Boss => "MonsterRoomBoss",
             RoomType::BossTreasure => "TreasureRoomBoss",
+            RoomType::Victory => "VictoryRoom",
             RoomType::Neow => "NeowRoom",
             RoomType::Empty => "EmptyRoom",
         }
