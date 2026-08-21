@@ -2363,6 +2363,25 @@ fn sacred_bark_doubles_block_potion() {
 }
 
 #[test]
+fn slavers_collar_temporarily_increases_energy_in_elite_combat() {
+    // 382: Slaver's Collar supplies a fourth energy in the Slavers elite
+    // fight. After Defragment, Multi-Cast therefore evokes Lightning three
+    // times and kills both outer slavers.
+    let cfg = default_config(Character::Defect, "382", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 247,
+                "382 still misses Slaver's Collar energy last_ok={} want > 247: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

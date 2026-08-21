@@ -2087,6 +2087,13 @@ impl Game {
                     .sum()
             })
             .unwrap_or(0);
+        if self
+            .combat
+            .as_ref()
+            .is_some_and(|combat| combat.slavers_collar_active)
+        {
+            self.player.energy_master -= 1;
+        }
         after_combat_relics(&mut self.player);
         let event_room = self.current_room == RoomType::Event;
         // MonsterGroup.haveMonstersEscaped: true only if every monster

@@ -41,6 +41,9 @@ pub struct Combat {
     /// reuse this (CardQueueItem(tmp, m, card.energyOnUse)) even after the
     /// original spent the energy (seed 991 Tempest x2).
     pub energy_on_use: i32,
+    /// SlaversCollar.beforeEnergyPrep temporarily raises energyMaster for an
+    /// elite or boss combat; onVictory restores it.
+    pub slavers_collar_active: bool,
 }
 
 impl Combat {
@@ -55,6 +58,11 @@ impl Combat {
         rng.reset_floor_streams(seed, floor);
         let mut monsters = spawn_encounter(encounter, rng, ascension);
         apply_encounter_misc(encounter, rng);
+        let slavers_collar_active = player.has_relic(RelicId::SlaversCollar)
+            && (is_elite_encounter(encounter) || is_boss_encounter(encounter));
+        if slavers_collar_active {
+            player.energy_master += 1;
+        }
 
         if player.has_relic(RelicId::PreservedInsect) && is_elite_encounter(encounter) {
             for m in &mut monsters {
@@ -293,6 +301,7 @@ impl Combat {
             ascension,
             orbs_channeled_this_combat: channeled,
             energy_on_use: -1,
+            slavers_collar_active,
         };
         gremlin_horn_on_kills(player, &mut combat, rng, dead_before_hourglass);
         combat
