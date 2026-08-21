@@ -12,6 +12,8 @@ pub struct Combat {
     pub monsters: Vec<Monster>,
     pub turn: i32,
     pub cards_played_this_turn: i32,
+    /// TimeWarpPower.callEndTurnEarlySequence after the twelfth card.
+    pub force_end_turn: bool,
     pub skills_this_turn: i32,
     pub attacks_this_turn: i32,
     /// OrangePellets ATTACK/SKILL/POWER flags for the current trigger cycle.
@@ -301,6 +303,7 @@ impl Combat {
             monsters,
             turn: 1,
             cards_played_this_turn: 0,
+            force_end_turn: false,
             skills_this_turn: 0,
             attacks_this_turn: 0,
             orange_pellets_mask: 0,
@@ -367,6 +370,7 @@ fn is_boss_encounter(id: EncounterId) -> bool {
             | EncounterId::SlimeBoss
             | EncounterId::Automaton
             | EncounterId::AwakenedOne
+            | EncounterId::TimeEater
             | EncounterId::Champ
             | EncounterId::Collector
             | EncounterId::DonuAndDeca
@@ -479,6 +483,9 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
             monster.add_power(PowerId::Curiosity, 1);
             monster.add_power(PowerId::Unawakened, -1);
         }
+        // TimeWarpPower's visible amount is stored in `extra`; zero-value
+        // powers are otherwise discarded by the compact power model.
+        MonsterId::TimeEater => monster.extra = 0,
         MonsterId::OrbWalker => {
             monster.add_power(
                 PowerId::StrengthUp,
@@ -1053,6 +1060,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
             }
         }
         MonsterId::AwakenedOne => (300, 300),
+        MonsterId::TimeEater => {
+            if a9 {
+                (480, 480)
+            } else {
+                (456, 456)
+            }
+        }
         MonsterId::Snecko => {
             if a7 {
                 (120, 125)
@@ -1742,6 +1756,35 @@ impl Monster {
                     self.set_move(1, Intent::Attack, tackle, 1);
                 }
             }
+            MonsterId::TimeEater => {
+                let reverb = if self.ascension >= 4 { 8 } else { 7 };
+                let head_slam = if self.ascension >= 4 { 32 } else { 26 };
+                // split_triggered mirrors usedHaste.
+                if self.hp < self.max_hp / 2 && !self.split_triggered {
+                    self.split_triggered = true;
+                    self.set_move(5, Intent::Buff, 0, 1);
+                } else if num < 45 {
+                    if !self.last_two(2) {
+                        self.set_move(2, Intent::Attack, reverb, 3);
+                    } else {
+                        let reroll = rng.ai.random_range(50, 99);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    }
+                } else if num < 80 {
+                    if !self.last_move(4) {
+                        self.set_move(4, Intent::AttackDebuff, head_slam, 1);
+                    } else if rng.ai.random_boolean_chance(0.66) {
+                        self.set_move(2, Intent::Attack, reverb, 3);
+                    } else {
+                        self.set_move(3, Intent::DefendDebuff, 0, 1);
+                    }
+                } else if !self.last_move(3) {
+                    self.set_move(3, Intent::DefendDebuff, 0, 1);
+                } else {
+                    let reroll = rng.ai.random_int(74);
+                    self.get_move(reroll, rng, missing_hp, allies, index);
+                }
+            }
             MonsterId::AwakenedOne => {
                 if self.extra == 0 {
                     if self.first_move {
@@ -2376,6 +2419,37 @@ impl Monster {
             }
             (MonsterId::AwakenedOne, 8) => {
                 let _ = hit_player(player, self, rng, 10, 3);
+            }
+            (MonsterId::TimeEater, 2) => {
+                let damage = if ascension >= 4 { 8 } else { 7 };
+                let _ = hit_player(player, self, rng, damage, 3);
+            }
+            (MonsterId::TimeEater, 3) => {
+                self.block += 20;
+                player.add_power_from_monster(PowerId::Vulnerable, 1);
+                player.add_power_from_monster(PowerId::Weak, 1);
+                if ascension >= 19 {
+                    player.add_power_from_monster(PowerId::Frail, 1);
+                }
+            }
+            (MonsterId::TimeEater, 4) => {
+                let damage = if ascension >= 4 { 32 } else { 26 };
+                let _ = hit_player(player, self, rng, damage, 1);
+                player.add_power_from_monster(PowerId::NoDraw, 1);
+                if ascension >= 19 {
+                    player.discard.push(Card::new(CardId::Slimed));
+                    player.discard.push(Card::new(CardId::Slimed));
+                }
+            }
+            (MonsterId::TimeEater, 5) => {
+                self.powers.retain(|p| !power_is_debuff(p.id, p.amount));
+                let target_hp = self.max_hp / 2;
+                if self.hp < target_hp {
+                    self.hp = target_hp;
+                }
+                if ascension >= 19 {
+                    self.block += if ascension >= 4 { 32 } else { 26 };
+                }
             }
             (MonsterId::SlaverBlue, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 13 } else { 12 }, 1);
@@ -4470,7 +4544,7 @@ pub fn play_owned_card(
             // actions resolve. Once that original ends combat, the queue is
             // no longer advanced, even for cards without an enemy target
             // (seed 384: Dualcast must not evoke the following Frost orb).
-            if combat.all_dead() {
+            if combat.all_dead() || combat.force_end_turn {
                 break;
             }
             // GameActionManager rejects a queued duplicate whose ENEMY target
@@ -4758,6 +4832,25 @@ pub fn play_owned_card(
             }
         }
         combat.cards_played_this_turn += 1;
+        // TimeWarpPower.onAfterUseCard: the twelfth UseCardAction clears the
+        // remaining card queue, ends the player turn, and queues Strength 2
+        // for Time Eater. `extra` is its zero-based visible counter.
+        let mut time_warp = false;
+        if let Some(monster) = combat
+            .monsters
+            .iter_mut()
+            .find(|m| m.id == MonsterId::TimeEater && m.alive())
+        {
+            monster.extra += 1;
+            if monster.extra == 12 {
+                monster.extra = 0;
+                monster.add_power(PowerId::Strength, 2);
+                time_warp = true;
+            }
+        }
+        if time_warp {
+            combat.force_end_turn = true;
+        }
         if card.card_type() == CardType::POWER {
             // ForceField.triggerOnCardPlayed: UseCardAction walks hand,
             // discard, and draw. updateCost(-1) per Power played.

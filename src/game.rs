@@ -1772,6 +1772,15 @@ impl Game {
                         &mut self.rng,
                         Some(&self.dungeon),
                     );
+                    if combat.force_end_turn && self.player.hp > 0 && !combat.all_dead() {
+                        combat.force_end_turn = false;
+                        combat::end_turn(
+                            &mut self.player,
+                            combat,
+                            &mut self.rng,
+                            Some(&self.dungeon),
+                        );
+                    }
                     // Player death wins a simultaneous-death race. A card's
                     // queued hits can finish the enemy after reactive damage
                     // has already killed the player (seed 760 Rip and Tear
