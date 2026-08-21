@@ -3082,8 +3082,13 @@ impl Monster {
             }
             (MonsterId::Dagger, 2) => {
                 let _ = hit_player(player, self, rng, 25, 1);
-                self.hp = 0;
-                self.dead = true;
+                // SnakeDagger queues LoseHPAction after its DamageAction.
+                // A terminal hit stops the action manager with that self-hit
+                // still pending (seed 883), while a revive lets it resolve.
+                if player.hp > 0 {
+                    self.hp = 0;
+                    self.dead = true;
+                }
             }
             (MonsterId::SpireGrowth, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);

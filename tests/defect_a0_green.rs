@@ -3185,6 +3185,25 @@ fn apotheosis_preserves_confusion_costs_for_all_for_one() {
 }
 
 #[test]
+fn dagger_suicide_stays_queued_after_a_lethal_attack() {
+    // 883: the last Dagger kills the player with its DamageAction. Java's
+    // following LoseHPAction remains queued on the death screen, leaving the
+    // Dagger alive at 4 HP rather than resolving its suicide.
+    let cfg = default_config(Character::Defect, "883", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 537,
+                "883 still resolves Dagger suicide after death last_ok={} want > 537: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
