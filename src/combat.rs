@@ -4106,6 +4106,12 @@ pub fn play_owned_card(
             add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
         }
         on_use_card(player, combat, &card, rng);
+        // MedicalKit.onUseCard marks a played STATUS and its UseCardAction as
+        // exhaust. Hex's queued Dazed insertion still resolves before that
+        // UseCardAction moves the original card (seed 806).
+        if player.has_relic(RelicId::Medical_Kit) && card.card_type() == CardType::STATUS {
+            card.exhaust = true;
+        }
         let orange_pellets_after_card = if player.has_relic(RelicId::OrangePellets) {
             combat.orange_pellets_mask |= match card.card_type() {
                 CardType::ATTACK => 1,
