@@ -3036,6 +3036,24 @@ fn sacred_bark_doubles_cultist_potion() {
 }
 
 #[test]
+fn sacred_bark_doubles_fear_potion() {
+    // 755: Vulnerable 6 from Fear Potion must survive through the lethal
+    // Ball Lightning turn; base Vulnerable 3 expires one turn too early.
+    let cfg = default_config(Character::Defect, "755", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 329,
+                "755 still uses base Fear Potion potency last_ok={} want > 329: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

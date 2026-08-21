@@ -1858,15 +1858,21 @@ impl Game {
                     }
                 }
                 PotionId::Fear => {
-                    // FearPotion: VulnerablePower(target, 3, isSourceMonster=false).
+                    // FearPotion: VulnerablePower(target, potency,
+                    // isSourceMonster=false). Sacred Bark doubles base 3.
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         if let Some(m) = combat.monsters.get_mut(t) {
+                            let potency = if self.player.has_relic(RelicId::SacredBark) {
+                                6
+                            } else {
+                                3
+                            };
                             combat::apply_player_power_to_monster(
                                 &self.player,
                                 m,
                                 &mut self.rng,
                                 crate::ids::PowerId::Vulnerable,
-                                3,
+                                potency,
                             );
                         }
                     }
