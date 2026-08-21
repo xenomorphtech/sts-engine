@@ -4102,11 +4102,19 @@ pub fn play_owned_card(
         } else {
             0
         };
+        // Player powers receive onUseCard before relics. Orange Pellets can
+        // remove Hex later in the same hook cycle, but its already-queued
+        // Dazed action still resolves (seed 118).
+        let hex_on_use = if card.card_type() != CardType::ATTACK {
+            player.power_amount(PowerId::Hex)
+        } else {
+            0
+        };
         // Tempest/Multi-Cast use() queue wrapper actions, then UseCardAction's
         // constructor queues Hex. The wrappers later add their Channel/Evoke
         // actions behind Hex, so Dazed is inserted before orb target RNG.
         let hex_before_deferred_orbs = if matches!(card.id, CardId::Tempest | CardId::Multi_Cast) {
-            player.power_amount(PowerId::Hex)
+            hex_on_use
         } else {
             0
         };
@@ -4214,14 +4222,12 @@ pub fn play_owned_card(
         let defer_grid_reactions = (card.id == CardId::Seek && combat.need_draw_to_hand)
             || (card.id == CardId::Hologram && combat.need_discard_to_hand);
         if !matches!(card.id, CardId::Tempest | CardId::Multi_Cast)
-            && card.card_type() != CardType::ATTACK
-            && player.power_amount(PowerId::Hex) > 0
+            && hex_on_use > 0
         {
-            let n = player.power_amount(PowerId::Hex);
             if defer_grid_reactions {
-                combat.pending_hex_after_seek += n;
+                combat.pending_hex_after_seek += hex_on_use;
             } else {
-                for _ in 0..n {
+                for _ in 0..hex_on_use {
                     add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
                 }
             }
