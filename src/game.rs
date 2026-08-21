@@ -2243,7 +2243,9 @@ impl Game {
                 self.player.gold += g;
             }
             RewardKind::Potion(p) => {
-                if !self.gain_potion(p) {
+                // RewardItem.claimReward returns true under Sozu so the reward
+                // is consumed, but it does not call player.obtainPotion.
+                if !self.player.has_relic(RelicId::Sozu) && !self.gain_potion(p) {
                     return;
                 }
             }
@@ -2796,7 +2798,7 @@ impl Game {
                 .position(|o| !o.sold && shop_potion_matches(o.item, name))
             {
                 let price = self.shop.potions[i].price;
-                if self.player.gold >= price {
+                if self.player.gold >= price && !self.player.has_relic(RelicId::Sozu) {
                     self.spend_shop_gold(price);
                     let id = self.shop.potions[i].item;
                     self.shop.potions[i].sold = true;
@@ -2864,7 +2866,10 @@ impl Game {
             }
             ShopKind::Potion(i) => {
                 if let Some(offer) = self.shop.potions.get_mut(i) {
-                    if !offer.sold && self.player.gold >= offer.price {
+                    if !offer.sold
+                        && self.player.gold >= offer.price
+                        && !self.player.has_relic(RelicId::Sozu)
+                    {
                         let price = offer.price;
                         let id = offer.item;
                         offer.sold = true;
@@ -5474,6 +5479,11 @@ impl Game {
     }
 
     fn gain_potion(&mut self, id: PotionId) -> bool {
+        // ObtainPotionAction / ObtainPotionEffect suppress every acquisition
+        // while Sozu is held. Existing potions remain usable.
+        if self.player.has_relic(RelicId::Sozu) {
+            return false;
+        }
         if let Some(slot) = self.player.potions.iter_mut().find(|p| p.id == PotionId::Slot) {
             slot.id = id;
             true

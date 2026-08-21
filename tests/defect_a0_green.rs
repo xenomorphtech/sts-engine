@@ -274,6 +274,24 @@ fn sacred_bark_doubles_fire_potion_damage() {
 }
 
 #[test]
+fn sozu_blocks_potion_rewards_before_we_meet_again() {
+    // Seed 393 obtains Sozu after Act 1. Later potion rewards are consumed but
+    // not added, so We Meet Again offers gold first and charges Java's amount.
+    let cfg = default_config(Character::Defect, "393", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 391,
+                "393 still fails at Sozu/We Meet Again last_ok={} want > 391: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
