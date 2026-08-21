@@ -2476,6 +2476,24 @@ fn sacred_bark_doubles_strength_and_dexterity_potions() {
 }
 
 #[test]
+fn colosseum_starts_two_slaver_event_fight() {
+    // 369: Colosseum's second button starts the event-only Blue + Red Slaver
+    // encounter rather than leaving for the map.
+    let cfg = default_config(Character::Defect, "369", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 264,
+                "369 still misses Colosseum Slavers last_ok={} want > 264: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

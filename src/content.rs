@@ -1258,6 +1258,7 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
             MonsterId::Taskmaster,
             MonsterId::SlaverRed,
         ],
+        EncounterId::ColosseumSlavers => &[MonsterId::SlaverBlue, MonsterId::SlaverRed],
         EncounterId::GremlinLeader => &[
             MonsterId::GremlinWarrior,
             MonsterId::GremlinWarrior,

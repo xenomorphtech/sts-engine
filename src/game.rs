@@ -3743,6 +3743,7 @@ impl Game {
                 vec!["[Play]".into()]
             }
             "Match and Keep!" => vec!["[Continue]".into()],
+            "Colosseum" => vec!["[Continue]".into()],
             _ => vec!["[Continue]".into(), "[Leave]".into()],
         };
         if id == "Falling" {
@@ -4099,6 +4100,27 @@ impl Game {
                 return;
             }
         };
+        if id == "Colosseum" {
+            match screen {
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec!["[Fight]".into()];
+                    }
+                }
+                1 => {
+                    // Colosseum FIGHT: rewardAllowed=false and the first
+                    // encounter is exactly Blue + Red Slaver (seed 369).
+                    self.rewards.clear();
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                    }
+                    self.start_combat_encounter(EncounterId::ColosseumSlavers);
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
         if id == "Wheel of Change" {
             // GremlinWheelGame.buttonEffect: INTRO Play rolls miscRng.random(0,5)
             // then hides the dialog. ExactTextSim then publishes one event
