@@ -2874,6 +2874,24 @@ fn sacred_bark_doubles_potion_of_capacity_slots() {
 }
 
 #[test]
+fn lethal_damage_cancels_static_discharge_channels() {
+    // 961: Snake Plant's lethal hit leaves both queued ChannelActions pending;
+    // they must not evoke Lightning into the monster after player death.
+    let cfg = default_config(Character::Defect, "961", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 310,
+                "961 still resolves Static Discharge after death last_ok={} want > 310: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

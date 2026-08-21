@@ -3206,8 +3206,13 @@ fn hit_player_inner(
         if vampire_heal && dmg > 0 && player.hp > 0 {
             monster.hp = (monster.hp + dmg).min(monster.max_hp);
         }
-        for _ in 0..static_n {
-            channel_static_lightning_mid_hit(player, monster, rng);
+        // Static Discharge's ChannelActions are queued above the current
+        // DamageAction. A terminal hit stops the action manager before they
+        // run; a Fairy/Lizard Tail revival still lets them resolve.
+        if player.hp > 0 {
+            for _ in 0..static_n {
+                channel_static_lightning_mid_hit(player, monster, rng);
+            }
         }
         // ThornsPower.onAttacked addToTop DamageAction. If this hit is lethal,
         // ExactTextSim death snapshots before that thorns DamageAction (seed 1
