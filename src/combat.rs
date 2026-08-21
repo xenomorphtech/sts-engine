@@ -3915,16 +3915,11 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
             r.counter += 1;
             if r.counter == 3 {
                 r.counter = 0;
-                // Hologram's BetterDiscardPileToHandAction is ahead of relic
-                // onUseCard actions. While its GRID is open Letter Opener has
-                // reset its counter, but its damage has not resolved yet.
-                if card.id == CardId::Hologram && player.discard.len() > 1 {
-                    combat.pending_letter_opener += 1;
-                } else {
-                    for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                        deal_thorns(monster, rng, 5);
-                    }
-                }
+                // UseCardAction is constructed after card.use(), and relic
+                // onUseCard actions are queued behind the card's actions and
+                // player-power hooks. GRID cards keep this pending until the
+                // selection action finishes.
+                combat.pending_letter_opener += 1;
             }
         }
     }
@@ -4403,6 +4398,7 @@ pub fn play_owned_card(
             }
         }
         if !defer_grid_reactions {
+            flush_letter_opener(combat, rng);
             flush_ink_bottle(player, combat, rng);
         }
         let mut gremlin_horn_triggers =
