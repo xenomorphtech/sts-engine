@@ -286,7 +286,10 @@ impl Combat {
             player.add_power(PowerId::Thorns, 3);
         }
         // MercuryHourglass.atTurnStart: DamageAllEnemiesAction THORNS 3.
-        let dead_before_hourglass = monsters.iter().filter(|m| m.dead).count();
+        let dead_before_hourglass = monsters
+            .iter()
+            .filter(|m| m.dead || m.half_dead)
+            .count();
         if player.has_relic(RelicId::Mercury_Hourglass) {
             for m in monsters.iter_mut().filter(|m| m.alive()) {
                 deal_thorns(m, rng, 3);
@@ -4470,7 +4473,7 @@ pub fn play_owned_card(
                 return false;
             }
         }
-        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        let dead_before = gremlin_horn_death_count(combat);
         // SharpHidePower.onUseCard queues THORNS (DAMAGE, kept after combat)
         // before Damage/Channel resolve. Snapshot while the owner is alive
         // (seed 723 Ball Lightning evoke killed Guardian, rust skipped hide).
@@ -4636,7 +4639,7 @@ pub fn play_owned_card(
                 }
             }
             if defer_ftl_damage && player.hp > 0 {
-                let dead_before_ftl = combat.monsters.iter().filter(|m| m.dead).count();
+                let dead_before_ftl = gremlin_horn_death_count(combat);
                 if let Some(i) = target {
                     if let Some(m) = combat.monsters.get_mut(i) {
                         damage_monster(m, player, rng, card.base_damage as i32, 1);
@@ -6132,7 +6135,7 @@ fn gremlin_horn_trigger_count(player: &Player, combat: &Combat, dead_before: usi
     if !player.has_relic(RelicId::Gremlin_Horn) {
         return 0;
     }
-    let dead_after = combat.monsters.iter().filter(|m| m.dead).count();
+    let dead_after = gremlin_horn_death_count(combat);
     let newly = dead_after.saturating_sub(dead_before);
     let remaining = combat.monsters.iter().filter(|m| m.alive()).count();
     if remaining > 0 {
@@ -6140,6 +6143,17 @@ fn gremlin_horn_trigger_count(player: &Player, combat: &Combat, dead_before: usi
     } else {
         newly.saturating_sub(1)
     }
+}
+
+fn gremlin_horn_death_count(combat: &Combat) -> usize {
+    // Darkling.damage invokes relic onMonsterDeath hooks when it enters
+    // halfDead, before the encounter decides whether every Darkling should
+    // die. Count that notification once just like an ordinary death.
+    combat
+        .monsters
+        .iter()
+        .filter(|m| m.dead || m.half_dead)
+        .count()
 }
 
 fn resolve_gremlin_horn_triggers(
@@ -6215,7 +6229,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         .iter()
         .any(|r| r.id == RelicId::StoneCalendar && r.counter == 7)
     {
-        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        let dead_before = gremlin_horn_death_count(combat);
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, rng, 52);
         }
@@ -6277,7 +6291,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // addToBot DrawCardAction, which resolves before DiscardAtEndOfTurn
     // (room.endTurn waits until the action queue is empty). The extra card
     // is then discarded with the rest of the hand (seed 906 AcidSlime_M).
-    let dead_before_orbs = combat.monsters.iter().filter(|m| m.dead).count();
+    let dead_before_orbs = gremlin_horn_death_count(combat);
     apply_orb_passives(player, combat, rng);
     // GremlinLeader.die queues its minion EscapeActions behind the orb
     // passives already in the action queue, so finish the batch first.
@@ -6753,7 +6767,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             .any(|m| m.alive() && m.block < 3 && m.hp <= 3 - m.block);
     let mut hourglass_ended_combat = false;
     if hourglass_before_loop {
-        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        let dead_before = gremlin_horn_death_count(combat);
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, rng, 3);
         }
@@ -6797,7 +6811,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     }
     tick_turn_start_block_relics(player);
     if !hourglass_before_loop && player.has_relic(RelicId::Mercury_Hourglass) {
-        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        let dead_before = gremlin_horn_death_count(combat);
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, rng, 3);
         }
