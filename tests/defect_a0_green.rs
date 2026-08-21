@@ -2090,6 +2090,25 @@ fn duplicated_overclock_discards_original_between_burns() {
 }
 
 #[test]
+fn astrolabe_transforms_colorless_from_colorless_pool() {
+    // 31: Astrolabe selects Defragment, Cold Snap, then colorless Hand of
+    // Greed. The third transform uses srcColorlessCardPool and yields upgraded
+    // Sadistic Nature; the colored pool incorrectly yielded Skim.
+    let cfg = default_config(Character::Defect, "31", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 206,
+                "31 still fails at Astrolabe colorless transform last_ok={} want > 206: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

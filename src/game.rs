@@ -1011,6 +1011,18 @@ impl Game {
 
     /// AbstractDungeon.returnTrulyRandomCardFromAvailable via miscRng.
     fn misc_transform_roll(&mut self, avoid: CardId) -> Option<CardId> {
+        if avoid.def().color == crate::ids::CardColor::COLORLESS {
+            // transformCard routes colorless sources through
+            // returnTrulyRandomColorlessCardFromAvailable, whose list is the
+            // addToBottom copy held in srcColorlessCardPool.
+            let mut pool = self.dungeon.src_colorless_cards.clone();
+            pool.retain(|id| *id != avoid);
+            if pool.is_empty() {
+                return None;
+            }
+            let idx = self.rng.misc.random_int(pool.len() as i32 - 1) as usize;
+            return Some(pool[idx]);
+        }
         let mut pool: Vec<CardId> = self.dungeon.common_cards.clone();
         let mut uncommons = self.dungeon.uncommon_cards.clone();
         uncommons.reverse();
