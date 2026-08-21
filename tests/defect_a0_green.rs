@@ -517,6 +517,25 @@ fn city_first_strong_encounter_honors_weak_exclusions() {
 }
 
 #[test]
+fn player_death_wins_simultaneous_card_kill() {
+    // Seed 760 plays Rip and Tear at 1 HP into Guardian's Sharp Hide. The
+    // first hit's reactive damage kills the player and the second hit kills
+    // Guardian; Java opens DEATH rather than awarding boss rewards.
+    let cfg = default_config(Character::Defect, "760", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 197,
+                "760 still fails at simultaneous player/monster death last_ok={} want > 197: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

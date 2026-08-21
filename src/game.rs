@@ -1637,7 +1637,14 @@ impl Game {
                         &mut self.rng,
                         Some(&self.dungeon),
                     );
-                    if combat.all_dead() {
+                    // Player death wins a simultaneous-death race. A card's
+                    // queued hits can finish the enemy after reactive damage
+                    // has already killed the player (seed 760 Rip and Tear
+                    // into Guardian's Sharp Hide).
+                    if self.player.hp <= 0 {
+                        self.screen = Screen::Terminal;
+                        self.done = true;
+                    } else if combat.all_dead() {
                         self.finish_combat();
                     } else if select {
                         if combat.need_put_on_deck {
