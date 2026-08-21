@@ -1,7 +1,7 @@
 use crate::action::Action;
 use crate::card::Card;
 use crate::game::{Game, Screen};
-use crate::ids::{CardId, RoomType};
+use crate::ids::{CardId, CardType, PotionId, RelicId, RoomType};
 
 const PICK_THRESHOLD: i32 = 80;
 
@@ -236,12 +236,105 @@ pub fn boss_relic(game: &Game, legal: &[Action]) -> Action {
     best.cloned().unwrap_or_else(|| legal[0].clone())
 }
 
-pub fn shop_choice(_game: &Game, legal: &[Action]) -> Action {
-    legal
+pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
+    let empty_potions = game.player.potions.iter().any(|p| p.id == PotionId::Slot);
+    let curses = game
+        .player
+        .deck
         .iter()
-        .find(|a| matches!(a, Action::Proceed | Action::Skip))
-        .cloned()
-        .unwrap_or_else(|| legal[0].clone())
+        .filter(|c| c.card_type() == CardType::CURSE)
+        .count();
+    let strikes = game
+        .player
+        .deck
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.id,
+                CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P
+            )
+        })
+        .count();
+    let mut best: Option<(&Action, i32)> = None;
+    for action in legal {
+        let Action::Choose {
+            label: Some(label),
+            ..
+        } = action
+        else {
+            continue;
+        };
+        let value = if label == "purge" {
+            if curses > 0 {
+                240
+            } else if strikes > 0 {
+                165
+            } else {
+                60
+            }
+        } else if let Some(id) = CardId::from_sts_id(label) {
+            score_card(game, &Card::new(id)) - 10
+        } else if let Some(id) = RelicId::from_sts_id(label) {
+            shop_relic_value(id)
+        } else if let Some(id) = PotionId::from_sts_id(label) {
+            if empty_potions {
+                shop_potion_value(id)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        if value > 45 && best.map_or(true, |(_, best_value)| value > best_value) {
+            best = Some((action, value));
+        }
+    }
+    best.map(|(action, _)| action.clone()).unwrap_or_else(|| {
+        legal
+            .iter()
+            .find(|a| matches!(a, Action::Proceed | Action::Skip))
+            .cloned()
+            .unwrap_or_else(|| legal[0].clone())
+    })
+}
+
+fn shop_relic_value(id: RelicId) -> i32 {
+    match id {
+        RelicId::Strange_Spoon => 45,
+        RelicId::PrismaticShard => 20,
+        RelicId::HandDrill => 55,
+        RelicId::TheAbacus
+        | RelicId::Medical_Kit
+        | RelicId::OrangePellets
+        | RelicId::Runic_Capacitor
+        | RelicId::DataDisk
+        | RelicId::Frozen_Egg_2
+        | RelicId::Toxic_Egg_2
+        | RelicId::Molten_Egg_2 => 180,
+        _ => 130,
+    }
+}
+
+fn shop_potion_value(id: PotionId) -> i32 {
+    match id {
+        PotionId::Fairy => 400,
+        PotionId::EntropicBrew => 300,
+        PotionId::FruitJuice => 280,
+        PotionId::Blood => 250,
+        PotionId::HeartOfIron => 240,
+        PotionId::Focus => 220,
+        PotionId::EssenceOfSteel => 210,
+        PotionId::Block => 200,
+        PotionId::Strength => 195,
+        PotionId::Fire => 190,
+        PotionId::Explosive | PotionId::Regen => 175,
+        PotionId::Energy | PotionId::PotionOfCapacity => 160,
+        PotionId::Dexterity => 155,
+        PotionId::Weak => 145,
+        PotionId::Attack | PotionId::Power => 140,
+        PotionId::SmokeBomb | PotionId::SneckoOil | PotionId::Slot => 0,
+        _ => 110,
+    }
 }
 
 pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {

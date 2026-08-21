@@ -73,16 +73,13 @@ impl HtnAgent {
 
     fn enter_shop(&mut self, game: &Game, legal: &[Action]) -> Action {
         let floor = game.dungeon.floor;
-        if self.visited_shop_floors.contains(&floor) {
-            if let Some(p) = legal.iter().find(|a| matches!(a, Action::Proceed)) {
-                return p.clone();
-            }
-        }
         if let Some(shop) = legal.iter().find(|a| {
             matches!(a, Action::Choose { label: Some(l), .. } if l.eq_ignore_ascii_case("shop"))
         }) {
-            self.visited_shop_floors.push(floor);
-            return shop.clone();
+            if !self.visited_shop_floors.contains(&floor) {
+                self.visited_shop_floors.push(floor);
+                return shop.clone();
+            }
         }
         strategy::shop_choice(game, legal)
     }

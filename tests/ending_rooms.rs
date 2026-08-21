@@ -3,6 +3,7 @@
 use sts_engine::action::Action;
 use sts_engine::combat::Combat;
 use sts_engine::game::{Game, Screen};
+use sts_engine::htn::HtnAgent;
 use sts_engine::ids::{Act, Character, EncounterId, MonsterId, RoomType};
 use sts_engine::rng::RngSet;
 use sts_engine::Unlocks;
@@ -76,6 +77,53 @@ fn ending_shop_can_leave() {
     assert_eq!(game.current_room, RoomType::Shop);
     game.step(&Action::Proceed);
     assert_eq!(game.screen, Screen::Map);
+}
+
+#[test]
+fn ending_shop_exposes_purchases_to_htn() {
+    let mut game = ending_game();
+    game.player.gold = 1_000;
+    game.dungeon.first_room_chosen = true;
+    game.current_x = 3;
+    game.current_y = 0;
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("map node".into()),
+        x: Some(3),
+        y: Some(1),
+        room: Some("ShopRoom".into()),
+    });
+
+    let mut agent = HtnAgent::new();
+    let open = agent.decide(&game);
+    assert!(matches!(
+        open,
+        Action::Choose {
+            label: Some(ref label),
+            ..
+        } if label == "shop"
+    ));
+    game.step(&open);
+
+    let legal = game.legal_actions();
+    let purchases = legal
+        .iter()
+        .filter(|action| matches!(action, Action::Choose { .. }))
+        .count();
+    assert_eq!(purchases, 14, "purge plus every generated shop offer");
+    assert!(legal.iter().any(|action| matches!(action, Action::Proceed)));
+
+    let purchase = agent.decide(&game);
+    assert!(matches!(
+        purchase,
+        Action::Choose {
+            label: Some(ref label),
+            ..
+        } if label != "shop"
+    ));
+    let gold_before = game.player.gold;
+    game.step(&purchase);
+    assert!(game.screen == Screen::Grid || game.player.gold < gold_before);
 }
 
 #[test]
