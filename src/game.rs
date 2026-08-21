@@ -266,6 +266,8 @@ enum GridKind {
     Purge,
     Upgrade,
     Transform,
+    /// Dolly's Mirror: copy one master-deck card without bottle flags.
+    Copy,
     /// Combat CardGroup select over the discard pile (Hologram).
     DiscardToHand,
     /// Combat CardGroup select over the draw pile (Seek).
@@ -1138,6 +1140,25 @@ impl Game {
         self.screen = Screen::Grid;
     }
 
+    fn open_dollys_mirror_grid(&mut self) {
+        if self.player.deck.is_empty() {
+            return;
+        }
+        let prev = self.screen;
+        self.grid = Some(GridSelect {
+            kind: GridKind::Copy,
+            needed: 1,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: prev == Screen::Shop,
+            return_screen: Some(prev),
+            immediate: false,
+        });
+        self.screen = Screen::Grid;
+    }
+
     /// NeowReward.getRewardCards: rarity via neowRng.randomBoolean(0.33) uncommon else common.
     fn neow_colored_cards(&mut self, n: usize, rare_only: bool) -> Vec<Card> {
         let mut out = Vec::new();
@@ -1220,7 +1241,8 @@ impl Game {
                 | GridKind::DrawPileToHand
                 | GridKind::SkillFromDeck
                 | GridKind::Bottle(_)
-                | GridKind::Library => true,
+                | GridKind::Library
+                | GridKind::Copy => true,
             })
             .map(|(i, _)| i)
             .collect()
@@ -1259,6 +1281,7 @@ impl Game {
                             | GridKind::SkillFromDeck
                             | GridKind::Bottle(_)
                             | GridKind::Library
+                            | GridKind::Copy
                     ) || self.grid.as_ref().is_some_and(|g| g.immediate))
                 {
                     self.apply_grid(kind, &[pile_i]);
@@ -1386,6 +1409,17 @@ impl Game {
                                 self.pending_cards.push(Card::new(id));
                             }
                         }
+                    }
+                }
+            }
+            GridKind::Copy => {
+                for i in idxs {
+                    if let Some(mut card) = self.player.deck.get(i).cloned() {
+                        // DollysMirror.update uses makeStatEquivalentCopy, then
+                        // explicitly clears all three bottle flags before the
+                        // CardObtainTransition adds it to the master deck.
+                        card.in_bottle = false;
+                        self.player.deck.push(card);
                     }
                 }
             }
@@ -5956,6 +5990,7 @@ impl Game {
             RelicId::Bottled_Flame => self.open_bottle_grid(CardType::ATTACK),
             RelicId::Bottled_Lightning => self.open_bottle_grid(CardType::SKILL),
             RelicId::Bottled_Tornado => self.open_bottle_grid(CardType::POWER),
+            RelicId::DollysMirror => self.open_dollys_mirror_grid(),
             RelicId::Empty_Cage => self.open_empty_cage_grid(),
             RelicId::Tiny_House => self.on_equip_tiny_house(),
             RelicId::Astrolabe => self.open_astrolabe_grid(),
