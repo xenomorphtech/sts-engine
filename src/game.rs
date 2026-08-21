@@ -2346,7 +2346,9 @@ impl Game {
                 self.player.gold += gained;
             }
             RewardKind::StolenGold(g) => {
-                self.player.gold += g;
+                if !self.player.has_relic(RelicId::Ectoplasm) {
+                    self.player.gold += g;
+                }
             }
             RewardKind::Potion(p) => {
                 // RewardItem.claimReward returns true under Sozu so the reward
@@ -2436,7 +2438,11 @@ impl Game {
                             _ => None,
                         });
                         if let Some(g) = gold {
-                            self.player.gold += g;
+                            // RewardItem.STOLEN_GOLD calls player.gainGold;
+                            // Ectoplasm consumes the reward but blocks the gain.
+                            if !self.player.has_relic(RelicId::Ectoplasm) {
+                                self.player.gold += g;
+                            }
                             if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::StolenGold(_)) && !r.taken) {
                                 r.taken = true;
                             }

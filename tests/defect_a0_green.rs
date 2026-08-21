@@ -2494,6 +2494,24 @@ fn colosseum_starts_two_slaver_event_fight() {
 }
 
 #[test]
+fn ectoplasm_blocks_claimed_stolen_gold() {
+    // 930: killing Looter and Mugger creates a 60-gold stolen reward. Claiming
+    // it removes the reward, but Ectoplasm keeps player gold unchanged.
+    let cfg = default_config(Character::Defect, "930", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 270,
+                "930 still gains stolen gold with Ectoplasm last_ok={} want > 270: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
