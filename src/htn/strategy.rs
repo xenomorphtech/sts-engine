@@ -559,6 +559,8 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
         .unwrap_or_default();
     let hp = game.player.hp;
     let max_hp = game.player.max_hp.max(1);
+    let hp_frac = hp as f32 / max_hp as f32;
+    let gold = game.player.gold;
     let pick = |words: &[&str]| choice_containing(&choices, words);
 
     let selected = match event.as_str() {
@@ -570,6 +572,50 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
             }
         }),
         "windinghalls" => pick(&["retrace"]),
+        // Free shrine blessings: purge, upgrade, duplicate, transform.
+        "purifier" | "upgradeshrine" | "duplicator" | "transmorgrifier" | "goldenshrine" => {
+            pick(&["pray"])
+        }
+        "accursedblacksmith" => pick(&["forge"]),
+        "shininglight" => {
+            if hp_frac >= 0.7 {
+                pick(&["enter"])
+            } else {
+                None
+            }
+        }
+        "thecleric" => {
+            if gold >= 110 {
+                pick(&["purify"])
+            } else if hp_frac < 0.55 && gold >= 40 {
+                pick(&["heal"])
+            } else {
+                None
+            }
+        }
+        "thelibrary" => {
+            if hp_frac >= 0.65 {
+                pick(&["read"])
+            } else {
+                pick(&["sleep"])
+            }
+        }
+        "addict" => {
+            if gold >= 150 {
+                pick(&["offer"])
+            } else {
+                None
+            }
+        }
+        "beggar" => {
+            if gold >= 160 {
+                pick(&["offer"])
+            } else {
+                None
+            }
+        }
+        "drugdealer" => pick(&["leave"]),
+        "maskedbandits" => pick(&["fight"]),
         _ => None,
     };
     if let Some(action) = selected {

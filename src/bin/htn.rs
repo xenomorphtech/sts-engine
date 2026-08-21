@@ -384,6 +384,7 @@ struct OrbStats {
     dark_evoke_damage: AtomicUsize,
     dark_evoke_max: AtomicUsize,
     plays: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<&'static str, usize>>>,
+    events: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
 }
 
 static ORB_STATS: OrbStats = OrbStats {
@@ -402,6 +403,7 @@ static ORB_STATS: OrbStats = OrbStats {
     dark_evoke_damage: AtomicUsize::new(0),
     dark_evoke_max: AtomicUsize::new(0),
     plays: std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new())),
+    events: std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new())),
 };
 
 fn orb_kind_index(kind: sts_engine::creature::OrbKind) -> usize {
@@ -465,6 +467,12 @@ fn print_orb_stats() {
     rows.sort_by(|a, b| b.1.cmp(a.1));
     let joined: Vec<String> = rows.iter().map(|(id, n)| format!("{id}={n}")).collect();
     println!("card_plays {}", joined.join(" "));
+    let events = ORB_STATS.events.lock().unwrap();
+    let mut rows: Vec<_> = events.iter().collect();
+    rows.sort();
+    for (key, n) in rows {
+        println!("event_choice\t{key}\t{n}");
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -730,6 +738,21 @@ fn run_seed(
                 } else if label.eq_ignore_ascii_case("recall") {
                     diagnostics.recalled += 1;
                 }
+            }
+        }
+        if screen_before == Screen::Event {
+            if let (Some(event), sts_engine::Action::Choose { label, index, .. }) =
+                (game.event.as_ref(), &action)
+            {
+                let choice = label.clone().unwrap_or_else(|| format!("#{index}"));
+                let mut key = format!("{}|{}", event.id, choice);
+                key.truncate(80);
+                *ORB_STATS
+                    .events
+                    .lock()
+                    .unwrap()
+                    .entry(key)
+                    .or_insert(0) += 1;
             }
         }
         let orbs_before: Option<Vec<(usize, i32)>> = if screen_before == Screen::Combat {
