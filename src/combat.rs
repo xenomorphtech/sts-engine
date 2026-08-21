@@ -3484,6 +3484,12 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
     // so Flight still halves every hit in the batch (seed 835).
     let mut pending_flight = 0;
     for _ in 0..hits {
+        // AbstractMonster.damage ignores queued hits once an earlier hit has
+        // made the target dying or escaping. The lethal hit still triggers
+        // onAttacked powers such as Thorns before setting that flag.
+        if !monster.alive() || monster.half_dead {
+            break;
+        }
         let mut dmg_f = (base + player.power_amount(PowerId::Strength)) as f32;
         if player.power_amount(PowerId::PenNib) > 0 {
             dmg_f *= 2.0;
