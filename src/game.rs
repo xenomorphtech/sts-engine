@@ -1461,7 +1461,13 @@ impl Game {
             }
             if let Some(event) = self.event.as_mut() {
                 // Wheel applyResult already moved to LEAVE before opening GRID.
-                event.screen = if event.id == "Wheel of Change" { 3 } else { 1 };
+                event.screen = match event.id.as_str() {
+                    "Wheel of Change" => 3,
+                    // Designer.buttonEffect sets curScreen=DONE before opening
+                    // its upgrade/remove/transform grid.
+                    "Designer" => 2,
+                    _ => 1,
+                };
                 event.options = vec!["[Leave]".into()];
             }
             self.screen = Screen::Event;

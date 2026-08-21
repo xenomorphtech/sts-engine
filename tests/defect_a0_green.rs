@@ -2330,6 +2330,24 @@ fn orrery_opens_five_independent_card_rewards_on_equip() {
 }
 
 #[test]
+fn designer_grid_returns_to_done_screen() {
+    // 69: Designer enters DONE before its upgrade GRID opens. Closing the GRID
+    // must expose Leave immediately so the following map click enters floor 22.
+    let cfg = default_config(Character::Defect, "69", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 254,
+                "69 still rewinds Designer after GRID last_ok={} want > 254: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn sacred_bark_doubles_colorless_potion_discovery_copies() {
     // 15: Sacred Bark makes Colorless Potion create two copies of the chosen
     // Jack of All Trades instead of one.
