@@ -4071,6 +4071,11 @@ pub fn play_owned_card(
     let mut original_resolved_before_copy = false;
     let mut all_for_one_after_original = Vec::new();
     let mut gremlin_horn_after_original = 0;
+    // DuplicationPower.makeSameInstanceOf snapshots Claw before the original
+    // card's queued GashAction raises its base damage. The limbo copy therefore
+    // uses the old damage, while its own GashAction still upgrades the original
+    // in the discard pile afterward (seed 845).
+    let duplicate_claw_base_damage = card.base_damage;
     for play_i in 0..plays {
         if play_i > 0 {
             // GameActionManager rejects a queued duplicate whose ENEMY target
@@ -4083,6 +4088,9 @@ pub fn play_owned_card(
                     .is_some_and(|m| m.alive())
             {
                 break;
+            }
+            if card.id == CardId::Gash {
+                card.base_damage = duplicate_claw_base_damage;
             }
             card.free_to_play_once = true;
         }
