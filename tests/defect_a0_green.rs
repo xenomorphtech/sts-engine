@@ -346,6 +346,25 @@ fn plasma_grants_energy_at_turn_start() {
 }
 
 #[test]
+fn gremlin_horn_draws_after_killing_card_is_discarded() {
+    // Seed 786 later plays Barrage into Looter with an empty draw pile.
+    // UseCardAction discards Barrage before Horn's queued draw reshuffles, so
+    // Barrage participates in the shuffle and Java draws Strike_B.
+    let cfg = default_config(Character::Defect, "786", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 207,
+                "786 still fails at Gremlin Horn/UseCardAction order last_ok={} want > 207: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn thorns_stops_later_hits_after_killing_attacker() {
     // Seed 943 ends the Hexaghost fight with the boss at 6 HP and Thorns 3.
     // Its two-hit Tackle queues separate DamageActions; hit two is cancelled

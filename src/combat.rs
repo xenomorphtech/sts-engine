@@ -3948,6 +3948,7 @@ pub fn play_owned_card(
             && player.draw.iter().filter(|c| c.card_type() == CardType::ATTACK).count() > 1);
     let mut original_resolved_before_copy = false;
     let mut all_for_one_after_original = Vec::new();
+    let mut gremlin_horn_after_original = 0;
     for play_i in 0..plays {
         if play_i > 0 {
             card.free_to_play_once = true;
@@ -4014,7 +4015,8 @@ pub fn play_owned_card(
                 add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
             }
         }
-        gremlin_horn_on_kills(player, combat, rng, dead_before);
+        let mut gremlin_horn_triggers =
+            gremlin_horn_trigger_count(player, combat, dead_before);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
             let spores = monster.power_amount(PowerId::SporeCloud);
             if spores > 0 {
@@ -4102,7 +4104,8 @@ pub fn play_owned_card(
                 }
                 flush_curl_up(combat);
                 flush_guardian_defensive_block(combat);
-                gremlin_horn_on_kills(player, combat, rng, dead_before_ftl);
+                gremlin_horn_triggers +=
+                    gremlin_horn_trigger_count(player, combat, dead_before_ftl);
                 for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
                     let spores = monster.power_amount(PowerId::SporeCloud);
                     if spores > 0 {
@@ -4159,7 +4162,9 @@ pub fn play_owned_card(
         }
         if plays == 1 {
             all_for_one_after_original = all_for_one_cards;
+            gremlin_horn_after_original = gremlin_horn_triggers;
         } else {
+            resolve_gremlin_horn_triggers(player, combat, rng, gremlin_horn_triggers);
             return_all_for_one_cards(player, &all_for_one_cards);
         }
         if original_resolved_before_copy && play_i == 0 {
@@ -4193,6 +4198,7 @@ pub fn play_owned_card(
         player.discard.push(card);
     }
     flush_dark_embrace(player, combat, rng);
+    resolve_gremlin_horn_triggers(player, combat, rng, gremlin_horn_after_original);
     return_all_for_one_cards(player, &all_for_one_after_original);
     for monster in combat.monsters.iter_mut() {
         if monster.alive() && monster.powers.iter().any(|p| p.id == PowerId::Slow) {
@@ -5480,31 +5486,41 @@ fn apply_card_effect(
 
 /// GremlinHorn.onMonsterDeath: if this kill did not end combat, +1 energy and draw 1.
 /// Sequential deaths in one card: the last remaining enemy dying does not trigger.
+fn gremlin_horn_trigger_count(player: &Player, combat: &Combat, dead_before: usize) -> usize {
+    if !player.has_relic(RelicId::Gremlin_Horn) {
+        return 0;
+    }
+    let dead_after = combat.monsters.iter().filter(|m| m.dead).count();
+    let newly = dead_after.saturating_sub(dead_before);
+    let remaining = combat.monsters.iter().filter(|m| m.alive()).count();
+    if remaining > 0 {
+        newly
+    } else {
+        newly.saturating_sub(1)
+    }
+}
+
+fn resolve_gremlin_horn_triggers(
+    player: &mut Player,
+    combat: &mut Combat,
+    rng: &mut RngSet,
+    triggers: usize,
+) {
+    for _ in 0..triggers {
+        player.energy += 1;
+        let n = draw_cards_rng(player, 1, Some(rng));
+        apply_fire_breathing(player, &mut combat.monsters, n);
+    }
+}
+
 pub(crate) fn gremlin_horn_on_kills(
     player: &mut Player,
     combat: &mut Combat,
     rng: &mut RngSet,
     dead_before: usize,
 ) {
-    if !player.has_relic(RelicId::Gremlin_Horn) {
-        return;
-    }
-    let dead_after = combat.monsters.iter().filter(|m| m.dead).count();
-    let newly = dead_after.saturating_sub(dead_before);
-    if newly == 0 {
-        return;
-    }
-    let remaining = combat.monsters.iter().filter(|m| m.alive()).count();
-    let triggers = if remaining > 0 {
-        newly
-    } else {
-        newly.saturating_sub(1)
-    };
-    for _ in 0..triggers {
-        player.energy += 1;
-        let n = draw_cards_rng(player, 1, Some(rng));
-        apply_fire_breathing(player, &mut combat.monsters, n);
-    }
+    let triggers = gremlin_horn_trigger_count(player, combat, dead_before);
+    resolve_gremlin_horn_triggers(player, combat, rng, triggers);
 }
 
 fn is_end_turn_autoplay(id: CardId) -> bool {
