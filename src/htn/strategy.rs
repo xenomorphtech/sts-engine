@@ -3,6 +3,8 @@ use crate::card::Card;
 use crate::game::{Game, Screen};
 use crate::ids::{CardId, CardType, Character, PotionId, RelicId, RoomType};
 
+use super::deckplan;
+
 const PICK_THRESHOLD: i32 = 85;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -386,7 +388,7 @@ pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
         } else if let Some(id) = CardId::from_sts_id(label) {
             score_card(game, &Card::new(id)) - 10
         } else if let Some(id) = RelicId::from_sts_id(label) {
-            shop_relic_value(id)
+            deckplan::shop_relic_value(game, id)
         } else if let Some(id) = PotionId::from_sts_id(label) {
             if empty_potions {
                 shop_potion_value(id)
@@ -407,23 +409,6 @@ pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
             .cloned()
             .unwrap_or_else(|| legal[0].clone())
     })
-}
-
-fn shop_relic_value(id: RelicId) -> i32 {
-    match id {
-        RelicId::Strange_Spoon => 45,
-        RelicId::PrismaticShard => 20,
-        RelicId::HandDrill => 55,
-        RelicId::TheAbacus
-        | RelicId::Medical_Kit
-        | RelicId::OrangePellets
-        | RelicId::Runic_Capacitor
-        | RelicId::DataDisk
-        | RelicId::Frozen_Egg_2
-        | RelicId::Toxic_Egg_2
-        | RelicId::Molten_Egg_2 => 180,
-        _ => 130,
-    }
 }
 
 fn shop_potion_value(id: PotionId) -> i32 {
@@ -710,6 +695,7 @@ pub fn score_card(game: &Game, card: &Card) -> i32 {
     let mut s = card_pick(card.id);
     if game.character == Character::Defect {
         s = s.max(defect_pick(card.id));
+        s += deckplan::card_adjustment(game, card);
     }
     if card.upgraded {
         s += 25;

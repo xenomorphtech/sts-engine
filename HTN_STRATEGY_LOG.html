@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Defect A0 HTN Strategy Log</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+    body { max-width: 1080px; margin: 0 auto; padding: 2rem; line-height: 1.55; }
+    h1, h2, h3 { line-height: 1.2; }
+    h2 { margin-top: 2.5rem; border-bottom: 1px solid #374151; padding-bottom: .4rem; }
+    article { border: 1px solid #374151; border-left-width: .45rem; border-radius: .5rem; margin: 1rem 0; padding: .8rem 1rem; background: #1f2937; }
+    article.accepted { border-left-color: #34d399; }
+    article.rejected { border-left-color: #f87171; }
+    article.reference { border-left-color: #60a5fa; }
+    article.synergy { border-left-color: #c084fc; }
+    article h3 { margin: 0 0 .35rem; font-size: 1rem; }
+    article p { margin: 0; }
+    code { color: #bfdbfe; }
+    .meta { color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Defect A0 HTN strategy log</h1>
+    <p class="meta">Branch <code>htn-work</code>. New experiments use paired 500-seed cohorts, release builds, and a 5,000-step cap; every cap is a loop bug, not a tolerated result. Each entry is intentionally limited to one paragraph.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>References</h2>
+      <article class="reference"><h3>Original 100-seed baseline</h3><p>The early reference scored 8% wins and mean floor 27.95; an independent 100-seed source <code>1787312088712518379</code> scored 5% and 28.28, establishing that small cohorts have substantial variance.</p></article>
+      <article class="reference"><h3>Committed 15% milestone</h3><p>Target-priority work reached 15% wins and mean floor 30.01 on the 100-seed source <code>1787314207414780189</code>; the first proper 500-seed audit on source <code>1787315208666760241</code> measured 58/500 wins (11.60%) and mean floor 29.76 with zero caps.</p></article>
+      <article class="reference"><h3>Single-acquisition boss relic reset</h3><p>Relic diagnostics revealed that the engine left boss offers available after selection, so every boss relic was taken twice and energy relics granted two energy; after fixing the screen lifecycle, the accepted strategy stack measured 27/500 wins (5.40%) and mean floor 28.54 on source <code>1787315208666760241</code>, making all earlier absolute rates historical rather than current milestones.</p></article>
+    </section>
+
+    <section>
+      <h2>Accepted strategies</h2>
+      <article class="accepted"><h3>Expose real shop stock and buy scored items</h3><p>Replacing blind shop entry with decisions over actual affordable cards, relics, potions, and purge raised the historical cohort from 9%/27.88 to 10%/29.23 and a fresh 100-seed cohort to 7%/30.68, so the strategy was retained.</p></article>
+      <article class="accepted"><h3>Biased Cognition triangular Focus decay</h3><p>Charging the evaluator for each future point of Bias decay raised the historical cohort to 10%/29.79 and fresh source <code>1787312470469267103</code> to 14%/30.63; diagnosed seed 13 advanced from floor 31 to 47.</p></article>
+      <article class="accepted"><h3>Exact Rebound lifecycle and next-card valuation</h3><p>The engine now puts the next non-Power, non-exhausted card on top of draw and the planner values which card receives that effect; the fresh 100-seed cohort was 5%/30.28 and acquired no Rebound, so this was accepted for correctness rather than a claimed sampled win gain.</p></article>
+      <article class="accepted"><h3>Event HP-loss guards and event specialization</h3><p>Rejecting lethal event HP costs and specializing Winding Halls and Forgotten Altar raised the historical cohort to 12%/29.94 and fresh source <code>1787313234548553304</code> to 8%/30.51; seed 32 advanced from floor 44 to 46.</p></article>
+      <article class="accepted"><h3>Combat modifier awareness</h3><p>Scoring player Strength, monster Strength gain, Weak, Vulnerable, Intangible, and Bias changed the historical cohort to 14%/30.72 and fresh source <code>1787313410802255679</code> to 17%/32.94, although that run exposed one capped legality loop later fixed separately.</p></article>
+      <article class="accepted"><h3>Combat legality and zero-progress guard</h3><p>Respecting Medical Kit and Blue Candle legality and ending zero-progress status loops replayed source <code>1787313410802255679</code> at 20%/32.98 with zero caps, eliminating capped seed <code>8204511003183509530</code>.</p></article>
+      <article class="accepted"><h3>Priority targets</h3><p>Prioritizing Donu, Cultists, Bronze Orbs, Torch Heads, Sentries, and Spire Spear changed replay source <code>1787314071256080154</code> to 14%/30.57 and fresh source <code>1787314207414780189</code> to 15%/30.01, including three diagnosed Donu losses converted to wins.</p></article>
+      <article class="accepted"><h3>Delayed Self Repair healing</h3><p>Valuing Self Repair before its end-of-combat heal improved fixed source <code>1787315208666760241</code> from 58 to 62 wins and mean floor 29.76→29.99, then fresh source <code>1787316226187148540</code> from 42 to 55 wins and 29.12→29.66; seed <code>6156007182303515596</code> became a win and seed <code>1883842478669890359</code> advanced floor 31→42.</p></article>
+      <article class="accepted"><h3>Delayed Machine Learning draw</h3><p>Valuing future extra draws kept fixed source <code>1787315208666760241</code> at 62 wins while raising mean floor 29.99→30.09, then improved fresh source <code>1787316864833023929</code> from 57 to 58 wins and 29.92→30.03; this is retained as a small, paired improvement.</p></article>
+      <article class="accepted"><h3>Deck-aware shop relic selection</h3><p>Scoring shop relics against the current orb, power, zero-cost, energy, and X-cost packages improved fixed source <code>1787315208666760241</code> from 62 to 64 wins, stayed 72 wins with mean 30.68→30.67 on replay source <code>1787317200265831039</code>, then improved fresh source <code>1787318292151234368</code> from 57 to 59 wins and mean 29.99→30.16.</p></article>
+      <article class="accepted"><h3>Card-package deck-building HTN</h3><p>Decomposing acquisition into orb-core, Frost, Lightning, power, zero-cost, and energy tasks improved all three pre-fix paired cohorts; after boss relic acquisition was corrected, the combined card/shop planner improved fixed source <code>1787315208666760241</code> from 15 to 27 wins and mean 27.58→28.54, then fresh source <code>1787318856394675018</code> from 9 to 19 wins and 27.65→28.21.</p></article>
+    </section>
+
+    <section>
+      <h2>Discarded strategies</h2>
+      <article class="rejected"><h3>Value inaccessible shops</h3><p>Assigning a −25 value to shops that could not actually be reached produced 6% wins and mean floor 28.73 on the historical cohort, losing wins relative to baseline, so it was discarded before a fresh cohort.</p></article>
+      <article class="rejected"><h3>Stronger campfire preference</h3><p>Using 50/25 campfire weights and 70 near bosses gave 9%/27.88 historically and 5%/27.23 on fresh source <code>1787312242685583510</code>; the fresh mean-floor regression rejected the thesis.</p></article>
+      <article class="rejected"><h3>Aggressive Strike purge priority</h3><p>Purge value 330 raised fixed source <code>1787315208666760241</code> from 62 to 71 wins and 29.99→30.17, but on fresh source <code>1787316573696228393</code> wins stayed 67 while mean floor fell 30.79→30.41, so the apparent fixed-cohort gain was rejected.</p></article>
+      <article class="rejected"><h3>Moderate Strike purge priority</h3><p>Purge value 240 raised the fixed cohort to 74 wins and mean floor 30.47, but replaying the previously observed independent source reduced wins 67→65 and mean floor 30.79→30.55, so no new random cohort was warranted.</p></article>
+      <article class="rejected"><h3>Delayed Loop output</h3><p>Explicitly pricing future front-orb triggers reduced fixed source <code>1787315208666760241</code> from 62 to 58 wins and mean floor 29.99→29.65, so the heuristic was removed before fresh testing.</p></article>
+      <article class="rejected"><h3>Delayed Buffer prevention</h3><p>Buffer valuation moved diagnosed Automaton seed <code>1883842478669890359</code> from floor 42 to 47 and fixed wins 62→64, but lowered fixed mean floor to 29.81 and regressed fresh source <code>1787316759813919465</code> from 52 to 49 wins and 29.81→29.68.</p></article>
+      <article class="rejected"><h3>Require two Frost sources before drafting Blizzard</h3><p>The dependency rule improved fixed source <code>1787315208666760241</code> from 62 to 69 wins and mean floor 30.09→30.62, but fresh source <code>1787317200265831039</code> regressed from 72 to 70 wins while mean floor rose only 30.68→30.77, so the plausible Frost pairing is not yet a supported strategy.</p></article>
+      <article class="rejected"><h3>Unbounded package bonuses for boss relics</h3><p>The first joint planner fell from 62 to 59 fixed-cohort wins; decomposition identified boss relic scoring as the cause at 48 wins and mean floor 28.98 because orb-package bonuses repeatedly selected Inserter over established energy relics, so boss priorities remain on the prior conservative table.</p></article>
+    </section>
+
+    <section>
+      <h2>Strategies that genuinely synergize</h2>
+      <article class="synergy"><h3>Shop visibility + reward scoring</h3><p>This is a direct dependency: shop exposure supplies real purchasable choices, while deck-aware card, relic, potion, and purge scores decide among them; neither half constitutes a useful shop strategy alone.</p></article>
+      <article class="synergy"><h3>Exact Rebound mechanics + next-card valuation</h3><p>This is a direct tactical synergy: exact pile movement makes the selected repeat reliable, and the valuation chooses a high-impact card rather than merely recognizing that Rebound exists.</p></article>
+      <article class="synergy"><h3>Focus drafting + Bias-aware orb valuation</h3><p>High draft scores for Defragment, Biased Cognition, Glacier, Coolheaded, and channel sources complement combat scoring that prices Focus, orb persistence, and triangular Bias decay, forming one coherent orb engine rather than unrelated bonuses.</p></article>
+      <article class="synergy"><h3>Modifier awareness + target priority</h3><p>Strength, Weak, Vulnerable, Intangible, and enemy scaling determine the value of damage now, while target priority decides where that damage prevents the most future danger; the cumulative accepted milestone already exercises both together.</p></article>
+      <article class="synergy"><h3>Self Repair drafting + delayed-heal play valuation</h3><p>Self Repair's high reward score only helps if the combat planner spends energy to play it, and the delayed-heal value only matters when the deck acquires it; their paired 500-seed improvement makes this a genuine acquisition-to-execution synergy.</p></article>
+      <article class="synergy"><h3>Machine Learning drafting + delayed-draw play valuation</h3><p>Machine Learning's draft preference and explicit future-draw value jointly turn the card into sustained access to the existing focus, frost, and damage package; paired 500-seed results show compatibility with the accepted Self Repair and orb strategy, though not a separately proven interaction effect.</p></article>
+      <article class="synergy"><h3>Deck-package tasks + owned and shop relics</h3><p>This is a measured two-way acquisition synergy: owned relics alter which cards advance the active package, while the same deck profile alters shop relic value; shop scoring generalized independently, and adding package-aware card selection then improved all three paired cohorts on top of it.</p></article>
+      <article class="rejected"><h3>Combinations not supported as synergies</h3><p>Loop, Buffer, unconditional Blizzard gating, stronger campfire weights, inaccessible-shop penalties, and increased purge priority are not recommended as components merely because they sound complementary: each failed a fixed or fresh cohort, so combining them would require a new independent thesis and full two-stage evidence.</p></article>
+    </section>
+  </main>
+</body>
+</html>
