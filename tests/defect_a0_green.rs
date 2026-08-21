@@ -723,6 +723,24 @@ fn collector_death_suicides_surviving_summons() {
 }
 
 #[test]
+fn winding_halls_retrace_returns_to_map() {
+    // Seed 4 takes Winding Halls' third choice. Java loses 5% max HP, shows
+    // the event's Leave screen, then returns to the same-floor map.
+    let cfg = default_config(Character::Defect, "4", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 577,
+                "4 still over-advances after Winding Halls last_ok={} want > 577: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

@@ -3389,6 +3389,19 @@ impl Game {
             ],
             "Falling" => vec!["[Continue]".into()],
             "SensoryStone" => vec!["[Interact]".into()],
+            "Winding Halls" => {
+                let (hp_pct, heal_pct) = if self.ascension >= 15 {
+                    (0.18, 0.2)
+                } else {
+                    (0.125, 0.25)
+                };
+                let hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * hp_pct);
+                let heal = crate::rewards::gdx_round(self.player.max_hp as f32 * heal_pct);
+                let max_hp_loss =
+                    crate::rewards::gdx_round(self.player.max_hp as f32 * 0.05);
+                data = vec![hp_loss, heal, max_hp_loss];
+                vec!["[Continue]".into()]
+            }
             "MindBloom" => vec!["[I am War]".into(), "[I am Awake]".into(), "[I am Rich]".into()],
             "World of Goop" => {
                 let (lo, hi) = if self.ascension >= 15 { (35, 75) } else { (20, 50) };
@@ -4324,6 +4337,75 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 4;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Winding Halls" {
+            match screen {
+                0 => {
+                    let hp_loss = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.first().copied())
+                        .unwrap_or(0);
+                    let heal = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(1).copied())
+                        .unwrap_or(0);
+                    let max_hp_loss = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(2).copied())
+                        .unwrap_or(0);
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec![
+                            format!(
+                                "[Embrace Madness] #gReceive #g2 Madness. #rLose #r{hp_loss} #rHP."
+                            ),
+                            format!(
+                                "[Focus] #rBecome #rCursed #r- #rWrithe. #gHeal #g{heal} #gHP."
+                            ),
+                            format!(
+                                "[Retrace Your Steps] #rLose #r{max_hp_loss} #rMax #rHP."
+                            ),
+                        ];
+                    }
+                }
+                1 => {
+                    let data = self
+                        .event
+                        .as_ref()
+                        .map(|e| e.data.clone())
+                        .unwrap_or_default();
+                    match *index {
+                        0 => {
+                            let damage = combat::on_lose_hp_last(
+                                &self.player,
+                                data.first().copied().unwrap_or(0),
+                            );
+                            self.player.hp = (self.player.hp - damage).max(0);
+                            combat::red_skull_on_hp_change(&mut self.player);
+                            self.obtain_master_deck_card(CardId::Madness);
+                            self.obtain_master_deck_card(CardId::Madness);
+                        }
+                        1 => {
+                            self.heal_player(data.get(1).copied().unwrap_or(0));
+                            self.obtain_master_deck_card(CardId::Writhe);
+                        }
+                        _ => {
+                            let loss = data.get(2).copied().unwrap_or(0);
+                            self.player.max_hp = (self.player.max_hp - loss).max(1);
+                            self.player.hp = self.player.hp.min(self.player.max_hp);
+                        }
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
                         event.options = vec!["[Leave]".into()];
                     }
                 }
