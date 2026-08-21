@@ -3536,6 +3536,12 @@ impl Game {
                 data = vec![gold, 6];
                 vec!["[Continue]".into()]
             }
+            "Knowing Skull" => {
+                // KnowingSkull starts with an INTRO Continue. The four paid
+                // choices are installed only after that button is pressed.
+                data = vec![6, 6, 6, 6];
+                vec!["[Continue]".into()]
+            }
             "Forgotten Altar" => {
                 // ForgottenAltar ctor: hpLoss = MathUtils.round(max * 0.25),
                 // A15+ 0.35. Golden Idol option is disabled without the relic;
@@ -4214,6 +4220,44 @@ impl Game {
                         event.screen = 2;
                         event.options = vec!["[Leave]".into()];
                     }
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Knowing Skull" {
+            match screen {
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec![
+                            "[Drink] #rLose #r6 #rHP. #gObtain #ga #gPotion.".into(),
+                            "[Gold] #gGain #g90 #gGold. #rLose #r6 #rHP.".into(),
+                            "[Knowledge] #rLose #r6 #rHP. #gObtain #ga #gColorless #gCard."
+                                .into(),
+                            "[Leave] #rLose #r6 #rHP.".into(),
+                        ];
+                    }
+                }
+                1 if *index == 3 => {
+                    // KnowingSkull's leave branch uses owner-null HP_LOSS, so
+                    // Tungsten Rod's onLoseHpLast can reduce it.
+                    let damage = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(3).copied())
+                        .unwrap_or(6);
+                    let damage = combat::on_lose_hp_last(&self.player, damage);
+                    self.player.hp = (self.player.hp - damage).max(0);
+                    combat::red_skull_on_hp_change(&mut self.player);
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                1 => {
+                    // Reward choices need their own walk witnesses: keep them
+                    // staged in ASK instead of pretending the event completed.
                 }
                 _ => self.open_map(),
             }
