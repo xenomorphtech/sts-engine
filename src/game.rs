@@ -5818,7 +5818,8 @@ impl Game {
     }
 
     fn gain_relic(&mut self, id: RelicId) {
-        if id == RelicId::Cursed_Key
+        if id == RelicId::Busted_Crown
+            || id == RelicId::Cursed_Key
             || id == RelicId::Coffee_Dripper
             || id == RelicId::Ectoplasm
             || id == RelicId::Fusion_Hammer
