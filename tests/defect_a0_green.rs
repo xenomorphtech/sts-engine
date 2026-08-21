@@ -403,6 +403,25 @@ fn barrage_finishes_before_queued_flight_reductions() {
 }
 
 #[test]
+fn snecko_eye_confuses_before_drawing_seven() {
+    // Seed 719 enters its first Act 2 fight with Snecko Eye. atPreBattle must
+    // install Confusion before the opening seven-card draw so cardRandomRng
+    // assigns costs to all seven cards in Java order.
+    let cfg = default_config(Character::Defect, "719", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 189,
+                "719 still fails at Snecko Eye pre-battle last_ok={} want > 189: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

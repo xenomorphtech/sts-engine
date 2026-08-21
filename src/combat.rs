@@ -144,7 +144,14 @@ impl Combat {
                 player.energy += 2;
             }
         }
-        let _ = draw_cards_rng(player, 5, Some(rng));
+        // SneckoEye.atPreBattle queues Confusion before the opening draw, and
+        // onEquip raises masterHandSize by 2 (seed 719). ConfusionPower uses
+        // amount -1 because it is a non-stacking power in Java.
+        if player.has_relic(RelicId::Snecko_Eye) {
+            player.add_power(PowerId::Confusion, -1);
+        }
+        let opening_draw = if player.has_relic(RelicId::Snecko_Eye) { 7 } else { 5 };
+        let _ = draw_cards_rng(player, opening_draw, Some(rng));
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::HornCleat) {
             r.counter = 0;
         }
@@ -3525,7 +3532,7 @@ pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngS
                 player.energy = (player.energy - 1).max(0);
             }
             // ConfusionPower.onCardDraw: cardRandomRng.random(3) when cost >= 0.
-            if player.power_amount(PowerId::Confusion) > 0 && card.cost >= 0 {
+            if player.powers.iter().any(|p| p.id == PowerId::Confusion) && card.cost >= 0 {
                 if let Some(rng) = rng.as_mut() {
                     let new_cost = rng.card_random.random_int(3) as i16;
                     if card.cost != new_cost {
@@ -5808,7 +5815,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         apply_fire_breathing(player, &mut combat.monsters, statuses);
     }
     // DrawPower (Machine Learning) bumps gameHandSize; DrawCardAction uses that.
-    let draw_n = 5 + player.power_amount(PowerId::DrawCard);
+    let draw_n = 5
+        + if player.has_relic(RelicId::Snecko_Eye) { 2 } else { 0 }
+        + player.power_amount(PowerId::DrawCard);
     let statuses = draw_cards_rng(player, draw_n, Some(rng));
     apply_fire_breathing(player, &mut combat.monsters, statuses);
     if pocketwatch {
