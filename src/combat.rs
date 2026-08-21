@@ -6315,6 +6315,15 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
         flush_mid_hit_evokes(player, combat, rng);
+        // Thorns can kill a Bronze Orb during its own DamageAction. Its
+        // StasisPower release resolves before the next monster action and
+        // therefore before the following turn's draw.
+        if combat.monsters[i].dead {
+            if let Some(card) = combat.monsters[i].stasis_card.take() {
+                combat.pending_stasis_cards.push(card);
+            }
+        }
+        flush_pending_stasis(player, combat);
         if id == MonsterId::TheGuardian
             && used_move == 4
             && combat.monsters[i].alive()
