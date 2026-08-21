@@ -384,6 +384,25 @@ fn guardian_resets_mode_shift_after_static_discharge_evokes() {
 }
 
 #[test]
+fn barrage_finishes_before_queued_flight_reductions() {
+    // Seed 835 plays a three-orb Barrage into a Byrd with Flight 2. Java puts
+    // all three DamageActions ahead of Flight's ReducePowerActions, so every
+    // 4-damage hit is halved before the Byrd is grounded (6 total, not 8).
+    let cfg = default_config(Character::Defect, "835", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 186,
+                "835 still fails at Barrage/Flight queue order last_ok={} want > 186: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

@@ -3160,6 +3160,10 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
     // CurlUpPower: addToBot GainBlock after the unblocked hit, so multi-hit
     // cards (Barrage) land every hit before the block appears.
     let mut pending_curl = 0;
+    // FlightPower.onAttacked queues ReducePowerAction at the bottom. Multi-hit
+    // actions such as Barrage put every DamageAction ahead of those reductions,
+    // so Flight still halves every hit in the batch (seed 835).
+    let mut pending_flight = 0;
     for _ in 0..hits {
         let mut dmg_f = (base + player.power_amount(PowerId::Strength)) as f32;
         if player.power_amount(PowerId::PenNib) > 0 {
@@ -3248,16 +3252,8 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             if !lethal {
                 guardian_mode_shift_on_hp_loss(monster, dmg);
             }
-            if dmg > 0 && !lethal {
-                if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Flight) {
-                    p.amount -= 1;
-                    if p.amount <= 0 {
-                        monster.powers.retain(|x| x.id != PowerId::Flight);
-                        monster.extra = 0;
-                        monster.set_move(4, Intent::Stun, 0, 1);
-                        monster.create_intent();
-                    }
-                }
+            if dmg > 0 && !lethal && monster.power_amount(PowerId::Flight) > 0 {
+                pending_flight += 1;
             }
             if !lethal {
                 // MalleablePower.onAttacked: monsters addToBot GainBlock, so
@@ -3286,6 +3282,17 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
             }
         }
         maybe_split(monster);
+    }
+    if pending_flight > 0 {
+        if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Flight) {
+            p.amount -= pending_flight;
+            if p.amount <= 0 {
+                monster.powers.retain(|x| x.id != PowerId::Flight);
+                monster.extra = 0;
+                monster.set_move(4, Intent::Stun, 0, 1);
+                monster.create_intent();
+            }
+        }
     }
     // Queue Curl Up block; flush_curl_up applies it after the whole card.
     monster.pending_curl += pending_curl;
