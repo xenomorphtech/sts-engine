@@ -342,7 +342,12 @@ pub fn boss_relic(game: &Game, legal: &[Action]) -> Action {
                 .clone()
                 .or_else(|| game.boss_relics.get(*index).map(|r| r.sts_id().to_string()))
                 .unwrap_or_default();
-            let r = boss_relic_rank(&name);
+            let mut r = boss_relic_rank(&name);
+            // 99% of winning runs carry an energy boss relic. Until the run
+            // has one, plain energy beats every utility relic.
+            if game.player.energy_master <= 3 && is_energy_boss_relic(&name) {
+                r += 40;
+            }
             if r > best_r {
                 best_r = r;
                 best = Some(a);
@@ -1183,6 +1188,18 @@ fn upgrade_score(id: CardId) -> i32 {
         CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P => 30,
         _ => 60,
     }
+}
+
+fn is_energy_boss_relic(name: &str) -> bool {
+    matches!(
+        name,
+        "SlaversCollar"
+            | "Slaver's Collar"
+            | "Velvet Choker"
+            | "Cursed Key"
+            | "Coffee Dripper"
+            | "Fusion Hammer"
+    )
 }
 
 fn boss_relic_rank(name: &str) -> i32 {
