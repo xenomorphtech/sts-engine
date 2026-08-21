@@ -3,10 +3,7 @@ use crate::creature::{Monster, OrbKind, Player};
 use crate::game::{Game, Screen};
 use crate::ids::{Act, CardId, CardType, MonsterId, PotionId, PowerId, RelicId, RoomType};
 
-const DMG_BASE: f32 = 6.0;
-const DMG_PER_TURN: f32 = 4.5;
-const DANGER_BASE: f32 = 20.0;
-const DANGER_SCALE: f32 = 90.0;
+use super::params::params;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FightKind {
@@ -233,7 +230,7 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
         return 0.0;
     };
     let hp_frac = game.player.hp as f32 / game.player.max_hp.max(1) as f32;
-    let danger = (DANGER_BASE + DANGER_SCALE * (1.0 - hp_frac).powi(2))
+    let danger = (params().danger_base + params().danger_scale * (1.0 - hp_frac).powi(2))
         * (1.0 + game.ascension as f32 / 50.0);
     match card.id {
         CardId::Biased_Cognition
@@ -250,12 +247,12 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
         CardId::Self_Repair => card.base_magic.max(1) as f32 * danger * 1.25,
         CardId::Machine_Learning => {
             let turns_left = fight_length(fight_kind(game), game.dungeon.act);
-            let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
+            let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
             card.base_magic.max(1) as f32 * turns_left * damage_weight * 2.2
         }
         CardId::Echo_Form => {
             let turns_left = fight_length(fight_kind(game), game.dungeon.act).max(1.0);
-            let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
+            let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
             card.base_magic.max(1) as f32 * turns_left * damage_weight * 12.0
         }
         _ => 0.0,
@@ -275,8 +272,9 @@ fn score_state(before: &Game, after: &Game) -> f32 {
         return 4_000.0 + after.player.hp as f32 + after.player.energy as f32 * 5.0;
     }
 
+    let p = params();
     let turns_left = fight_length(fight_kind(after), after.dungeon.act);
-    let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
+    let damage_weight = p.dmg_base + p.dmg_per_turn * turns_left;
     let mut dealt = 0.0;
     let mut stripped_block = 0.0;
     let mut dead = 0;
@@ -320,19 +318,19 @@ fn score_state(before: &Game, after: &Game) -> f32 {
     }
 
     let hp_frac = projected_hp as f32 / after.player.max_hp.max(1) as f32;
-    let mut danger = (DANGER_BASE + DANGER_SCALE * (1.0 - hp_frac).powi(2))
+    let mut danger = (p.danger_base + p.danger_scale * (1.0 - hp_frac).powi(2))
         * (1.0 + after.ascension as f32 / 50.0);
     let hp_left: i32 = living.iter().map(|m| m.hp.max(0)).sum();
     if dealt > 0.0 && hp_left as f32 / dealt <= 2.0 && projected_hp as f32 > unblocked {
-        danger *= 0.55;
+        danger *= p.lethal_discount;
     }
 
     let mut value = dealt * damage_weight;
-    value += stripped_block * damage_weight * 0.55;
-    value += dead as f32 * 900.0;
+    value += stripped_block * damage_weight * p.strip_block_mult;
+    value += dead as f32 * p.kill_bonus;
     value -= unblocked * danger;
     if !turn_advanced {
-        value -= (after.player.block - incoming).max(0) as f32 * 0.8;
+        value -= (after.player.block - incoming).max(0) as f32 * p.overblock_penalty;
     }
 
     let strength = after.player.power_amount(PowerId::Strength)
@@ -341,9 +339,9 @@ fn score_state(before: &Game, after: &Game) -> f32 {
         - before.player.power_amount(PowerId::Dexterity);
     let focus =
         after.player.power_amount(PowerId::Focus) - before.player.power_amount(PowerId::Focus);
-    value += strength as f32 * 4.0 * turns_left;
-    value += dexterity as f32 * 3.0 * turns_left;
-    value += focus as f32 * 4.0 * turns_left;
+    value += strength as f32 * p.strength_weight * turns_left;
+    value += dexterity as f32 * p.dexterity_weight * turns_left;
+    value += focus as f32 * p.focus_weight * turns_left;
     if let (Some(before_combat), Some(after_combat)) = (&before.combat, &after.combat) {
         let enemy_strength_gain: i32 = after_combat
             .monsters
@@ -357,12 +355,12 @@ fn score_state(before: &Game, after: &Game) -> f32 {
                 (monster.power_amount(PowerId::Strength) - old).max(0)
             })
             .sum();
-        value -= enemy_strength_gain as f32 * 20.0 * turns_left;
+        value -= enemy_strength_gain as f32 * p.enemy_strength_penalty * turns_left;
     }
     let focus_decay = after.player.power_amount(PowerId::Bias).max(0) as f32;
-    value -= focus_decay * 4.0 * (turns_left * (turns_left + 1.0) / 2.0);
+    value -= focus_decay * p.bias_decay_weight * (turns_left * (turns_left + 1.0) / 2.0);
     value += orb_value(after, turns_left) - orb_value(before, turns_left);
-    value += after.player.energy as f32 * 1.5;
+    value += after.player.energy as f32 * p.energy_value;
     value
 }
 
@@ -445,15 +443,20 @@ fn target_priority(id: MonsterId) -> f32 {
 }
 
 fn orb_value(game: &Game, turns_left: f32) -> f32 {
+    let p = params();
     let focus = game.player.power_amount(PowerId::Focus);
+    let horizon = turns_left.min(p.orb_horizon);
     game.player
         .orbs
         .iter()
         .map(|orb| match orb.kind {
-            OrbKind::Lightning => (3 + focus).max(0) as f32 * turns_left.min(4.0) * 0.8,
-            OrbKind::Frost => (2 + focus).max(0) as f32 * turns_left.min(4.0),
-            OrbKind::Dark => orb.evoke.max(6) as f32 * 0.45,
-            OrbKind::Plasma => 12.0,
+            OrbKind::Lightning => (3 + focus).max(0) as f32 * horizon * p.orb_lightning_mult,
+            OrbKind::Frost => (2 + focus).max(0) as f32 * horizon * p.orb_frost_mult,
+            OrbKind::Dark => {
+                orb.evoke.max(6) as f32 * p.orb_dark_stored
+                    + (6 + focus).max(0) as f32 * horizon * p.orb_dark_growth
+            }
+            OrbKind::Plasma => p.orb_plasma,
         })
         .sum()
 }

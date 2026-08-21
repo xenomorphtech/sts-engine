@@ -4,6 +4,7 @@ use crate::game::{Game, GridKind, Screen};
 use crate::ids::{CardId, CardType, Character, PotionId, RelicId, RoomType};
 
 use super::deckplan;
+use super::params::params;
 
 const PICK_THRESHOLD: i32 = 85;
 
@@ -131,20 +132,24 @@ fn room_value(
 ) -> f32 {
     match room {
         RoomType::Elite => {
+            let p = params();
             let metrics = deck_metrics(game);
-            let afford = hp_frac >= 0.65 + game.ascension as f32 / 200.0
-                && strength >= 3 + 2 * act + if game.ascension >= 15 { 2 } else { 0 };
+            let afford = hp_frac >= p.elite_afford_hp + game.ascension as f32 / 200.0
+                && strength as f32
+                    >= p.elite_strength_base
+                        + p.elite_strength_slope * act as f32
+                        + if game.ascension >= 15 { 2.0 } else { 0.0 };
             let matchup = elite_matchup(
                 game.dungeon.elite_list.first().map(String::as_str),
                 metrics,
                 strength,
             );
             let mut v = if afford {
-                40.0 + matchup as f32
+                p.elite_value + matchup as f32
             } else {
-                -150.0 + matchup.min(0) as f32
+                p.elite_penalty + matchup.min(0) as f32
             };
-            if hp_frac < 0.4 {
+            if hp_frac < p.elite_hp_floor {
                 v = -400.0;
             }
             if need_emerald && lookup_node(game, x, y).is_some_and(|n| n.emerald_key) {
@@ -165,9 +170,14 @@ fn room_value(
             v
         }
         RoomType::Rest => {
-            let mut v = if hp_frac < 0.65 { 35.0 } else { 18.0 };
+            let p = params();
+            let mut v = if hp_frac < 0.65 {
+                p.rest_low_value
+            } else {
+                p.rest_high_value
+            };
             if y >= 14 {
-                v = 50.0;
+                v = p.rest_preboss_value;
             }
             if game.final_act_available() && !game.has_ruby_key() && act >= 3 {
                 v += 25.0;
@@ -176,21 +186,21 @@ fn room_value(
         }
         RoomType::Shop => {
             if gold >= 120 {
-                (gold as f32 / 5.0).min(60.0)
+                (gold as f32 / params().shop_gold_div).min(60.0)
             } else if gold >= 75 {
                 8.0
             } else {
                 -5.0
             }
         }
-        RoomType::Treasure => 25.0,
-        RoomType::Event => 14.0,
+        RoomType::Treasure => params().treasure_value,
+        RoomType::Event => params().event_value,
         RoomType::Monster => {
             let shift = 0.05 * (act - 1) as f32;
             if hp_frac >= 0.6 + shift {
-                15.0
+                params().monster_ok_value
             } else if hp_frac >= 0.4 + shift {
-                -15.0
+                params().monster_low_value
             } else if hp_frac >= 0.35 + shift {
                 -45.0
             } else {
@@ -285,7 +295,7 @@ pub fn combat_reward(game: &Game, legal: &[Action]) -> Action {
                     .map(|c| score_card(game, c))
                     .max()
                     .unwrap_or(0);
-                if best >= PICK_THRESHOLD {
+                if best as f32 >= params().pick_threshold {
                     return a.clone();
                 }
             }
@@ -311,7 +321,7 @@ pub fn card_reward(game: &Game, legal: &[Action]) -> Action {
         }
     }
     if let Some((a, s)) = best {
-        if s >= PICK_THRESHOLD {
+        if s as f32 >= params().pick_threshold {
             return a.clone();
         }
     }
@@ -460,12 +470,17 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
         }
     }
 
-    let mut want = if hp_frac < (if act == 1 { 0.7 } else { 0.78 }) {
+    let mut want = if hp_frac
+        < (if act == 1 {
+            params().rest_hp_act1
+        } else {
+            params().rest_hp_later
+        }) {
         "rest"
     } else {
         "smith"
     };
-    if near_boss && hp_frac < 0.85 {
+    if near_boss && hp_frac < params().rest_hp_preboss {
         want = "rest";
     }
     for a in legal {

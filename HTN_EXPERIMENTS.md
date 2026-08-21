@@ -120,3 +120,22 @@ single-acquisition cohorts below and are not numerically comparable to the old
 | End combat when only Minion-power summons remain | fixed source `1787315208666760241` | 11.00% (55/500) | 31.38 | 11.00% (55/500) | 31.39 | 0 | accepted for engine correctness; seed `8051295551183191776` advanced from floor 27 to the Act 2 boss |
 | End combat when only Minion-power summons remain | replay source `1787318856394675018` | 10.00% (50/500) | 31.05 | 10.00% (50/500) | 31.06 | 0 | accepted for engine correctness; seed `8629714848339533862` advanced from floor 22 to floor 30 |
 | End combat when only Minion-power summons remain | fresh source `1787325008170000000` | 7.40% (37/500) | 31.07 | 7.40% (37/500) | 31.07 | 0 | accepted for correctness with neutral aggregate results; one Act 3 win changed in each direction |
+
+## 1,000-seed cohort runs
+
+The goal moved to 1,000-seed cohorts (same paired methodology: fixed source
+`1787315208666760241` for observation, fresh sources for acceptance).
+
+| Thesis | Cohort | Before win rate | Before mean floor | After win rate | After mean floor | Caps | Decision |
+|---|---|---:|---:|---:|---:|---:|---|
+| Kind-aware grid policy (purge worst, upgrade best, retrieve best; search resolves in-combat grids) | fixed source `1787315208666760241` | 10.10% | 31.38 | 11.10% | 32.00 | 0 | advanced |
+| Kind-aware grid policy | fresh source `1787327776218180251` | 10.60% | 31.72 | 11.20% | 32.42 | 0 | accepted |
+| Dark orb growth term in orb_value | fixed source `1787315208666760241` | 11.10% | 32.00 | 11.10% | 31.90 | 0 | rejected: dark orbs too rare for the term to matter; drafting is the bottleneck |
+| A20H tier-list pick recalibration (bundle) | fixed source `1787315208666760241` | 11.10% | 32.00 | 10.60% | 31.56 | 0 | rejected; demotions-only variant 10.40%/31.82 and raises-only variant 9.60%/31.13 both also regressed — the hill-climbed A0 table beats A20H tier lists |
+| More smithing (rest thresholds 0.6/0.68) | fixed source `1787315208666760241` | 11.10% | 32.00 | 10.40% | 31.40 | 0 | rejected: HP matters more than upgrades here |
+| More resting (rest thresholds 0.75/0.82) + ConvertDark deck task | fresh source `1787328951980394648` | 10.30% | 31.55 | 9.50% | 31.52 | 0 | rejected on fresh cohort after +3 fixed-cohort wins; overfit |
+| Two-turn beam lookahead (also stratified variant) | fixed source `1787315208666760241` | 11.10% | 32.00 | 8.90% | 30.97 | 0 | rejected: single-turn eval heuristics beat noisy cross-turn rollouts; 5x slower |
+| Rank Neow blessings (RemoveTwo/TransformTwo/rare relics over first option) | fixed source `1787315208666760241` | 11.10% | 32.00 | 12.00% | 31.94 | 0 | advanced |
+| Rank Neow blessings | fresh source `1787329344052076934` | 11.10% | 32.04 | 12.00% | 32.25 | 0 | accepted |
+| Event policy: free shrines, Library read, Cleric purify, Shining Light, fight Masked Bandits | fixed source `1787315208666760241` | 12.00% | 31.94 | 13.00% | 32.15 | 0 | advanced; Golden Idol (121) and Scrap Ooze (127) variants regressed and stay skipped |
+| Event policy | fresh source `1787329866870376876` | 12.40% | 32.28 | 13.40% | 32.24 | 0 | accepted |
