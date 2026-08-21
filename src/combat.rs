@@ -33,6 +33,7 @@ pub struct Combat {
     pub pending_dark_embrace: i32,
     /// InkBottle.onUseCard: addToBot(DrawCardAction) after the card's use() actions.
     pub pending_ink_bottle: i32,
+    pub pending_hex_after_seek: i32,
     pub ascension: i32,
     /// GameActionManager.orbsChanneledThisCombat (Blizzard / Thunder Strike).
     pub orbs_channeled_this_combat: Vec<OrbKind>,
@@ -288,6 +289,7 @@ impl Combat {
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
             pending_ink_bottle: 0,
+            pending_hex_after_seek: 0,
             ascension,
             orbs_channeled_this_combat: channeled,
             energy_on_use: -1,
@@ -3787,6 +3789,16 @@ fn flush_ink_bottle(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) 
     }
 }
 
+/// Seek.use queues BetterDrawPileToHandAction before UseCardAction's Hex and
+/// Ink Bottle reactions. Resolve those reactions only after the GRID closes.
+pub fn flush_seek_reactions(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
+    let hex = std::mem::take(&mut combat.pending_hex_after_seek);
+    for _ in 0..hex {
+        add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
+    }
+    flush_ink_bottle(player, combat, rng);
+}
+
 /// BetterDiscardPileToHandAction: move discard[index] to hand if there is room.
 pub fn discard_pile_to_hand(player: &mut Player, index: usize) {
     if index >= player.discard.len() || player.hand.len() >= 10 {
@@ -4009,13 +4021,20 @@ pub fn play_owned_card(
         };
         // UseCardAction walks player powers before relics. Hex therefore
         // inserts its Dazed before Ink Bottle's queued draw (seed 444).
+        let defer_seek_reactions = card.id == CardId::Seek && combat.need_draw_to_hand;
         if card.card_type() != CardType::ATTACK && player.power_amount(PowerId::Hex) > 0 {
             let n = player.power_amount(PowerId::Hex);
-            for _ in 0..n {
-                add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
+            if defer_seek_reactions {
+                combat.pending_hex_after_seek += n;
+            } else {
+                for _ in 0..n {
+                    add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
+                }
             }
         }
-        flush_ink_bottle(player, combat, rng);
+        if !defer_seek_reactions {
+            flush_ink_bottle(player, combat, rng);
+        }
         let mut gremlin_horn_triggers =
             gremlin_horn_trigger_count(player, combat, dead_before);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {

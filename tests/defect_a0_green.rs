@@ -2274,6 +2274,24 @@ fn jack_of_all_trades_exhausts_and_creates_a_colorless_card() {
 }
 
 #[test]
+fn seek_resolves_hex_after_draw_pile_selection() {
+    // 96: Seek removes Coolheaded before Hex inserts its Dazed. Inserting the
+    // Dazed before the GRID changes its random position and the next turn's hand.
+    let cfg = default_config(Character::Defect, "96", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 230,
+                "96 still resolves Hex before Seek GRID last_ok={} want > 230: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
