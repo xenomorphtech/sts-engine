@@ -206,6 +206,11 @@ impl Combat {
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
             r.counter = 0;
         }
+        // VelvetChoker.atBattleStart / atTurnStart: the visible counter is
+        // the number of cards successfully played this turn.
+        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
+            r.counter = 0;
+        }
         if player.has_relic(RelicId::Happy_Flower) {
             if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Happy_Flower) {
                 r.counter += 1;
@@ -4440,8 +4445,29 @@ pub fn play_card(
     if hand_index >= player.hand.len() {
         return false;
     }
+    if velvet_choker_full(player) {
+        return false;
+    }
     let card = player.hand.remove(hand_index);
     play_owned_card(player, combat, card, target, rng, dungeon)
+}
+
+fn velvet_choker_full(player: &Player) -> bool {
+    player
+        .relics
+        .iter()
+        .any(|r| r.id == RelicId::Velvet_Choker && r.counter >= 6)
+}
+
+fn velvet_choker_on_play(player: &mut Player) {
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
+        if r.counter < 0 {
+            r.counter = 0;
+        }
+        if r.counter < 6 {
+            r.counter += 1;
+        }
+    }
 }
 
 /// Java `AbstractCard.canUse` for STATUS/CURSE with cost -2 (Dazed, Wound, Burn).
@@ -4469,6 +4495,18 @@ pub fn play_owned_card(
     if status_or_curse_unplayable(&card, player) {
         // UseCardAction.update clears freeToPlayOnce before discard. All For
         // One's AllCostToHandAction pulls cost==0 OR freeToPlayOnce (seed 213).
+        card.free_to_play_once = false;
+        if card.exhaust {
+            exhaust_card(player, combat, card, rng);
+        } else if card.card_type() != CardType::POWER {
+            player.discard.push(card);
+        }
+        flush_dark_embrace(player, combat, rng);
+        return false;
+    }
+    // GameActionManager rejects an autoplayed card once Velvet Choker is at
+    // six, then queues a triggerless UseCardAction to move it out of limbo.
+    if velvet_choker_full(player) {
         card.free_to_play_once = false;
         if card.exhaust {
             exhaust_card(player, combat, card, rng);
@@ -4562,7 +4600,13 @@ pub fn play_owned_card(
                 card.base_damage = duplicate_claw_base_damage;
             }
             card.free_to_play_once = true;
+            if velvet_choker_full(player) {
+                break;
+            }
         }
+        // GameActionManager invokes relic.onPlayCard after canUse succeeds and
+        // before AbstractPlayer.useCard resolves the card's effects.
+        velvet_choker_on_play(player);
         // UseCardAction.onUseCard fires when the card is played, before GRID.
         // Storm channels are addToBot after this card's ApplyPower, so snapshot
         // the stack now and channel after apply_card_effect (seed 169 Focus).
@@ -4978,7 +5022,7 @@ pub fn play_top_card(
     play_top_cards(player, combat, &[target], exhausts, rng, dungeon);
 }
 
-/// DistilledChaosPotion queues 3 PlayTopCardActions (ActionType.WAIT).
+/// DistilledChaosPotion queues getPotency() PlayTopCardActions (ActionType.WAIT).
 /// NewQueueCardAction is addToTop, so each card plays before the next pop
 /// (Coolheaded draws can become the next top). Remaining WAIT is dropped
 /// once the room is dead.
@@ -6883,6 +6927,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         && combat.turn > 1
         && combat.cards_played_this_turn <= 3;
     combat.cards_played_this_turn = 0;
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
+        r.counter = 0;
+    }
     combat.skills_this_turn = 0;
     combat.attacks_this_turn = 0;
     combat.orange_pellets_mask = 0;
@@ -7157,6 +7204,9 @@ pub fn after_combat_relics(player: &mut Player) {
     player.duplication = 0;
     player.orbs.clear();
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
+        r.counter = -1;
+    }
+    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
         r.counter = -1;
     }
 }

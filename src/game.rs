@@ -381,7 +381,13 @@ impl Game {
         match self.screen {
             Screen::Combat => {
                 if let Some(combat) = &self.combat {
+                    let velvet_choker_full = self.player.relics.iter().any(|r| {
+                        r.id == RelicId::Velvet_Choker && r.counter >= 6
+                    });
                     for (i, card) in self.player.hand.iter().enumerate() {
+                        if velvet_choker_full {
+                            continue;
+                        }
                         if card.cost_for_turn > self.player.energy as i16 && card.cost_for_turn >= 0 {
                             continue;
                         }
@@ -2149,14 +2155,21 @@ impl Game {
                     }
                 }
                 PotionId::DistilledChaos => {
-                    // DistilledChaosPotion: 3x PlayTopCardAction. Targets are
+                    // DistilledChaosPotion: getPotency() PlayTopCardActions.
+                    // AbstractPotion doubles the base 3 with Sacred Bark.
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        6
+                    } else {
+                        3
+                    };
+                    // Targets are
                     // rolled up front via cardRandomRng.getRandomMonster.
-                    // The three PlayTopCardActions drain before UseCardAction
+                    // The PlayTopCardActions drain before UseCardAction
                     // discards, so a mid-batch empty-deck shuffle must not
                     // include the in-flight cards (seed 38 Dualcast).
                     if let Some(combat) = self.combat.as_mut() {
                         let mut targets = Vec::new();
-                        for _ in 0..3 {
+                        for _ in 0..potency {
                             targets.push(combat::random_alive_monster(
                                 combat,
                                 &mut self.rng.card_random,
