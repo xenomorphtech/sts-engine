@@ -159,8 +159,12 @@ impl Combat {
         if player.has_relic(RelicId::Snecko_Eye) {
             player.add_power(PowerId::Confusion, -1);
         }
-        let opening_draw = if player.has_relic(RelicId::Snecko_Eye) { 7 } else { 5 };
-        let _ = draw_cards_rng(player, opening_draw, Some(rng));
+        // Toolbox.atBattleStartPreDraw opens ChooseOneColorless before the
+        // opening DrawCardAction resolves. Game finishes that reward and then
+        // calls draw_opening_hand (seed 600).
+        if !player.has_relic(RelicId::Toolbox) {
+            draw_opening_hand(player, rng);
+        }
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::HornCleat) {
             r.counter = 0;
         }
@@ -3629,6 +3633,11 @@ fn gain_player_block(player: &mut Player, amt: i32) {
 
 pub fn draw_cards(player: &mut Player, n: i32) {
     let _ = draw_cards_rng(player, n, None);
+}
+
+pub fn draw_opening_hand(player: &mut Player, rng: &mut RngSet) {
+    let opening_draw = if player.has_relic(RelicId::Snecko_Eye) { 7 } else { 5 };
+    let _ = draw_cards_rng(player, opening_draw, Some(rng));
 }
 
 /// Returns how many Status/Curse cards were drawn (Fire Breathing).

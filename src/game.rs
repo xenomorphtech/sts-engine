@@ -140,6 +140,7 @@ pub struct Game {
     discovery_typ: Option<crate::ids::CardType>,
     discovery_colorless: bool,
     discovery_copies: usize,
+    toolbox_reward: bool,
     /// ToyOrnithopter HealAction is addToBot after DiscoveryAction, so the
     /// CARD_REWARD snapshot is still pre-heal (seed 45).
     pending_ornithopter_heal: bool,
@@ -363,6 +364,7 @@ impl Game {
             discovery_typ: None,
             discovery_colorless: false,
             discovery_copies: 1,
+            toolbox_reward: false,
             pending_ornithopter_heal: false,
         };
         game.neow_options = vec![NeowOption {
@@ -543,7 +545,9 @@ impl Game {
                         room: None,
                     });
                 }
-                actions.push(Action::Skip);
+                if !self.toolbox_reward {
+                    actions.push(Action::Skip);
+                }
             }
             Screen::HandSelect => {
                 for (i, card) in self.player.hand.iter().enumerate() {
@@ -2524,6 +2528,12 @@ impl Game {
         }
     }
 
+    fn begin_toolbox_reward(&mut self) {
+        self.card_reward = crate::rewards::discovery_cards(&self.dungeon, &mut self.rng, None, true);
+        self.toolbox_reward = true;
+        self.screen = Screen::CardReward;
+    }
+
     fn generate_card_reward(&mut self) {
         let boss = self.current_room == RoomType::Boss;
         let elite = self.current_room == RoomType::Elite;
@@ -2634,7 +2644,13 @@ impl Game {
                     })
                     .or_else(|| self.card_reward.get(*index).cloned());
                 if let Some(mut card) = card {
-                    if self.discovery_combat {
+                    if self.toolbox_reward {
+                        if self.player.hand.len() < 10 {
+                            self.player.hand.push(card);
+                        } else {
+                            self.player.discard.push(card);
+                        }
+                    } else if self.discovery_combat {
                         card.cost_for_turn = 0;
                         for _ in 0..self.discovery_copies.max(1) {
                             if self.player.hand.len() < 10 {
@@ -2662,6 +2678,14 @@ impl Game {
     }
 
     fn finish_card_reward(&mut self) {
+        if self.toolbox_reward {
+            self.toolbox_reward = false;
+            self.card_reward.clear();
+            self.screen = Screen::Combat;
+            crate::combat::draw_opening_hand(&mut self.player, &mut self.rng);
+            self.begin_gambling_chip();
+            return;
+        }
         if self.discovery_combat {
             self.discovery_combat = false;
             self.discovery_copies = 1;
@@ -3158,7 +3182,11 @@ impl Game {
             self.ascension,
         ));
         self.screen = Screen::Combat;
-        self.begin_gambling_chip();
+        if self.player.has_relic(RelicId::Toolbox) {
+            self.begin_toolbox_reward();
+        } else {
+            self.begin_gambling_chip();
+        }
     }
 
     fn start_combat_in_current_room(&mut self) {
@@ -3181,7 +3209,11 @@ impl Game {
         if self.current_room == RoomType::Elite {
             self.apply_emerald_elite_buff();
         }
-        self.begin_gambling_chip();
+        if self.player.has_relic(RelicId::Toolbox) {
+            self.begin_toolbox_reward();
+        } else {
+            self.begin_gambling_chip();
+        }
     }
 
     fn apply_emerald_elite_buff(&mut self) {
