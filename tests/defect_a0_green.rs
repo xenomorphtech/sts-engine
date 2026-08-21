@@ -2312,6 +2312,24 @@ fn cauldron_opens_five_potion_rewards_on_equip() {
 }
 
 #[test]
+fn orrery_opens_five_independent_card_rewards_on_equip() {
+    // 163: Orrery creates five eagerly rolled CARD reward items. Choosing the
+    // first opens Bullseye/Capacitor/Claw+ without buying the first shop card.
+    let cfg = default_config(Character::Defect, "163", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 253,
+                "163 still misses Orrery card rewards last_ok={} want > 253: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn sacred_bark_doubles_colorless_potion_discovery_copies() {
     // 15: Sacred Bark makes Colorless Potion create two copies of the chosen
     // Jack of All Trades instead of one.

@@ -32,6 +32,9 @@ pub struct Reward {
     pub taken: bool,
     /// Bidirectional `RewardItem.relicLink` (chest relic ↔ sapphire key).
     relic_link: Option<usize>,
+    /// RewardItem.cards, populated eagerly for multi-card rewards such as
+    /// Orrery so every CARD item keeps its own roll.
+    card_options: Option<Vec<Card>>,
 }
 
 impl Reward {
@@ -40,6 +43,7 @@ impl Reward {
             kind,
             taken: false,
             relic_link: None,
+            card_options: None,
         }
     }
 }
@@ -92,6 +96,7 @@ pub struct Game {
     pub combat: Option<Combat>,
     pub rewards: Vec<Reward>,
     pub card_reward: Vec<Card>,
+    active_card_reward: Option<usize>,
     pub event: Option<EventState>,
     pub neow_options: Vec<NeowOption>,
     pub neow_screen: i32,
@@ -310,6 +315,7 @@ impl Game {
             combat: None,
             rewards: Vec::new(),
             card_reward: Vec::new(),
+            active_card_reward: None,
             event: None,
             neow_options: Vec::new(),
             neow_screen: 0,
@@ -954,6 +960,7 @@ impl Game {
             kind: RewardKind::Card,
             taken: false,
             relic_link: None,
+            card_options: None,
         });
         self.generate_card_reward();
         self.screen = Screen::CombatReward;
@@ -2161,6 +2168,7 @@ impl Game {
             kind: RewardKind::Card,
             taken: false,
             relic_link: None,
+            card_options: None,
         });
         self.generate_card_reward();
         self.combat = None;
@@ -2180,6 +2188,7 @@ impl Game {
             kind: RewardKind::Gold(gold),
             taken: false,
             relic_link: None,
+            card_options: None,
         });
     }
 
@@ -2196,6 +2205,7 @@ impl Game {
             kind: RewardKind::StolenGold(gold),
             taken: false,
             relic_link: None,
+            card_options: None,
         });
     }
 
@@ -2307,7 +2317,7 @@ impl Game {
             RewardKind::EmeraldKey => self.has_emerald_key = true,
             RewardKind::SapphireKey => self.has_sapphire_key = true,
             RewardKind::Card => {
-                self.open_card_reward();
+                self.open_reward_card_at(real);
                 return;
             }
         }
@@ -2420,7 +2430,13 @@ impl Game {
                         return;
                     }
                     if label == "CARD" {
-                        self.open_card_reward();
+                        if let Some(real) = self
+                            .rewards
+                            .iter()
+                            .position(|r| matches!(r.kind, RewardKind::Card) && !r.taken)
+                        {
+                            self.open_reward_card_at(real);
+                        }
                         return;
                     }
                 }
@@ -2504,6 +2520,18 @@ impl Game {
         self.screen = Screen::CardReward;
     }
 
+    fn open_reward_card_at(&mut self, real: usize) {
+        if let Some(cards) = self
+            .rewards
+            .get(real)
+            .and_then(|reward| reward.card_options.clone())
+        {
+            self.card_reward = cards;
+        }
+        self.active_card_reward = Some(real);
+        self.open_card_reward();
+    }
+
     /// CampfireSleepEffect: after Rest heal, Dream Catcher rolls `getRewardCards`
     /// and opens CardRewardScreen with a null RewardItem.
     fn open_dream_catcher_reward(&mut self) {
@@ -2574,11 +2602,6 @@ impl Game {
                         self.pending_cards.push(card);
                     }
                 }
-                if !self.discovery_combat {
-                    if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::Card)) {
-                        r.taken = true;
-                    }
-                }
                 self.finish_card_reward();
             }
             _ => {}
@@ -2594,8 +2617,14 @@ impl Game {
             self.apply_pending_ornithopter_heal();
             return;
         }
+        if let Some(real) = self.active_card_reward.take() {
+            if let Some(reward) = self.rewards.get_mut(real) {
+                reward.taken = true;
+            }
+        }
         // FastCardObtainEffect lands before the next stable boundary.
         self.flush_pending_cards();
+        self.card_reward.clear();
         if self.current_room == RoomType::Neow {
             self.present_neow_leave();
             return;
@@ -3186,6 +3215,7 @@ impl Game {
             kind: RewardKind::SapphireKey,
             taken: false,
             relic_link: Some(last),
+            card_options: None,
         });
     }
 
@@ -5598,6 +5628,20 @@ impl Game {
             RelicId::Empty_Cage => self.open_empty_cage_grid(),
             RelicId::Tiny_House => self.on_equip_tiny_house(),
             RelicId::Astrolabe => self.open_astrolabe_grid(),
+            RelicId::Orrery => {
+                // Four addCardToRewards calls followed by
+                // CombatRewardScreen.open's automatic CARD reward. Each
+                // RewardItem eagerly snapshots its own getRewardCards roll.
+                self.rewards.clear();
+                self.card_reward.clear();
+                for _ in 0..5 {
+                    self.generate_card_reward();
+                    let mut reward = Reward::new(RewardKind::Card);
+                    reward.card_options = Some(std::mem::take(&mut self.card_reward));
+                    self.rewards.push(reward);
+                }
+                self.screen = Screen::CombatReward;
+            }
             RelicId::Cauldron => {
                 // Cauldron.onEquip adds five uniform character-pool potions,
                 // opens CombatRewardScreen, then removes its automatic CARD.
