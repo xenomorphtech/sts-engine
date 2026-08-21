@@ -2802,6 +2802,24 @@ fn upgraded_chaos_rolls_all_orbs_before_channel_actions() {
 }
 
 #[test]
+fn monster_regeneration_waits_for_the_enemy_turn_to_finish() {
+    // 245: Taskmaster acts first at 32 HP, then Red Slaver kills the player.
+    // Java never reaches the group end-of-turn phase that would heal it to 37.
+    let cfg = default_config(Character::Defect, "245", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 307,
+                "245 still heals a monster before lethal damage last_ok={} want > 307: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

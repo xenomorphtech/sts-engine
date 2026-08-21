@@ -6007,10 +6007,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         if metal > 0 && combat.monsters[i].alive() {
             combat.monsters[i].block += metal;
         }
-        let regen = combat.monsters[i].power_amount(PowerId::Regen);
-        if regen > 0 && combat.monsters[i].alive() && !combat.monsters[i].half_dead {
-            combat.monsters[i].hp = (combat.monsters[i].hp + regen).min(combat.monsters[i].max_hp);
-        }
         if let Some(kids) = spawned {
             let mut parent_idx = i;
             for mut kid in kids {
@@ -6087,6 +6083,21 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     }
     if combat.all_dead() {
         return;
+    }
+
+    // GameActionManager drains the entire monsterQueue before
+    // MonsterGroup.applyEndOfTurnPowers calls each monster's end-of-turn
+    // triggers. RegenerateMonsterPower therefore queues its heal only after
+    // every monster has acted; lethal damage from a later monster cancels it.
+    for monster in combat
+        .monsters
+        .iter_mut()
+        .filter(|m| m.alive() && !m.half_dead)
+    {
+        let regen = monster.power_amount(PowerId::Regen);
+        if regen > 0 {
+            monster.hp = (monster.hp + regen).min(monster.max_hp);
+        }
     }
 
     for monster in &mut combat.monsters {
