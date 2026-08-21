@@ -1213,7 +1213,11 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
         EncounterId::ShelledParasiteAndFungi => &[MonsterId::ShelledParasite, MonsterId::FungiBeast],
         EncounterId::Automaton => &[MonsterId::BronzeAutomaton],
         EncounterId::BookOfStabbing => &[MonsterId::BookOfStabbing],
-        EncounterId::Slavers => &[MonsterId::SlaverBlue, MonsterId::SlaverRed],
+        EncounterId::Slavers => &[
+            MonsterId::SlaverBlue,
+            MonsterId::Taskmaster,
+            MonsterId::SlaverRed,
+        ],
         EncounterId::GremlinLeader => &[
             MonsterId::GremlinWarrior,
             MonsterId::GremlinWarrior,

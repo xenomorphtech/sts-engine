@@ -604,6 +604,10 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
         // Constructor burns monsterHpRng once, then setHp rolls the real range.
         let _ = rng.monster_hp.random_range(hp_min, hp_max);
     }
+    if id == MonsterId::Taskmaster {
+        // Taskmaster passes monsterHpRng.random(54, 60) to super, then setHp.
+        let _ = rng.monster_hp.random_range(54, 60);
+    }
     if id == MonsterId::OrbWalker {
         // OrbWalker ctor: super(..., monsterHpRng.random(90, 96)) then setHp.
         let _ = rng.monster_hp.random_range(90, 96);
@@ -829,6 +833,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (145, 155)
             } else {
                 (140, 148)
+            }
+        }
+        MonsterId::Taskmaster => {
+            if ascension >= 8 {
+                (57, 64)
+            } else {
+                (54, 60)
             }
         }
         MonsterId::Lagavulin => {
@@ -1557,6 +1568,9 @@ impl Monster {
                     self.set_move(3, Intent::DefendBuff, 0, 1);
                 }
             }
+            MonsterId::Taskmaster => {
+                self.set_move(2, Intent::AttackDebuff, 7, 1);
+            }
             MonsterId::LouseNormal | MonsterId::LouseDefensive => {
                 let bite = self.extra.max(5);
                 let grow = self.id != MonsterId::LouseDefensive;
@@ -1945,6 +1959,22 @@ impl Monster {
             }
             (MonsterId::GremlinLeader, 4) => {
                 let _ = hit_player(player, self, rng, 6, 3);
+            }
+            (MonsterId::Taskmaster, 2) => {
+                let _ = hit_player(player, self, rng, 7, 1);
+                let wounds = if ascension >= 18 {
+                    3
+                } else if ascension >= 3 {
+                    2
+                } else {
+                    1
+                };
+                for _ in 0..wounds {
+                    player.discard.push(Card::new(CardId::Wound));
+                }
+                if ascension >= 18 {
+                    self.add_power(PowerId::Strength, 1);
+                }
             }
             (MonsterId::Lagavulin, 4) => {}
             (MonsterId::Lagavulin, 5) => {
