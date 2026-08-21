@@ -1772,7 +1772,14 @@ impl Game {
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
                         if let Some(m) = combat.monsters.get_mut(t) {
-                            combat::deal_thorns(m, 20);
+                            // AbstractPotion.getPotency doubles FirePotion's
+                            // base 20 while Sacred Bark is held.
+                            let damage = if self.player.has_relic(RelicId::SacredBark) {
+                                40
+                            } else {
+                                20
+                            };
+                            combat::deal_thorns(m, damage);
                         }
                         // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
                         // addToBot Draw+Energy if combat is not over (seed 773).

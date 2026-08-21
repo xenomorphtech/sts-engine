@@ -256,6 +256,24 @@ fn bronze_automaton_spawns_orbs_around_boss() {
 }
 
 #[test]
+fn sacred_bark_doubles_fire_potion_damage() {
+    // Seed 340 uses Fire Potion against Orb Walker while holding Sacred Bark.
+    // Java's AbstractPotion.getPotency doubles the potion's damage to 40.
+    let cfg = default_config(Character::Defect, "340", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 438,
+                "340 still fails at Sacred Bark/Fire Potion last_ok={} want > 438: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
