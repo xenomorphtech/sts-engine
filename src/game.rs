@@ -2547,7 +2547,9 @@ impl Game {
 
     fn campfire_options(&self) -> Vec<&'static str> {
         let mut opts = Vec::new();
-        opts.push("Rest");
+        if !self.player.has_relic(RelicId::Coffee_Dripper) {
+            opts.push("Rest");
+        }
         if self.player.deck.iter().any(|c| c.can_upgrade()) {
             opts.push("Smith");
         }

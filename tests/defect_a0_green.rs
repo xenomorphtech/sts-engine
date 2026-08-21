@@ -292,6 +292,24 @@ fn sozu_blocks_potion_rewards_before_we_meet_again() {
 }
 
 #[test]
+fn coffee_dripper_skips_rest_option() {
+    // Seed 628 owns Coffee Dripper at an Act 2 campfire. Java leaves Rest
+    // unusable, so the headless driver's compact choice index 0 opens Smith.
+    let cfg = default_config(Character::Defect, "628", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 307,
+                "628 still fails at Coffee Dripper campfire last_ok={} want > 307: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
