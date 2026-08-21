@@ -1047,7 +1047,7 @@ impl Game {
         let mut remove_indices: Vec<usize> = selected.iter().map(|(i, _)| *i).collect();
         remove_indices.sort_unstable();
         for i in remove_indices.into_iter().rev() {
-            self.player.deck.remove(i);
+            self.remove_master_deck_card(i);
         }
         for (_, old) in selected {
             if let Some(id) = self.misc_transform_roll(old) {
@@ -1103,7 +1103,7 @@ impl Game {
         }
         if idxs.len() <= 2 {
             for i in idxs.into_iter().rev() {
-                self.player.deck.remove(i);
+                self.remove_master_deck_card(i);
             }
             return;
         }
@@ -1334,7 +1334,7 @@ impl Game {
                         if bonfire {
                             self.apply_bonfire_offer(self.player.deck[i].rarity());
                         }
-                        self.player.deck.remove(i);
+                        self.remove_master_deck_card(i);
                     }
                 }
                 if designer_full {
@@ -1381,7 +1381,7 @@ impl Game {
                         if i < self.player.deck.len() {
                             let old = self.player.deck[i].id;
                             let rolled = self.neow_transform_roll(old);
-                            self.player.deck.remove(i);
+                            self.remove_master_deck_card(i);
                             if let Some(id) = rolled {
                                 self.pending_cards.push(Card::new(id));
                             }
@@ -3037,8 +3037,22 @@ impl Game {
         self.shop.purge_available = false;
         self.shop.purge_cost += 25;
         if i < self.player.deck.len() {
-            self.player.deck.remove(i);
+            self.remove_master_deck_card(i);
         }
+    }
+
+    /// CardGroup.removeCard(card) on the master deck invokes the removed
+    /// card's onRemoveFromMasterDeck hook before relic deck-change hooks.
+    fn remove_master_deck_card(&mut self, index: usize) -> Option<Card> {
+        if index >= self.player.deck.len() {
+            return None;
+        }
+        let card = self.player.deck.remove(index);
+        if card.id == CardId::Parasite {
+            self.player.max_hp = (self.player.max_hp - 3).max(1);
+            self.player.hp = self.player.hp.min(self.player.max_hp);
+        }
+        Some(card)
     }
 
     fn spend_shop_gold(&mut self, amount: i32) {
@@ -5388,7 +5402,7 @@ impl Game {
                     if idx >= 0 {
                         let idx = idx as usize;
                         if idx < self.player.deck.len() {
-                            self.player.deck.remove(idx);
+                            self.remove_master_deck_card(idx);
                         }
                     }
                     if let Some(event) = self.event.as_mut() {
@@ -5559,7 +5573,7 @@ impl Game {
                     if card_idx >= 0 {
                         let idx = card_idx as usize;
                         if idx < self.player.deck.len() {
-                            self.player.deck.remove(idx);
+                            self.remove_master_deck_card(idx);
                         }
                     }
                     if let Some(id) = self.next_screenless_relic() {
