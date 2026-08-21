@@ -7170,6 +7170,10 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
                 combat.pending_stasis_cards.push(card);
             }
         }
+        // TheCollector.die pushes its Torch Head SuicideActions on top of
+        // the action queue. DamageAllEnemiesAction finishes its own target
+        // loop first, then those suicides resolve before the next action.
+        resolve_collector_death(combat);
         return;
     }
     // LightningOrbPassiveAction/EvokeAction selects a random monster before
@@ -7197,6 +7201,10 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     if let Some(card) = stasis_card {
         combat.pending_stasis_cards.push(card);
     }
+    // A lethal Lightning DamageAction puts the Collector's summon suicides
+    // ahead of later orb passives. Those passives then find no target and do
+    // not advance cardRandomRng (seed 298).
+    resolve_collector_death(combat);
 }
 
 /// AbstractOrb.applyLockOn: `(int)(dmg * 1.5F)` when the target has Lockon.
