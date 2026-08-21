@@ -613,6 +613,24 @@ fn knowing_skull_leave_costs_hp_before_final_leave() {
 }
 
 #[test]
+fn the_joust_bet_roll_and_payout_follow_java_screens() {
+    // Seed 21 bets 50 gold on the murderer, then miscRng rolls ownerWins=false.
+    // Java pays 100 gold on the JOUST screen before presenting final Leave.
+    let cfg = default_config(Character::Defect, "21", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 408,
+                "21 still fails in The Joust last_ok={} want > 408: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

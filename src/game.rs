@@ -3542,6 +3542,11 @@ impl Game {
                 data = vec![6, 6, 6, 6];
                 vec!["[Continue]".into()]
             }
+            "The Joust" => {
+                // betFor and ownerWins are populated on the following screens.
+                data = vec![0, 0];
+                vec!["[Continue]".into()]
+            }
             "Forgotten Altar" => {
                 // ForgottenAltar ctor: hpLoss = MathUtils.round(max * 0.25),
                 // A15+ 0.35. Golden Idol option is disabled without the relic;
@@ -4258,6 +4263,62 @@ impl Game {
                 1 => {
                     // Reward choices need their own walk witnesses: keep them
                     // staged in ASK instead of pretending the event completed.
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "The Joust" {
+            match screen {
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec![
+                            "[Murderer] #yBet #y50 #yGold - #g70%: #gwin #g100 #gGold."
+                                .into(),
+                            "[Owner] #yBet #y50 #yGold - #g30%: #gwin #g250 #gGold."
+                                .into(),
+                        ];
+                    }
+                }
+                1 => {
+                    self.player.gold = (self.player.gold - 50).max(0);
+                    if let Some(event) = self.event.as_mut() {
+                        event.data[0] = i32::from(*index == 1);
+                        event.screen = 2;
+                        event.options = vec!["[Watch]".into()];
+                    }
+                }
+                2 => {
+                    let owner_wins = self.rng.misc.random_boolean_chance(0.3);
+                    if let Some(event) = self.event.as_mut() {
+                        event.data[1] = i32::from(owner_wins);
+                        event.screen = 3;
+                        event.options = vec!["[Watch]".into()];
+                    }
+                }
+                3 => {
+                    let (bet_for, owner_wins) = self
+                        .event
+                        .as_ref()
+                        .map(|e| (e.data[0] != 0, e.data[1] != 0))
+                        .unwrap_or((false, false));
+                    let payout = if bet_for == owner_wins {
+                        if owner_wins { 250 } else { 100 }
+                    } else {
+                        0
+                    };
+                    if payout > 0 && !self.player.has_relic(RelicId::Ectoplasm) {
+                        // AbstractPlayer.gainGold calls each relic's onGainGold.
+                        self.player.gold += payout;
+                        if self.player.has_relic(RelicId::Bloody_Idol) {
+                            self.player.hp = (self.player.hp + 5).min(self.player.max_hp);
+                        }
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 4;
+                        event.options = vec!["[Leave]".into()];
+                    }
                 }
                 _ => self.open_map(),
             }
