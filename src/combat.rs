@@ -2,7 +2,7 @@ use crate::card::Card;
 use crate::content::encounter_monsters;
 use crate::creature::{power_is_debuff, Intent, Monster, Orb, OrbKind, Player};
 use crate::dungeon::Dungeon;
-use crate::ids::{CardId, CardRarity, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId};
+use crate::ids::{CardId, CardRarity, CardTarget, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId};
 use crate::java_util::shuffle_java;
 use crate::rng::RngSet;
 
@@ -4073,6 +4073,17 @@ pub fn play_owned_card(
     let mut gremlin_horn_after_original = 0;
     for play_i in 0..plays {
         if play_i > 0 {
+            // GameActionManager rejects a queued duplicate whose ENEMY target
+            // died while the original card's actions were resolving. The copy
+            // never reaches use(), so on-hit effects such as Cold Snap's Frost
+            // channel must also be skipped (seed 135).
+            if card.target() == CardTarget::ENEMY
+                && !target
+                    .and_then(|i| combat.monsters.get(i))
+                    .is_some_and(|m| m.alive())
+            {
+                break;
+            }
             card.free_to_play_once = true;
         }
         // UseCardAction.onUseCard fires when the card is played, before GRID.
