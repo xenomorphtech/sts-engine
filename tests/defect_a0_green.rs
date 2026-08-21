@@ -2603,6 +2603,25 @@ fn sacred_bark_doubles_energy_potion() {
 }
 
 #[test]
+fn lethal_life_suck_does_not_resolve_queued_heal() {
+    // 283: Shelled Parasite's Life Suck kills the player for 8 after Frost
+    // block. Java stops before its queued HealAction, leaving the Parasite at
+    // 15 HP instead of healing it to 23.
+    let cfg = default_config(Character::Defect, "283", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 290,
+                "283 still heals after lethal Life Suck last_ok={} want > 290: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

@@ -2501,7 +2501,9 @@ impl Monster {
             }
             (MonsterId::ShelledParasite, 3) => {
                 let dealt = hit_player(player, self, rng, 10, 1);
-                if dealt > 0 {
+                // VampireDamageAction queues HealAction after target.damage.
+                // A lethal hit stops the room update before that heal resolves.
+                if dealt > 0 && player.hp > 0 {
                     self.hp = (self.hp + dealt).min(self.max_hp);
                 }
             }
