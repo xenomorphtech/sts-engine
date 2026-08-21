@@ -556,6 +556,25 @@ fn static_discharge_evoke_can_cancel_guardian_second_hit() {
 }
 
 #[test]
+fn sharp_hide_can_kill_before_ftl_deferred_damage() {
+    // FTLAction adds its DamageAction behind UseCardAction's queued power
+    // hooks. On seed 350, Guardian's Sharp Hide therefore kills the 1-HP
+    // player and post-death cleanup drops FTL's pending 5 damage.
+    let cfg = default_config(Character::Defect, "350", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 203,
+                "350 still fails at Sharp Hide/FTL queue order last_ok={} want > 203: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

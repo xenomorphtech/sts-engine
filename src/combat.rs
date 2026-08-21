@@ -3828,7 +3828,16 @@ pub fn play_owned_card(
         } else {
             0
         };
-        apply_card_effect(player, combat, &mut card, target, rng, dungeon);
+        let defer_ftl_damage = card.id == CardId::FTL && sharp_hide > 0;
+        apply_card_effect(
+            player,
+            combat,
+            &mut card,
+            target,
+            rng,
+            dungeon,
+            defer_ftl_damage,
+        );
         for _ in 0..storm {
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
@@ -3936,6 +3945,31 @@ pub fn play_owned_card(
                     let _ = try_cheat_death(player);
                     red_skull_on_hp_change(player);
                     centennial_puzzle_was_hp_lost(player, rng);
+                }
+            }
+            if defer_ftl_damage && player.hp > 0 {
+                let dead_before_ftl = combat.monsters.iter().filter(|m| m.dead).count();
+                if let Some(i) = target {
+                    if let Some(m) = combat.monsters.get_mut(i) {
+                        damage_monster(m, player, rng, card.base_damage as i32, 1);
+                    }
+                }
+                flush_curl_up(combat);
+                flush_guardian_defensive_block(combat);
+                gremlin_horn_on_kills(player, combat, rng, dead_before_ftl);
+                for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
+                    let spores = monster.power_amount(PowerId::SporeCloud);
+                    if spores > 0 {
+                        player.add_power(PowerId::Vulnerable, spores);
+                        monster.powers.retain(|p| p.id != PowerId::SporeCloud);
+                    }
+                    if let Some(stasis_card) = monster.stasis_card.take() {
+                        if player.hand.len() < 10 {
+                            player.hand.push(stasis_card);
+                        } else {
+                            player.discard.push(stasis_card);
+                        }
+                    }
                 }
             }
         }
@@ -4113,6 +4147,7 @@ fn apply_card_effect(
     target: Option<usize>,
     rng: &mut RngSet,
     dungeon: Option<&Dungeon>,
+    defer_ftl_damage: bool,
 ) {
     let dmg = card.base_damage as i32;
     let block = derived_block(card, player);
@@ -4322,13 +4357,20 @@ fn apply_card_effect(
             }
         }
         CardId::FTL => {
+            // FTL.use queues FTLAction, which later puts DrawCardAction on top
+            // but appends its DamageAction behind UseCardAction's on-use
+            // actions. In particular, Guardian's Sharp Hide can kill the
+            // player before FTL damage resolves (seed 350). Defer the damage
+            // until those attack hooks have run above.
             if combat.cards_played_this_turn < card.base_magic.max(3) as i32 {
                 let n = draw_cards_rng(player, 1, Some(rng));
                 apply_fire_breathing(player, &mut combat.monsters, n);
             }
-            if let Some(i) = target {
-                if let Some(m) = combat.monsters.get_mut(i) {
-                    damage_monster(m, player, rng, dmg, 1);
+            if !defer_ftl_damage {
+                if let Some(i) = target {
+                    if let Some(m) = combat.monsters.get_mut(i) {
+                        damage_monster(m, player, rng, dmg, 1);
+                    }
                 }
             }
         }
