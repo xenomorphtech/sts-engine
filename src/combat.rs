@@ -14,6 +14,8 @@ pub struct Combat {
     pub cards_played_this_turn: i32,
     pub skills_this_turn: i32,
     pub attacks_this_turn: i32,
+    /// OrangePellets ATTACK/SKILL/POWER flags for the current trigger cycle.
+    pub orange_pellets_mask: u8,
     pub need_exhaust_select: bool,
     pub need_put_on_deck: bool,
     /// BetterDiscardPileToHandAction GRID (Hologram).
@@ -290,6 +292,7 @@ impl Combat {
             cards_played_this_turn: 0,
             skills_this_turn: 0,
             attacks_this_turn: 0,
+            orange_pellets_mask: 0,
             need_exhaust_select: false,
             need_put_on_deck: false,
             need_discard_to_hand: false,
@@ -4071,6 +4074,22 @@ pub fn play_owned_card(
             add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
         }
         on_use_card(player, combat, &card, rng);
+        let orange_pellets_after_card = if player.has_relic(RelicId::OrangePellets) {
+            combat.orange_pellets_mask |= match card.card_type() {
+                CardType::ATTACK => 1,
+                CardType::SKILL => 2,
+                CardType::POWER => 4,
+                _ => 0,
+            };
+            if combat.orange_pellets_mask == 7 {
+                combat.orange_pellets_mask = 0;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         // AbstractPlayer.useCard calls hand.triggerOnOtherCardPlayed after
         // constructing UseCardAction. Pain queues LoseHPAction addToTop, so
         // each copy still in hand loses 1 HP before the card's queued effects.
@@ -4115,6 +4134,11 @@ pub fn play_owned_card(
             dungeon,
             defer_ftl_damage,
         );
+        // OrangePellets.onUseCard adds RemoveDebuffsAction to the bottom,
+        // behind the completing card's use() actions (seed 118 Defragment).
+        if orange_pellets_after_card {
+            player.powers.retain(|p| !power_is_debuff(p.id, p.amount));
+        }
         // AbstractCreature.brokeBlock calls HandDrill.onBlockBroken, whose
         // ApplyPowerAction is addToBot behind actions already queued by use().
         flush_hand_drill(player, combat, rng);
@@ -6200,6 +6224,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     combat.cards_played_this_turn = 0;
     combat.skills_this_turn = 0;
     combat.attacks_this_turn = 0;
+    combat.orange_pellets_mask = 0;
     // GameActionManager.getNextAction: Barricade/Blur keep block; Calipers
     // loseBlock(15); otherwise loseBlock() all.
     if player.power_amount(PowerId::Barricade) == 0 {
