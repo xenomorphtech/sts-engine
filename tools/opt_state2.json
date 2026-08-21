@@ -175,7 +175,7 @@
   35.274785887654254
  ],
  "sigma_mult": 0.2,
- "gen": 27,
+ "gen": 33,
  "history": [
   {
    "gen": 1,
@@ -430,6 +430,62 @@
    "fit": 481.0,
    "wins500": 201,
    "floor": 39.5,
+   "kept": false,
+   "sigma": 0.2
+  },
+  {
+   "gen": 28,
+   "fit": 464.58,
+   "wins500": 193,
+   "floor": 39.29,
+   "kept": false,
+   "sigma": 0.2
+  },
+  {
+   "gen": 29,
+   "fit": 490.98,
+   "wins500": 206,
+   "floor": 39.49,
+   "kept": false,
+   "sigma": 0.2
+  },
+  {
+   "gen": 30,
+   "fit": 478.82,
+   "wins500": 200,
+   "floor": 39.41,
+   "kept": false,
+   "sigma": 0.2,
+   "val_search_1k": [
+    402,
+    39.91
+   ],
+   "val_holdout_1k": [
+    401,
+    39.71
+   ]
+  },
+  {
+   "gen": 31,
+   "fit": 477.14,
+   "wins500": 199,
+   "floor": 39.57,
+   "kept": false,
+   "sigma": 0.2
+  },
+  {
+   "gen": 32,
+   "fit": 468.34000000000003,
+   "wins500": 195,
+   "floor": 39.17,
+   "kept": false,
+   "sigma": 0.2
+  },
+  {
+   "gen": 33,
+   "fit": 476.6,
+   "wins500": 199,
+   "floor": 39.3,
    "kept": false,
    "sigma": 0.2
   }

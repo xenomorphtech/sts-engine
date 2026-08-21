@@ -31,3 +31,10 @@ gen 25 top=495.1 mean=487.1 kept=False sigma=0.20
   validate search1k=402/39.91 holdout1k=401/39.71
 gen 26 top=496.0 mean=482.7 kept=False sigma=0.20
 gen 27 top=491.1 mean=481.0 kept=False sigma=0.20
+gen 28 top=497.2 mean=464.6 kept=False sigma=0.20
+gen 29 top=507.6 mean=491.0 kept=False sigma=0.20
+gen 30 top=489.1 mean=478.8 kept=False sigma=0.20
+  validate search1k=402/39.91 holdout1k=401/39.71
+gen 31 top=480.3 mean=477.1 kept=False sigma=0.20
+gen 32 top=489.0 mean=468.3 kept=False sigma=0.20
+gen 33 top=486.6 mean=476.6 kept=False sigma=0.20
