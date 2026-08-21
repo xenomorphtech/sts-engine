@@ -6333,23 +6333,6 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if plated > 0 {
         player.block += plated;
     }
-    // ConstrictedPower.atEndOfTurn: THORNS damage from Spire Growth.
-    let constricted = player.power_amount(PowerId::Constricted);
-    if constricted > 0 {
-        let dmg = intangible_player(player, constricted);
-        let dmg = apply_block(&mut player.block, dmg);
-        let dmg = buffer_absorb(player, dmg);
-        let dmg = on_lose_hp_last(player, dmg);
-        if dmg > 0 {
-            player.hp -= dmg;
-            if player.hp < 0 {
-                player.hp = 0;
-            }
-            let _ = try_cheat_death(player);
-            red_skull_on_hp_change(player);
-            centennial_puzzle_was_hp_lost(player, rng);
-        }
-    }
     crate::creature::end_of_turn(&mut player.powers);
     // AbstractRoom.endTurn calls resetAttributes on every card in hand,
     // draw, and discard. In particular, temporary setCostForTurn changes
@@ -6456,6 +6439,25 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         player.discard.push(card);
         if player.hp <= 0 {
             return;
+        }
+    }
+    // AbstractRoom.endTurn invokes ConstrictedPower.atEndOfTurn only after
+    // callEndOfTurnActions has drained its orb and end-turn-card actions.
+    // Its THORNS DamageAction therefore sees Frost's block (seed 79).
+    let constricted = player.power_amount(PowerId::Constricted);
+    if constricted > 0 {
+        let dmg = intangible_player(player, constricted);
+        let dmg = apply_block(&mut player.block, dmg);
+        let dmg = buffer_absorb(player, dmg);
+        let dmg = on_lose_hp_last(player, dmg);
+        if dmg > 0 {
+            player.hp -= dmg;
+            if player.hp < 0 {
+                player.hp = 0;
+            }
+            let _ = try_cheat_death(player);
+            red_skull_on_hp_change(player);
+            centennial_puzzle_was_hp_lost(player, rng);
         }
     }
     // RegenPower.atEndOfTurn is AbstractRoom.endTurn, after
