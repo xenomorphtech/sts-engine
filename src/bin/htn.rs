@@ -375,6 +375,98 @@ struct RunResult {
     actions: Vec<Action>,
 }
 
+/// Batch-wide orb telemetry, tallied only from executed actions (never from
+/// HTN search clones). Indexed by Lightning, Frost, Dark, Plasma.
+#[derive(Default)]
+struct OrbStats {
+    channels: [AtomicUsize; 4],
+    evokes: [AtomicUsize; 4],
+    dark_evoke_damage: AtomicUsize,
+    dark_evoke_max: AtomicUsize,
+    plays: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<&'static str, usize>>>,
+}
+
+static ORB_STATS: OrbStats = OrbStats {
+    channels: [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ],
+    evokes: [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ],
+    dark_evoke_damage: AtomicUsize::new(0),
+    dark_evoke_max: AtomicUsize::new(0),
+    plays: std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new())),
+};
+
+fn orb_kind_index(kind: sts_engine::creature::OrbKind) -> usize {
+    use sts_engine::creature::OrbKind;
+    match kind {
+        OrbKind::Lightning => 0,
+        OrbKind::Frost => 1,
+        OrbKind::Dark => 2,
+        OrbKind::Plasma => 3,
+    }
+}
+
+/// Align the orb rows before/after one executed step. Orbs channel by
+/// appending on the right and evoke by leaving from the left, so the after
+/// row is `before[j..] ++ channeled` for the smallest feasible j.
+fn tally_orb_step(before: &[(usize, i32)], after: &[(usize, i32)]) {
+    let mut split = None;
+    for j in 0..=before.len() {
+        let kept = &before[j..];
+        if after.len() >= kept.len() && kept.iter().map(|o| o.0).eq(after[..kept.len()].iter().map(|o| o.0)) {
+            split = Some(j);
+            break;
+        }
+    }
+    let Some(j) = split else { return };
+    for &(kind, evoke) in &before[..j] {
+        ORB_STATS.evokes[kind].fetch_add(1, Ordering::Relaxed);
+        if kind == 2 {
+            ORB_STATS
+                .dark_evoke_damage
+                .fetch_add(evoke.max(0) as usize, Ordering::Relaxed);
+            ORB_STATS
+                .dark_evoke_max
+                .fetch_max(evoke.max(0) as usize, Ordering::Relaxed);
+        }
+    }
+    for &(kind, _) in &after[before.len() - j..] {
+        ORB_STATS.channels[kind].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn print_orb_stats() {
+    let names = ["lightning", "frost", "dark", "plasma"];
+    let mut parts = Vec::new();
+    for i in 0..4 {
+        parts.push(format!(
+            "{}={}ch/{}ev",
+            names[i],
+            ORB_STATS.channels[i].load(Ordering::Relaxed),
+            ORB_STATS.evokes[i].load(Ordering::Relaxed)
+        ));
+    }
+    println!(
+        "orb_stats {} dark_evoke_damage={} dark_evoke_max={}",
+        parts.join(" "),
+        ORB_STATS.dark_evoke_damage.load(Ordering::Relaxed),
+        ORB_STATS.dark_evoke_max.load(Ordering::Relaxed)
+    );
+    let plays = ORB_STATS.plays.lock().unwrap();
+    let mut rows: Vec<_> = plays.iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(a.1));
+    let joined: Vec<String> = rows.iter().map(|(id, n)| format!("{id}={n}")).collect();
+    println!("card_plays {}", joined.join(" "));
+}
+
 #[derive(Clone, Debug, Default)]
 struct RunDiagnostics {
     monsters: usize,
@@ -640,7 +732,37 @@ fn run_seed(
                 }
             }
         }
+        let orbs_before: Option<Vec<(usize, i32)>> = if screen_before == Screen::Combat {
+            if let sts_engine::Action::Play { hand_index, .. } = &action {
+                if let Some(card) = game.player.hand.get(*hand_index) {
+                    *ORB_STATS
+                        .plays
+                        .lock()
+                        .unwrap()
+                        .entry(card.sts_id())
+                        .or_insert(0) += 1;
+                }
+            }
+            Some(
+                game.player
+                    .orbs
+                    .iter()
+                    .map(|o| (orb_kind_index(o.kind), o.evoke))
+                    .collect(),
+            )
+        } else {
+            None
+        };
         game.step(&action);
+        if let Some(before) = orbs_before {
+            let after: Vec<(usize, i32)> = game
+                .player
+                .orbs
+                .iter()
+                .map(|o| (orb_kind_index(o.kind), o.evoke))
+                .collect();
+            tally_orb_step(&before, &after);
+        }
         if collect_actions {
             actions.push(action);
         }
@@ -815,6 +937,7 @@ fn print_batch(
         seeds_per_second,
         steps_per_second,
     );
+    print_orb_stats();
     if diagnostics {
         println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining\tnormals\telites\trests\tevents\tshops\ttreasures\tbosses\tboss_entry_hp\trested\tsmithed\trecalled\tact1_path\tact2_path\tact3_path\tact4_path\tfinal_focus\tfinal_orbs\tfinal_relics\tfinal_deck");
     } else {

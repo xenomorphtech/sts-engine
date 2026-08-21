@@ -482,6 +482,51 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
         .unwrap_or_else(|| legal[0].clone())
 }
 
+/// Rank Neow's blessings instead of defaulting to the first option: deck
+/// thinning and the drawback-free third-category blessings dominate the
+/// small category-0 rewards.
+pub fn neow_choice(game: &Game, legal: &[Action]) -> Action {
+    use crate::game::NeowKind;
+    let rank = |kind: NeowKind| -> i32 {
+        match kind {
+            NeowKind::RemoveTwo => 100,
+            NeowKind::TransformTwo => 85,
+            NeowKind::RareRelic => 80,
+            NeowKind::ThreeRareCards => 75,
+            NeowKind::TwoFiftyGold => 70,
+            NeowKind::RemoveCard => 55,
+            NeowKind::ThreeCards => 50,
+            NeowKind::UpgradeCard => 48,
+            NeowKind::RandomRareCard => 46,
+            NeowKind::RandomCommonRelic => 45,
+            NeowKind::TransformCard => 44,
+            NeowKind::HundredGold => 42,
+            NeowKind::TenHp => 40,
+            NeowKind::RandomColorless2 => 38,
+            NeowKind::ThreePotions => 35,
+            NeowKind::RandomColorless => 30,
+            NeowKind::ThreeEnemyKill => 25,
+            NeowKind::TwentyHp => 60,
+            NeowKind::BossRelic => 20,
+        }
+    };
+    let mut best: Option<(&Action, i32)> = None;
+    for action in legal {
+        let Action::Choose { index, .. } = action else {
+            continue;
+        };
+        let Some(option) = game.neow_options.get(*index) else {
+            continue;
+        };
+        let value = rank(option.kind);
+        if best.is_none_or(|(_, b)| value > b) {
+            best = Some((action, value));
+        }
+    }
+    best.map(|(action, _)| action.clone())
+        .unwrap_or_else(|| event_choice(game, legal))
+}
+
 pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
     let mut choices: Vec<(&Action, String)> = legal
         .iter()
