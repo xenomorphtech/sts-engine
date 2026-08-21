@@ -864,6 +864,42 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn astrolabe_transforms_three_cards() {
+    // 133: Astrolabe.onEquip GRID 3, transformCard(c, true, miscRng).
+    // Choose 13/11/7 = Ball Lightning, Melter, Compile Driver → Gash+/White
+    // Noise+/Steam+. Missing the GRID left the old deck.
+    let cfg = default_config(Character::Defect, "133", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 173,
+                "133 still fails at Astrolabe last_ok={} want > 173: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
+fn maw_bank_gold_on_boss_treasure_enter() {
+    // 683: MawBank.onEnterRoom TreasureRoomBoss +12 after boss rewards Proceed.
+    let cfg = default_config(Character::Defect, "683", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 173,
+                "683 still fails at MawBank boss chest last_ok={} want > 173: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn duplication_does_not_leave_original_free() {
     // 423: DuplicationPotion copy is a separate CardQueueItem with
     // freeToPlayOnce; the original Zap is discarded without it. Scrape then

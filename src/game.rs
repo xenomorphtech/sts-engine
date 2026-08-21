@@ -957,6 +957,67 @@ impl Game {
         self.screen = Screen::CombatReward;
     }
 
+    /// Astrolabe.onEquip: GRID of 3 purgeable cards, then transformCard(c, true, miscRng).
+    fn open_astrolabe_grid(&mut self) {
+        let idxs: Vec<usize> = self
+            .player
+            .deck
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| purgeable_card(c))
+            .map(|(i, _)| i)
+            .collect();
+        if idxs.is_empty() {
+            return;
+        }
+        if idxs.len() <= 3 {
+            self.apply_astrolabe_transforms(&idxs);
+            return;
+        }
+        let prev = self.screen;
+        self.open_grid(GridKind::Transform, 3, false);
+        if let Some(grid) = self.grid.as_mut() {
+            grid.return_screen = Some(prev);
+        }
+    }
+
+    fn apply_astrolabe_transforms(&mut self, idxs: &[usize]) {
+        let mut idxs = idxs.to_vec();
+        idxs.sort_unstable();
+        idxs.dedup();
+        for i in idxs.into_iter().rev() {
+            if i >= self.player.deck.len() {
+                continue;
+            }
+            let old = self.player.deck[i].id;
+            self.player.deck.remove(i);
+            if let Some(id) = self.misc_transform_roll(old) {
+                let mut card = Card::new(id);
+                if card.can_upgrade() {
+                    card.upgrade();
+                }
+                self.player.deck.push(card);
+            }
+        }
+    }
+
+    /// AbstractDungeon.returnTrulyRandomCardFromAvailable via miscRng.
+    fn misc_transform_roll(&mut self, avoid: CardId) -> Option<CardId> {
+        let mut pool: Vec<CardId> = self.dungeon.common_cards.clone();
+        let mut uncommons = self.dungeon.uncommon_cards.clone();
+        uncommons.reverse();
+        let mut rares = self.dungeon.rare_cards.clone();
+        rares.reverse();
+        pool.extend(uncommons);
+        pool.extend(rares);
+        pool.retain(|id| *id != avoid);
+        if pool.is_empty() {
+            return None;
+        }
+        let idx = self.rng.misc.random_int(pool.len() as i32 - 1) as usize;
+        Some(pool[idx])
+    }
+
     fn open_empty_cage_grid(&mut self) {
         let idxs: Vec<usize> = self
             .player
@@ -1228,17 +1289,26 @@ impl Game {
                 }
             }
             GridKind::Transform => {
-                // Java NeowReward.update TRANSFORM_*: transformCard via
-                // NeowEvent.rng, remove immediately, then queue
-                // ShowCardAndObtainEffect. ExactTextSim waits for that VFX
-                // before publishing Leave, so the replacement is flushed there.
-                for i in idxs.into_iter().rev() {
-                    if i < self.player.deck.len() {
-                        let old = self.player.deck[i].id;
-                        let rolled = self.neow_transform_roll(old);
-                        self.player.deck.remove(i);
-                        if let Some(id) = rolled {
-                            self.pending_cards.push(Card::new(id));
+                let astrolabe = self.grid.as_ref().is_some_and(|g| {
+                    g.needed == 3 && g.return_screen == Some(Screen::BossRelic)
+                });
+                if astrolabe {
+                    // Astrolabe.giveCards: transformCard(c, true, miscRng) and
+                    // obtain immediately (seed 133 Gash+/White Noise+/Steam+).
+                    self.apply_astrolabe_transforms(&idxs);
+                } else {
+                    // Java NeowReward.update TRANSFORM_*: transformCard via
+                    // NeowEvent.rng, remove immediately, then queue
+                    // ShowCardAndObtainEffect. ExactTextSim waits for that VFX
+                    // before publishing Leave, so the replacement is flushed there.
+                    for i in idxs.into_iter().rev() {
+                        if i < self.player.deck.len() {
+                            let old = self.player.deck[i].id;
+                            let rolled = self.neow_transform_roll(old);
+                            self.player.deck.remove(i);
+                            if let Some(id) = rolled {
+                                self.pending_cards.push(Card::new(id));
+                            }
                         }
                     }
                 }
@@ -2209,6 +2279,8 @@ impl Game {
                     self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
                     self.screen = Screen::Treasure;
                     self.current_room = RoomType::BossTreasure;
+                    // TreasureRoomBoss is a real onEnterRoom (seed 683 MawBank +12).
+                    self.maw_bank_on_enter_room();
                 } else if self.current_room == RoomType::BossTreasure {
                     // TinyHouse.onEquip CombatRewardScreen overlay: Proceed
                     // continues the act transition that BossRelic Skip would.
@@ -5086,6 +5158,7 @@ impl Game {
             RelicId::Bottled_Tornado => self.open_bottle_grid(CardType::POWER),
             RelicId::Empty_Cage => self.open_empty_cage_grid(),
             RelicId::Tiny_House => self.on_equip_tiny_house(),
+            RelicId::Astrolabe => self.open_astrolabe_grid(),
             _ => {}
         }
         if matches!(id, RelicId::Frozen_Egg_2 | RelicId::Molten_Egg_2 | RelicId::Toxic_Egg_2) {
