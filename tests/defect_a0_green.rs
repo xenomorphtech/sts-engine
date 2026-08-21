@@ -2730,6 +2730,24 @@ fn black_star_adds_second_elite_relic_reward() {
 }
 
 #[test]
+fn hand_of_greed_does_not_reward_gremlin_leader_minions() {
+    // 43: Hand of Greed kills a Gremlin Leader minion, which has MinionPower
+    // in Java and therefore must not award gold.
+    let cfg = default_config(Character::Defect, "43", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 306,
+                "43 still rewards gold for a minion last_ok={} want > 306: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

@@ -5286,9 +5286,19 @@ fn apply_card_effect(
             // GreedAction: damage, then gainGold(magic) if dying and not Minion.
             let mut killed = false;
             if let Some(i) = target {
+                let is_minion = combat.monsters.get(i).is_some_and(|m| {
+                    matches!(
+                        m.id,
+                        MonsterId::GremlinFat
+                            | MonsterId::GremlinTsundere
+                            | MonsterId::GremlinThief
+                            | MonsterId::GremlinWarrior
+                            | MonsterId::GremlinWizard
+                    ) && combat.monsters.iter().any(|m| m.id == MonsterId::GremlinLeader)
+                });
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
-                    killed = (m.hp <= 0 || m.dead) && !m.half_dead;
+                    killed = (m.hp <= 0 || m.dead) && !m.half_dead && !is_minion;
                 }
             }
             if killed {
