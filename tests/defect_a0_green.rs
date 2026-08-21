@@ -2946,6 +2946,24 @@ fn colosseum_slavers_reopen_the_event_without_rewards() {
 }
 
 #[test]
+fn buying_membership_card_discounts_current_shop_stock() {
+    // 539: after buying Membership Card, the same shop immediately halves
+    // its remaining offers, making the 25-gold Steroid Potion affordable.
+    let cfg = default_config(Character::Defect, "539", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 316,
+                "539 still leaves pre-Membership prices last_ok={} want > 316: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

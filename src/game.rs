@@ -3064,6 +3064,9 @@ impl Game {
                     let id = self.shop.relics[i].item;
                     self.shop.relics[i].sold = true;
                     self.gain_relic(id);
+                    if id == RelicId::Membership_Card {
+                        self.discount_current_shop(0.5, true);
+                    }
                 }
                 return true;
             }
@@ -3137,6 +3140,9 @@ impl Game {
                         offer.sold = true;
                         self.spend_shop_gold(price);
                         self.gain_relic(id);
+                        if id == RelicId::Membership_Card {
+                            self.discount_current_shop(0.5, true);
+                        }
                     }
                 }
             }
@@ -3154,6 +3160,24 @@ impl Game {
                     }
                 }
             }
+        }
+    }
+
+    fn discount_current_shop(&mut self, multiplier: f32, affect_purge: bool) {
+        for offer in &mut self.shop.cards {
+            offer.price = crate::rewards::gdx_round(offer.price as f32 * multiplier);
+        }
+        for offer in &mut self.shop.relics {
+            offer.price = crate::rewards::gdx_round(offer.price as f32 * multiplier);
+        }
+        for offer in &mut self.shop.potions {
+            offer.price = crate::rewards::gdx_round(offer.price as f32 * multiplier);
+        }
+        if self.player.has_relic(RelicId::Smiling_Mask) {
+            self.shop.purge_cost = 50;
+        } else if affect_purge {
+            self.shop.purge_cost =
+                crate::rewards::gdx_round(self.shop.purge_cost as f32 * multiplier);
         }
     }
 
