@@ -498,6 +498,25 @@ fn preserved_insect_caps_after_emerald_max_hp_buff() {
 }
 
 #[test]
+fn city_first_strong_encounter_honors_weak_exclusions() {
+    // Seed 833's second weak Act 2 encounter is Chosen. The first strong roll
+    // is Cultist and Chosen, which TheCity excludes after Chosen; rerolling
+    // produces 3 Cultists and keeps monster RNG aligned.
+    let cfg = default_config(Character::Defect, "833", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 196,
+                "833 still fails at Act 2 first-strong exclusion last_ok={} want > 196: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

@@ -129,9 +129,17 @@ impl Dungeon {
                     ("3 Cultists", 3.0),
                     ("Shelled Parasite and Fungi", 3.0),
                 ];
+                let exclusions = first_strong_exclusions(
+                    self.monster_list.last().map(String::as_str).unwrap_or(""),
+                );
                 let weights = normalize(&strong);
-                let picked = roll(&weights, rng.monster.random_float());
-                self.monster_list.push(picked.to_string());
+                loop {
+                    let picked = roll(&weights, rng.monster.random_float());
+                    if !exclusions.iter().any(|e| *e == picked) {
+                        self.monster_list.push(picked.to_string());
+                        break;
+                    }
+                }
                 generate_weighted(&mut rng.monster, &mut self.monster_list, &strong, 12, false);
                 generate_weighted(
                     &mut rng.monster,
@@ -739,6 +747,9 @@ fn first_strong_exclusions(last_weak: &str) -> Vec<&'static str> {
         "Blue Slaver" => vec!["Red Slaver", "Exordium Thugs"],
         "2 Louse" => vec!["3 Louse"],
         "Small Slimes" => vec!["Large Slime", "Lots of Slimes"],
+        "Spheric Guardian" => vec!["Sentry and Sphere"],
+        "3 Byrds" => vec!["Chosen and Byrds"],
+        "Chosen" => vec!["Chosen and Byrds", "Cultist and Chosen"],
         _ => Vec::new(),
     }
 }
