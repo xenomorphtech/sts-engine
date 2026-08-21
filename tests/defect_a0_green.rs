@@ -3166,6 +3166,25 @@ fn dark_evokes_return_stasis_cards_in_death_order() {
 }
 
 #[test]
+fn apotheosis_preserves_confusion_costs_for_all_for_one() {
+    // 399: Snecko randomizes a Strike and Defend to zero before Apotheosis.
+    // Their upgrades do not change base cost, so All for One must still pull
+    // both cards from the discard pile.
+    let cfg = default_config(Character::Defect, "399", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 536,
+                "399 still resets Confusion costs during upgrade last_ok={} want > 536: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

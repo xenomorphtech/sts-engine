@@ -52,8 +52,19 @@ impl Card {
         self.times_upgraded = self.times_upgraded.saturating_add(1);
         let unup = crate::content::card_stats(self.id, false);
         let stats = crate::content::card_stats(self.id, true);
-        self.cost = stats.cost;
-        self.cost_for_turn = stats.cost;
+        // A Java card's upgrade() calls upgradeBaseCost only when that
+        // particular upgrade changes its base cost. Preserve combat changes
+        // such as Confusion for every other card (seed 399: Apotheosis before
+        // All for One). When base cost does change, upgradeBaseCost keeps the
+        // existing costForTurn - cost delta and clamps it at zero.
+        if stats.cost != unup.cost {
+            let turn_delta = self.cost_for_turn - self.cost;
+            self.cost = stats.cost;
+            if self.cost_for_turn > 0 {
+                self.cost_for_turn = self.cost + turn_delta;
+            }
+            self.cost_for_turn = self.cost_for_turn.max(0);
+        }
         // Java upgradeDamage/upgradeBlock/upgradeMagicNumber add to the
         // current values. Overwriting from the upgraded catalog wipes
         // combat mutations (GashAction on Claw, Genetic Algorithm misc
