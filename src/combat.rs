@@ -4450,6 +4450,7 @@ pub fn play_owned_card(
         }
     }
     resolve_darklings(combat);
+    resolve_gremlin_leader_death(combat);
     if !needs_select {
         unceasing_top_on_refresh_hand(player, combat, rng);
     }
@@ -4582,6 +4583,22 @@ fn resolve_collector_death(combat: &mut Combat) {
     for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
         monster.hp = 0;
         monster.dead = true;
+    }
+}
+
+fn resolve_gremlin_leader_death(combat: &mut Combat) {
+    if !combat
+        .monsters
+        .iter()
+        .any(|m| m.id == MonsterId::GremlinLeader && m.dead)
+    {
+        return;
+    }
+    // GremlinLeader.die queues EscapeAction for every surviving gremlin.
+    // Those actions sit behind the card's already-queued use reactions and
+    // UseCardAction, so resolve them only after the played card is complete.
+    for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+        monster.escaped = true;
     }
 }
 
