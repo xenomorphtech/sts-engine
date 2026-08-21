@@ -610,9 +610,9 @@ fn spawn_encounter(encounter: EncounterId, rng: &mut RngSet, ascension: i32) -> 
             .collect(),
     };
     if encounter == EncounterId::GremlinLeader {
-        // GremlinLeader.POSX plus the leader constructor's +35 X offset.
+        // GremlinLeader.POSX plus each constructor's draw-X offset.
         for (monster, x) in monsters.iter_mut().zip([-366, -170, 35]) {
-            monster.offset_x = x;
+            monster.offset_x = gremlin_draw_x(monster.id, x);
         }
     }
     monsters
@@ -2111,7 +2111,7 @@ impl Monster {
                 for offset in [-366, -170] {
                     let id = pool[rng.ai.random_int(7) as usize];
                     let mut kid = spawn_monster(id, rng, ascension);
-                    kid.offset_x = offset;
+                    kid.offset_x = gremlin_draw_x(id, offset);
                     kids.push(kid);
                 }
                 // SummonGremlinAction constructs both monsters before either
@@ -3138,6 +3138,16 @@ fn collector_revives(monsters: &[Monster], rng: &mut RngSet, ascension: i32) -> 
 /// SpawnMonsterAction smart insert: position = count of monsters with drawX < new.drawX.
 fn smart_spawn_index(monsters: &[Monster], offset_x: i32) -> usize {
     monsters.iter().filter(|mo| offset_x > mo.offset_x).count()
+}
+
+fn gremlin_draw_x(id: MonsterId, slot_x: i32) -> i32 {
+    // GremlinWizard passes x - 35 to AbstractMonster; the other four
+    // Gremlin Leader minion constructors pass the slot coordinate unchanged.
+    if id == MonsterId::GremlinWizard {
+        slot_x - 35
+    } else {
+        slot_x
+    }
 }
 
 
