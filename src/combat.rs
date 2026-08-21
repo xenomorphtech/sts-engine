@@ -3254,6 +3254,32 @@ pub fn deal_thorns(monster: &mut Monster, amount: i32) {
     maybe_split(monster);
 }
 
+/// Player-sourced ApplyPowerAction against a monster. SadisticPower observes
+/// the debuff before Artifact resolves, but queues its THORNS DamageAction
+/// behind the ApplyPowerAction itself.
+pub fn apply_player_power_to_monster(
+    player: &Player,
+    monster: &mut Monster,
+    id: PowerId,
+    amount: i32,
+) {
+    if !monster.alive() {
+        return;
+    }
+    let sadistic = if id != PowerId::Shackled
+        && power_is_debuff(id, amount)
+        && monster.power_amount(PowerId::Artifact) == 0
+    {
+        player.power_amount(PowerId::Sadistic)
+    } else {
+        0
+    };
+    monster.add_power(id, amount);
+    if sadistic > 0 {
+        deal_thorns(monster, sadistic);
+    }
+}
+
 fn deal_card_damage(monster: &mut Monster, player: &mut Player, rng: &mut RngSet, card: &Card, hits: i32) {
     damage_monster(monster, player, rng, card.base_damage as i32, hits);
 }
@@ -3943,7 +3969,12 @@ fn apply_card_effect(
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
                     if card.id == CardId::Bash {
-                        m.add_power(PowerId::Vulnerable, card.base_magic as i32);
+                        apply_player_power_to_monster(
+                            player,
+                            m,
+                            PowerId::Vulnerable,
+                            card.base_magic as i32,
+                        );
                     }
                     if card.id == CardId::Anger {
                         player.discard.push(Card::new(CardId::Anger));
@@ -3980,7 +4011,7 @@ fn apply_card_effect(
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 damage_monster(monster, player, rng, dmg, hits);
                 if card.id == CardId::Thunderclap {
-                    monster.add_power(PowerId::Vulnerable, 1);
+                    apply_player_power_to_monster(player, monster, PowerId::Vulnerable, 1);
                 }
             }
             if card.id == CardId::Whirlwind {
@@ -4079,7 +4110,12 @@ fn apply_card_effect(
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
-                    m.add_power(PowerId::Vulnerable, card.base_magic.max(1) as i32);
+                    apply_player_power_to_monster(
+                        player,
+                        m,
+                        PowerId::Vulnerable,
+                        card.base_magic.max(1) as i32,
+                    );
                 }
             }
         }
@@ -4094,7 +4130,12 @@ fn apply_card_effect(
                     damage_monster(m, player, rng, dmg, 1);
                     if apply_weak {
                         if let Some(m) = combat.monsters.get_mut(i) {
-                            m.add_power(PowerId::Weak, card.base_magic.max(1) as i32);
+                            apply_player_power_to_monster(
+                                player,
+                                m,
+                                PowerId::Weak,
+                                card.base_magic.max(1) as i32,
+                            );
                         }
                     }
                 }
@@ -4558,7 +4599,12 @@ fn apply_card_effect(
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
-                    m.add_power(PowerId::LockOn, card.base_magic.max(2) as i32);
+                    apply_player_power_to_monster(
+                        player,
+                        m,
+                        PowerId::LockOn,
+                        card.base_magic.max(2) as i32,
+                    );
                 }
             }
         }
@@ -4567,11 +4613,11 @@ fn apply_card_effect(
             let n = card.base_magic.max(2) as i32;
             if card.upgraded {
                 for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    monster.add_power(PowerId::Weak, n);
+                    apply_player_power_to_monster(player, monster, PowerId::Weak, n);
                 }
             } else if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    m.add_power(PowerId::Weak, n);
+                    apply_player_power_to_monster(player, m, PowerId::Weak, n);
                 }
             }
         }
@@ -4580,11 +4626,11 @@ fn apply_card_effect(
             let n = card.base_magic.max(2) as i32;
             if card.upgraded {
                 for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    monster.add_power(PowerId::Vulnerable, n);
+                    apply_player_power_to_monster(player, monster, PowerId::Vulnerable, n);
                 }
             } else if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    m.add_power(PowerId::Vulnerable, n);
+                    apply_player_power_to_monster(player, m, PowerId::Vulnerable, n);
                 }
             }
         }
@@ -4616,9 +4662,9 @@ fn apply_card_effect(
                 if let Some(m) = combat.monsters.get_mut(i) {
                     let amt = card.base_magic.max(9) as i32;
                     let had_art = m.power_amount(PowerId::Artifact) > 0;
-                    m.add_power(PowerId::Strength, -amt);
+                    apply_player_power_to_monster(player, m, PowerId::Strength, -amt);
                     if !had_art {
-                        m.add_power(PowerId::Shackled, amt);
+                        apply_player_power_to_monster(player, m, PowerId::Shackled, amt);
                     }
                 }
             }
@@ -4928,6 +4974,9 @@ fn apply_card_effect(
         CardId::Inflame => player.add_power(PowerId::Strength, card.base_magic as i32),
         CardId::Metallicize => player.add_power(PowerId::Metallicize, card.base_magic as i32),
         CardId::Barricade => player.add_power(PowerId::Barricade, 1),
+        CardId::Sadistic_Nature => {
+            player.add_power(PowerId::Sadistic, card.base_magic.max(5) as i32)
+        }
         CardId::Feel_No_Pain => player.add_power(PowerId::FeelNoPain, card.base_magic.max(3) as i32),
         CardId::Dark_Embrace => player.add_power(PowerId::DarkEmbrace, 1),
         CardId::Flex => {
@@ -4957,7 +5006,12 @@ fn apply_card_effect(
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, hits);
                     if card.id == CardId::Clothesline {
-                        m.add_power(PowerId::Weak, card.base_magic as i32);
+                        apply_player_power_to_monster(
+                            player,
+                            m,
+                            PowerId::Weak,
+                            card.base_magic as i32,
+                        );
                     }
                 }
             }

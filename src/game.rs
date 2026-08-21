@@ -1731,7 +1731,12 @@ impl Game {
                     // FearPotion: VulnerablePower(target, 3, isSourceMonster=false).
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         if let Some(m) = combat.monsters.get_mut(t) {
-                            m.add_power(crate::ids::PowerId::Vulnerable, 3);
+                            combat::apply_player_power_to_monster(
+                                &self.player,
+                                m,
+                                crate::ids::PowerId::Vulnerable,
+                                3,
+                            );
                         }
                     }
                 }
@@ -1739,7 +1744,12 @@ impl Game {
                     // WeakenPotion: WeakPower(target, 3, isSourceMonster=false).
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         if let Some(m) = combat.monsters.get_mut(t) {
-                            m.add_power(crate::ids::PowerId::Weak, 3);
+                            combat::apply_player_power_to_monster(
+                                &self.player,
+                                m,
+                                crate::ids::PowerId::Weak,
+                                3,
+                            );
                         }
                     }
                 }

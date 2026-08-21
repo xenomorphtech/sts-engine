@@ -111,6 +111,24 @@ fn masked_bandits_enters_the_three_bandit_combat() {
 }
 
 #[test]
+fn sadistic_nature_damages_after_player_debuffs() {
+    // Seed 279 plays Sadistic Nature, then Go for the Eyes against Guardian.
+    // Weak must apply first and queue Sadistic's 5 THORNS damage (43 -> 38).
+    let cfg = default_config(Character::Defect, "279", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 185,
+                "279 still fails at Sadistic Nature last_ok={} want > 185: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

@@ -215,6 +215,7 @@ pub enum PowerId {
     Energized,
     Electro,
     Loop,
+    Sadistic,
     SelfRepair,
     Heatsink,
     CreativeAI,

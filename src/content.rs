@@ -638,6 +638,15 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Trip, false) | (CardId::Trip, true) => CardStats {
             cost: 0, damage: -1, block: -1, magic: 2, exhaust: false, ethereal: false, innate: false,
         },
+        (CardId::Sadistic_Nature, u) => CardStats {
+            cost: 0,
+            damage: -1,
+            block: -1,
+            magic: if u { 7 } else { 5 },
+            exhaust: false,
+            ethereal: false,
+            innate: false,
+        },
         (CardId::Dramatic_Entrance, false) => CardStats {
             cost: 0,
             damage: 8,
