@@ -3095,6 +3095,17 @@ impl Game {
                 }
             }
         }
+        // Emerald elite actions resolve before relic atBattleStart hooks.
+        // Preserved Insect therefore caps against the increased max HP when
+        // the elite rolled IncreaseMaxHpAction (seed 79: 105 -> 78 HP).
+        if self.player.has_relic(RelicId::PreservedInsect) {
+            for m in combat.monsters.iter_mut() {
+                let cap = (m.max_hp as f32 * 0.75) as i32;
+                if m.hp > cap {
+                    m.hp = cap;
+                }
+            }
+        }
     }
 
     fn add_emerald_key_reward(&mut self) {

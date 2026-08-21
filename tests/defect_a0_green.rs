@@ -479,6 +479,25 @@ fn the_bomb_damage_triggers_slime_boss_split() {
 }
 
 #[test]
+fn preserved_insect_caps_after_emerald_max_hp_buff() {
+    // Seed 79 enters the burning Gremlin Nob elite with Preserved Insect.
+    // IncreaseMaxHpAction first raises 84/84 to 105/105; the later relic
+    // atBattleStart hook caps current HP to floor(105 * 0.75) = 78.
+    let cfg = default_config(Character::Defect, "79", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 195,
+                "79 still fails at Preserved Insect/emerald HP order last_ok={} want > 195: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
