@@ -4319,6 +4319,13 @@ impl Game {
                 return;
             }
         };
+        if id == "Tomb of Lord Red Mask" && screen == 0 && *index == 1 {
+            // TombRedMask INTRO's third raw button is Leave. ChoiceDriver
+            // omits the disabled first button when the player has no mask, so
+            // it arrives as normalized index 1 and opens the map immediately.
+            self.open_map();
+            return;
+        }
         if id == "Colosseum" {
             match screen {
                 0 => {
