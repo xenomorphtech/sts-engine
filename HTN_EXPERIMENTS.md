@@ -66,3 +66,20 @@ single-acquisition cohorts below and are not numerically comparable to the old
 |---|---|---:|---:|---:|---:|---:|---|
 | Card-package HTN plus deck-aware shop relics | fixed source `1787315208666760241` | 3.00% (15/500) | 27.58 | 5.40% (27/500) | 28.54 | 0 | accepted after boss relics were limited to one acquisition |
 | Card-package HTN plus deck-aware shop relics | fresh source `1787318856394675018` | 1.80% (9/500) | 27.65 | 3.80% (19/500) | 28.21 | 0 | accepted; paired generalization on the corrected engine |
+| Conservative energy-first boss relic ordering | fixed source `1787315208666760241` | 5.40% (27/500) | 28.54 | 7.20% (36/500) | 29.19 | 0 | advanced after a strong observed gain |
+| Conservative energy-first boss relic ordering | replay source `1787318856394675018` | 3.80% (19/500) | 28.21 | 4.60% (23/500) | 28.81 | 0 | advanced after a second observed gain |
+| Conservative energy-first boss relic ordering | fresh source `1787319073388804697` | 4.80% (24/500) | 28.22 | 4.40% (22/500) | 28.38 | 0 | rejected: two fewer wins despite slightly higher mean floor |
+| Require enabling packages before Claw, Tempest, and Fusion | fixed source `1787315208666760241` | 5.40% (27/500) | 28.54 | 5.60% (28/500) | 28.74 | 0 | advanced |
+| Require enabling packages before Claw, Tempest, and Fusion | replay source `1787318856394675018` | 3.80% (19/500) | 28.21 | 4.60% (23/500) | 28.38 | 0 | advanced |
+| Require enabling packages before Claw, Tempest, and Fusion | replay source `1787319073388804697` | 4.80% (24/500) | 28.22 | 4.80% (24/500) | 28.49 | 0 | neutral wins with higher mean floor |
+| Require enabling packages before Claw, Tempest, and Fusion | fresh source `1787319499337259007` | 4.40% (22/500) | 28.55 | 4.80% (24/500) | 28.42 | 0 | accepted: two more wins with a small depth tradeoff |
+| Delay Strike purge until replacement damage and engine support exist | fixed source `1787315208666760241` | 5.60% (28/500) | 28.74 | 6.40% (32/500) | 28.81 | 0 | advanced |
+| Delay Strike purge until replacement damage and engine support exist | replay source `1787318856394675018` | 4.60% (23/500) | 28.38 | 4.60% (23/500) | 28.46 | 0 | neutral wins with higher mean floor |
+| Delay Strike purge until replacement damage and engine support exist | replay source `1787319073388804697` | 4.80% (24/500) | 28.49 | 5.00% (25/500) | 28.50 | 0 | improved |
+| Delay Strike purge until replacement damage and engine support exist | replay source `1787319499337259007` | 4.80% (24/500) | 28.42 | 4.60% (23/500) | 28.39 | 0 | one-cohort regression; advanced to a new random cohort because prior evidence was positive |
+| Delay Strike purge until replacement damage and engine support exist | fresh source `1787319767048101927` | 4.20% (21/500) | 28.83 | 4.40% (22/500) | 28.99 | 0 | accepted |
+| Lower the global elite-strength gate while retaining matchup checks | fixed source `1787315208666760241` | 6.40% (32/500) | 28.81 | 4.40% (22/500) | 27.80 | 0 | rejected before fresh testing |
+| Retest delayed Buffer prevention after single-boss-relic correction | fixed source `1787315208666760241` | 6.40% (32/500) | 28.81 | 6.20% (31/500) | 28.74 | 0 | rejected before fresh testing |
+| Bounded turn beam search (width 8, depth 6) | fixed source `1787315208666760241` | 6.40% (32/500) | 28.81 | 7.60% (38/500) | 30.39 | 0 | advanced after improving wins and depth |
+| Bounded turn beam search (width 8, depth 6) | replay source `1787318856394675018` | 4.60% (23/500) | 28.46 | 7.80% (39/500) | 30.04 | 0 | advanced after independent confirmation |
+| Bounded turn beam search (width 8, depth 6) | fresh source `1787320322822582653` | 5.80% (29/500) | 29.52 | 7.60% (38/500) | 30.79 | 0 | accepted; paired fresh validation, with runtime increasing from 9s to 41s per 500 seeds |

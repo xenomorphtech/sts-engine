@@ -17,6 +17,7 @@ enum DeckTask {
 #[derive(Clone, Copy, Debug, Default)]
 struct DeckProfile {
     attacks: i32,
+    strikes: i32,
     skills: i32,
     powers: i32,
     channel: i32,
@@ -34,6 +35,7 @@ struct DeckProfile {
     blizzard: i32,
     all_for_one: i32,
     scrape: i32,
+    claw: i32,
     thunder_strike: i32,
     power_payoffs: i32,
 }
@@ -54,6 +56,10 @@ impl DeckProfile {
             CardType::POWER => self.powers += 1,
             _ => {}
         }
+        self.strikes += i32::from(matches!(
+            card.id,
+            CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P
+        ));
         self.channel += i32::from(is_channel(card.id));
         self.frost += i32::from(is_frost_source(card.id));
         self.lightning += i32::from(is_lightning_source(card.id));
@@ -75,6 +81,7 @@ impl DeckProfile {
             CardId::Blizzard => self.blizzard += 1,
             CardId::All_For_One => self.all_for_one += 1,
             CardId::Scrape => self.scrape += 1,
+            CardId::Gash => self.claw += 1,
             CardId::Thunder_Strike => self.thunder_strike += 1,
             CardId::Heatsinks | CardId::Storm | CardId::Force_Field => self.power_payoffs += 1,
             _ => {}
@@ -111,7 +118,12 @@ impl<'a> DeckPlan<'a> {
         {
             tasks.push(DeckTask::ScalePowers);
         }
-        if p.zero_cost >= 2 || p.all_for_one > 0 || p.scrape > 0 || self.attack_chain_relics() > 0 {
+        if p.zero_cost >= 2
+            || p.all_for_one > 0
+            || p.scrape > 0
+            || p.claw > 0
+            || self.attack_chain_relics() > 0
+        {
             tasks.push(DeckTask::ExploitZeroCost);
         }
         if p.energy > 0
@@ -196,6 +208,10 @@ impl<'a> DeckPlan<'a> {
                     16 * p.zero_cost.min(7)
                 } else if card.id == CardId::Scrape {
                     10 * p.zero_cost.min(7)
+                } else if card.id == CardId::Gash {
+                    35 * p.claw.min(3)
+                        + 45 * (p.all_for_one + p.scrape).min(2)
+                        + 5 * self.attack_chain_relics()
                 } else if card.cost == 0 {
                     18 * (p.all_for_one + p.scrape).min(3) + 5 * self.attack_chain_relics()
                 } else {
@@ -227,6 +243,9 @@ impl<'a> DeckPlan<'a> {
             CardId::Storm => -55,
             CardId::Force_Field => -45,
             CardId::Meteor_Strike => -120 + 35 * p.energy.min(3),
+            CardId::Gash => -50,
+            CardId::Tempest => -70 + 20 * p.energy.min(3),
+            CardId::Fusion => -45,
             _ => 0,
         }
     }
@@ -332,6 +351,31 @@ pub fn shop_relic_value(game: &Game, id: RelicId) -> i32 {
     }
 }
 
+pub fn shop_purge_value(game: &Game) -> i32 {
+    let curses = game
+        .player
+        .deck
+        .iter()
+        .filter(|card| card.card_type() == CardType::CURSE)
+        .count() as i32;
+    if curses > 0 {
+        return 240;
+    }
+
+    let p = DeckProfile::from_game(game);
+    if p.strikes == 0 {
+        return 60;
+    }
+    let replacement_attacks = (p.attacks - p.strikes).max(0);
+    let engine_ready = p.channel >= 4 && (p.focus > 0 || p.powers >= 3);
+    130 + 12 * p.strikes + 8 * replacement_attacks.min(6) + if engine_ready { 30 } else { 0 }
+        - if game.dungeon.act as i32 == 1 && replacement_attacks < 4 {
+            45
+        } else {
+            0
+        }
+}
+
 fn is_channel(id: CardId) -> bool {
     matches!(
         id,
@@ -432,5 +476,35 @@ mod tests {
         game.player.deck.push(Card::new(CardId::Coolheaded));
         game.player.deck.push(Card::new(CardId::Ball_Lightning));
         assert!(shop_relic_value(&game, RelicId::Runic_Capacitor) > empty + 30);
+    }
+
+    #[test]
+    fn orphan_cards_wait_for_their_enabling_package() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        let claw = Card::new(CardId::Gash);
+        let unsupported = card_adjustment(&game, &claw);
+        game.player.deck.push(Card::new(CardId::All_For_One));
+        assert!(card_adjustment(&game, &claw) > unsupported + 40);
+
+        let tempest = Card::new(CardId::Tempest);
+        let unsupported = card_adjustment(&game, &tempest);
+        game.player.deck.push(Card::new(CardId::Turbo));
+        game.player.deck.push(Card::new(CardId::Double_Energy));
+        assert!(card_adjustment(&game, &tempest) > unsupported + 30);
+    }
+
+    #[test]
+    fn strike_purge_waits_until_replacement_damage_and_engine_exist() {
+        use crate::ids::Act;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        let early = shop_purge_value(&game);
+        game.dungeon.act = Act::City;
+        game.player.deck.push(Card::new(CardId::Cold_Snap));
+        game.player.deck.push(Card::new(CardId::Ball_Lightning));
+        game.player.deck.push(Card::new(CardId::Sweeping_Beam));
+        game.player.deck.push(Card::new(CardId::Doom_and_Gloom));
+        game.player.deck.push(Card::new(CardId::Defragment));
+        assert!(shop_purge_value(&game) > early + 80);
     }
 }

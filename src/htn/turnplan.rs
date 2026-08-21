@@ -40,10 +40,9 @@ pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
         if non_progressing_status_play(game, &clone, first) {
             continue;
         }
-        let strategic_value = rebound_play_value(game, first)
-            + setup_play_value(game, first)
-            + greedy_rest(&mut clone);
-        let score = score_state(game, &clone) + strategic_value;
+        let first_value = rebound_play_value(game, first) + setup_play_value(game, first);
+        let (clone, rest_value) = searched_rest(game, clone);
+        let score = score_state(game, &clone) + first_value + rest_value;
         if score > best_score {
             best_score = score;
             best_first = Some(*first);
@@ -61,56 +60,83 @@ pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
     best_first.cloned().unwrap_or_else(|| plays[0].clone())
 }
 
-fn greedy_rest(game: &mut Game) -> f32 {
-    let mut strategic_value = 0.0;
-    for _ in 0..8 {
-        if game.screen != Screen::Combat || game.player.hp <= 0 {
-            break;
-        }
-        if game.combat.as_ref().is_some_and(|c| c.all_dead()) {
-            break;
-        }
-        let legal = game.legal_actions();
-        let plays: Vec<Action> = legal
-            .iter()
-            .filter(|a| matches!(a, Action::Play { .. }))
-            .cloned()
-            .collect();
-        if plays.is_empty() {
-            if let Some(end) = legal.iter().find(|a| matches!(a, Action::EndTurn)) {
-                game.step(end);
-            }
-            break;
-        }
-        let mut best: Option<Action> = None;
-        let mut best_s = f32::MIN;
-        for play in &plays {
-            let mut c = game.clone();
-            c.step(play);
-            if non_progressing_status_play(game, &c, play) {
+#[derive(Clone)]
+struct TurnSearchNode {
+    game: Game,
+    strategic_value: f32,
+}
+
+fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
+    const WIDTH: usize = 8;
+    const DEPTH: usize = 6;
+
+    let mut frontier = vec![TurnSearchNode {
+        game: start,
+        strategic_value: 0.0,
+    }];
+    let mut finals = Vec::new();
+    for _ in 0..DEPTH {
+        let mut next = Vec::new();
+        let current = std::mem::take(&mut frontier);
+        for node in current {
+            if node.game.screen != Screen::Combat
+                || node.game.player.hp <= 0
+                || node
+                    .game
+                    .combat
+                    .as_ref()
+                    .is_some_and(|combat| combat.all_dead())
+            {
+                finals.push(node);
                 continue;
             }
-            let s = score_state(game, &c)
-                + rebound_play_value(game, play)
-                + setup_play_value(game, play);
-            if s > best_s {
-                best_s = s;
-                best = Some(play.clone());
-            }
-        }
-        let Some(best) = best else {
+            let legal = node.game.legal_actions();
             if let Some(end) = legal
                 .iter()
                 .find(|action| matches!(action, Action::EndTurn))
             {
-                game.step(end);
+                let mut ended = node.clone();
+                ended.game.step(end);
+                finals.push(ended);
             }
+            for play in legal
+                .iter()
+                .filter(|action| matches!(action, Action::Play { .. }))
+            {
+                let mut after = node.game.clone();
+                after.step(play);
+                if non_progressing_status_play(&node.game, &after, play) {
+                    continue;
+                }
+                next.push(TurnSearchNode {
+                    game: after,
+                    strategic_value: node.strategic_value
+                        + rebound_play_value(&node.game, play)
+                        + setup_play_value(&node.game, play),
+                });
+            }
+        }
+        if next.is_empty() {
             break;
-        };
-        strategic_value += rebound_play_value(game, &best) + setup_play_value(game, &best);
-        game.step(&best);
+        }
+        next.sort_by(|a, b| {
+            let a_score = score_state(origin, &a.game) + a.strategic_value;
+            let b_score = score_state(origin, &b.game) + b.strategic_value;
+            b_score.total_cmp(&a_score)
+        });
+        next.truncate(WIDTH);
+        frontier = next;
     }
-    strategic_value
+    finals.extend(frontier);
+    let best = finals
+        .into_iter()
+        .max_by(|a, b| {
+            let a_score = score_state(origin, &a.game) + a.strategic_value;
+            let b_score = score_state(origin, &b.game) + b.strategic_value;
+            a_score.total_cmp(&b_score)
+        })
+        .expect("turn search always has an end or continuation");
+    (best.game, best.strategic_value)
 }
 
 fn non_progressing_status_play(before: &Game, after: &Game, action: &Action) -> bool {
@@ -196,6 +222,11 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
             let turns_left = fight_length(fight_kind(game), game.dungeon.act);
             let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
             card.base_magic.max(1) as f32 * turns_left * damage_weight * 2.2
+        }
+        CardId::Echo_Form => {
+            let turns_left = fight_length(fight_kind(game), game.dungeon.act).max(1.0);
+            let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
+            card.base_magic.max(1) as f32 * turns_left * damage_weight * 12.0
         }
         _ => 0.0,
     }
@@ -557,6 +588,37 @@ mod tests {
         game.player.hp = 20;
         game.player.energy = 1;
         game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Self_Repair)];
+
+        let legal = game.legal_actions();
+        assert_eq!(
+            plan_turn(&game, &legal),
+            Action::Play {
+                hand_index: 1,
+                target_index: None,
+            }
+        );
+    }
+
+    #[test]
+    fn safe_boss_fight_values_echo_form_before_chip_damage() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 3;
+        game.combat.as_mut().unwrap().monsters[0].intent_damage = 0;
+        game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Echo_Form)];
 
         let legal = game.legal_actions();
         assert_eq!(
