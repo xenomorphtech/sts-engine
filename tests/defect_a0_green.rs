@@ -575,6 +575,26 @@ fn sharp_hide_can_kill_before_ftl_deferred_damage() {
 }
 
 #[test]
+fn thorns_killed_monster_still_rolls_when_an_enemy_remains() {
+    // Seed 535 has an Acid Slime M die to Thorns during its own attack while
+    // Spike Slime L remains alive. Java's already-queued RollMoveAction still
+    // burns aiRng; preserving that burn keeps the large slime's next move in
+    // sync on the following turn.
+    let cfg = default_config(Character::Defect, "535", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 203,
+                "535 still fails at dead-monster RollMoveAction last_ok={} want > 203: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

@@ -5691,7 +5691,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             i = parent_idx + 1;
             continue;
         }
-        if combat.monsters[i].alive() && !skip_roll {
+        // RollMoveAction has no dying/dead guard. If reactive damage kills
+        // this monster but another enemy remains, Java still consumes aiRng
+        // and records its next move; only all-dead post-combat cleanup drops
+        // the queued roll (seed 535 AcidSlime_M killed by Thorns).
+        if !skip_roll && !combat.all_dead() {
             let missing: i32 = combat
                 .monsters
                 .iter()
