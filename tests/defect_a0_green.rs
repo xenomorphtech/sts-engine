@@ -183,6 +183,24 @@ fn addict_leave_opens_the_map_immediately() {
 }
 
 #[test]
+fn gremlin_leader_encounter_has_minions_and_leader() {
+    // Seed 128 reaches the Act 2 Gremlin Leader elite after Addict. The
+    // encounter is two miscRng-selected gremlins plus GremlinLeader, not Nob.
+    let cfg = default_config(Character::Defect, "128", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 271,
+                "128 still fails at Gremlin Leader last_ok={} want > 271: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

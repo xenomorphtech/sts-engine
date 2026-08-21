@@ -510,12 +510,30 @@ fn apply_group_move(combat: &mut Combat, idx: usize, id: MonsterId, used_move: i
                 combat.monsters[idx].set_move(2, Intent::Attack, dmg, 1);
             }
         }
+        (MonsterId::GremlinLeader, 3) => {
+            let strength = if combat.ascension >= 18 {
+                5
+            } else if combat.ascension >= 3 {
+                4
+            } else {
+                3
+            };
+            let block = if combat.ascension >= 18 { 10 } else { 6 };
+            for (j, monster) in combat.monsters.iter_mut().enumerate() {
+                if monster.alive() {
+                    monster.add_power(PowerId::Strength, strength);
+                    if j != idx {
+                        monster.block += block;
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }
 
 fn spawn_encounter(encounter: EncounterId, rng: &mut RngSet, ascension: i32) -> Vec<Monster> {
-    match encounter {
+    let mut monsters = match encounter {
         EncounterId::ExordiumThugs => vec![
             spawn_bottom_weak_wildlife(rng, ascension),
             spawn_bottom_strong_humanoid(rng, ascension),
@@ -528,7 +546,14 @@ fn spawn_encounter(encounter: EncounterId, rng: &mut RngSet, ascension: i32) -> 
             .into_iter()
             .map(|id| spawn_monster(id, rng, ascension))
             .collect(),
+    };
+    if encounter == EncounterId::GremlinLeader {
+        // GremlinLeader.POSX plus the leader constructor's +35 X offset.
+        for (monster, x) in monsters.iter_mut().zip([-366, -170, 35]) {
+            monster.offset_x = x;
+        }
     }
+    monsters
 }
 
 fn spawn_bottom_weak_wildlife(rng: &mut RngSet, ascension: i32) -> Monster {
@@ -797,6 +822,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (85, 90)
             } else {
                 (82, 86)
+            }
+        }
+        MonsterId::GremlinLeader => {
+            if ascension >= 8 {
+                (145, 155)
+            } else {
+                (140, 148)
             }
         }
         MonsterId::Lagavulin => {
@@ -1479,6 +1511,52 @@ impl Monster {
                     self.set_move(1, Intent::Attack, rush, 1);
                 }
             }
+            MonsterId::GremlinLeader => {
+                let gremlins = (allies - 1).max(0);
+                if gremlins == 0 {
+                    if num < 75 {
+                        if !self.last_move(2) {
+                            self.set_move(2, Intent::Unknown, 0, 1);
+                        } else {
+                            self.set_move(4, Intent::Attack, 6, 3);
+                        }
+                    } else if !self.last_move(4) {
+                        self.set_move(4, Intent::Attack, 6, 3);
+                    } else {
+                        self.set_move(2, Intent::Unknown, 0, 1);
+                    }
+                } else if gremlins == 1 {
+                    if num < 50 {
+                        if !self.last_move(2) {
+                            self.set_move(2, Intent::Unknown, 0, 1);
+                        } else {
+                            let reroll = rng.ai.random_range(50, 99);
+                            self.get_move(reroll, rng, missing_hp, allies, index);
+                        }
+                    } else if num < 80 {
+                        if !self.last_move(3) {
+                            self.set_move(3, Intent::DefendBuff, 0, 1);
+                        } else {
+                            self.set_move(4, Intent::Attack, 6, 3);
+                        }
+                    } else if !self.last_move(4) {
+                        self.set_move(4, Intent::Attack, 6, 3);
+                    } else {
+                        let reroll = rng.ai.random_range(0, 80);
+                        self.get_move(reroll, rng, missing_hp, allies, index);
+                    }
+                } else if num < 66 {
+                    if !self.last_move(3) {
+                        self.set_move(3, Intent::DefendBuff, 0, 1);
+                    } else {
+                        self.set_move(4, Intent::Attack, 6, 3);
+                    }
+                } else if !self.last_move(4) {
+                    self.set_move(4, Intent::Attack, 6, 3);
+                } else {
+                    self.set_move(3, Intent::DefendBuff, 0, 1);
+                }
+            }
             MonsterId::LouseNormal | MonsterId::LouseDefensive => {
                 let bite = self.extra.max(5);
                 let grow = self.id != MonsterId::LouseDefensive;
@@ -1834,6 +1912,39 @@ impl Monster {
                 } else {
                     self.set_move(2, Intent::Unknown, 0, 1);
                 }
+            }
+            (MonsterId::GremlinLeader, 2) => {
+                let pool = [
+                    MonsterId::GremlinWarrior,
+                    MonsterId::GremlinWarrior,
+                    MonsterId::GremlinThief,
+                    MonsterId::GremlinThief,
+                    MonsterId::GremlinFat,
+                    MonsterId::GremlinFat,
+                    MonsterId::GremlinTsundere,
+                    MonsterId::GremlinWizard,
+                ];
+                let mut kids = Vec::with_capacity(2);
+                for offset in [-366, -170] {
+                    let id = pool[rng.ai.random_int(7) as usize];
+                    let mut kid = spawn_monster(id, rng, ascension);
+                    kid.offset_x = offset;
+                    kids.push(kid);
+                }
+                // SummonGremlinAction constructs both monsters before either
+                // action runs init/usePreBattleAction.
+                for kid in &mut kids {
+                    apply_prebattle(kid, rng);
+                    kid.roll_move(rng);
+                }
+                return Some(kids);
+            }
+            (MonsterId::GremlinLeader, 3) => {
+                // getEncourageQuote chooses one of three lines before buffs.
+                let _ = rng.ai.random_int(2);
+            }
+            (MonsterId::GremlinLeader, 4) => {
+                let _ = hit_player(player, self, rng, 6, 3);
             }
             (MonsterId::Lagavulin, 4) => {}
             (MonsterId::Lagavulin, 5) => {
@@ -5428,7 +5539,23 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 }
             }
             if !skip_roll {
-                combat.monsters[parent_idx].roll_move(rng);
+                if combat.monsters[parent_idx].id == MonsterId::GremlinLeader {
+                    let missing: i32 = combat
+                        .monsters
+                        .iter()
+                        .filter(|m| m.alive())
+                        .map(|m| (m.max_hp - m.hp).max(0))
+                        .sum();
+                    let allies = combat.monsters.iter().filter(|m| m.alive()).count() as i32;
+                    combat.monsters[parent_idx].roll_move_group(
+                        rng,
+                        missing,
+                        allies,
+                        parent_idx as i32,
+                    );
+                } else {
+                    combat.monsters[parent_idx].roll_move(rng);
+                }
             }
             i = parent_idx + 1;
             continue;

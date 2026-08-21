@@ -1089,6 +1089,33 @@ pub fn encounter_monsters_rng(id: EncounterId, mut rng: Option<&mut crate::rng::
             }
             out
         }
+        EncounterId::GremlinLeader => {
+            // MonsterHelper.spawnGremlin creates a fresh weighted pool for
+            // each of the two starting minions, so duplicates are allowed.
+            let pool = [
+                MonsterId::GremlinWarrior,
+                MonsterId::GremlinWarrior,
+                MonsterId::GremlinThief,
+                MonsterId::GremlinThief,
+                MonsterId::GremlinFat,
+                MonsterId::GremlinFat,
+                MonsterId::GremlinTsundere,
+                MonsterId::GremlinWizard,
+            ];
+            if let Some(rng) = rng.as_mut() {
+                vec![
+                    pool[rng.misc.random_int(7) as usize],
+                    pool[rng.misc.random_int(7) as usize],
+                    MonsterId::GremlinLeader,
+                ]
+            } else {
+                vec![
+                    MonsterId::GremlinWarrior,
+                    MonsterId::GremlinWarrior,
+                    MonsterId::GremlinLeader,
+                ]
+            }
+        }
         EncounterId::ThreeShapes => spawn_shapes(rng, true),
         EncounterId::FourShapes => spawn_shapes(rng, false),
         other => encounter_monsters_fixed(other).to_vec(),
@@ -1187,7 +1214,11 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
         EncounterId::Automaton => &[MonsterId::BronzeAutomaton],
         EncounterId::BookOfStabbing => &[MonsterId::BookOfStabbing],
         EncounterId::Slavers => &[MonsterId::SlaverBlue, MonsterId::SlaverRed],
-        EncounterId::GremlinLeader => &[MonsterId::GremlinNob],
+        EncounterId::GremlinLeader => &[
+            MonsterId::GremlinWarrior,
+            MonsterId::GremlinWarrior,
+            MonsterId::GremlinLeader,
+        ],
         EncounterId::MaskedBandits => &[
             MonsterId::BanditChild,
             MonsterId::BanditLeader,
