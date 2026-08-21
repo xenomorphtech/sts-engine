@@ -6652,6 +6652,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let n = draw_cards_rng(player, 3, Some(rng));
         apply_fire_breathing(player, &mut combat.monsters, rng, n);
     }
+    // Loop's orb passive is queued behind the turn draw. If it kills a
+    // Bronze Orb, StasisPower returns the captured card after those draws.
+    flush_pending_stasis(player, combat);
     // MayhemPower.atStartOfTurn queues a wrapper addToBot whose update
     // addToBot PlayTopCardAction. DrawCardAction is queued after the wrapper,
     // so the autoplay is after the turn's draw (seed 533 Genetic Algorithm).
