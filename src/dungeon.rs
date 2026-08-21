@@ -254,6 +254,9 @@ impl Dungeon {
                 self.name = "The Ending";
                 self.boss_list.push("The Heart".into());
                 self.elite_list.push("Shield and Spear".into());
+                // TheEnding still runs the AbstractDungeon constructor, which
+                // clears and rebuilds all five card pools before its special map.
+                self.initialize_card_pools(character, unlocks);
                 rng.map = StsRandom::from_seed(seed.wrapping_add(4 * 300));
                 self.boss = "The Heart".into();
                 self.map = crate::map::generate_ending_map();

@@ -2451,7 +2451,7 @@ impl Game {
         // MonsterRoomBoss in TheBeyond / TheEnding (unless endless).
         // MonsterRoomBoss instanceof MonsterRoom, so Act 1/2 bosses still
         // use chance 40+blizzard. EventRoom uses the same 40+blizzard roll.
-        let skip_potion = !event_room
+        let skip_combat_rewards = !event_room
             && boss
             && matches!(self.dungeon.act, crate::ids::Act::Beyond | crate::ids::Act::Ending);
         // Hallway + all escaped: addPotionToRewards still rolls with chance 0.
@@ -2460,7 +2460,7 @@ impl Game {
             &mut self.rng,
             &mut self.potion_blizzard,
             elite,
-            skip_potion,
+            skip_combat_rewards,
             escaped_hallway,
             self.character,
             self.rewards.len(),
@@ -2468,13 +2468,20 @@ impl Game {
         ) {
             self.rewards.push(Reward::new(RewardKind::Potion(p)));
         }
-        self.rewards.push(Reward {
-            kind: RewardKind::Card,
-            taken: false,
-            relic_link: None,
-            card_options: None,
-        });
-        self.generate_card_reward();
+        // AbstractRoom.update skips opening CombatRewardScreen entirely for
+        // final bosses in TheBeyond/TheEnding. Since setupItemReward is what
+        // creates the card reward, these fights must not roll reward cards.
+        if skip_combat_rewards {
+            self.card_reward.clear();
+        } else {
+            self.rewards.push(Reward {
+                kind: RewardKind::Card,
+                taken: false,
+                relic_link: None,
+                card_options: None,
+            });
+            self.generate_card_reward();
+        }
         self.combat = None;
         self.screen = Screen::CombatReward;
     }
