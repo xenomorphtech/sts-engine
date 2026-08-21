@@ -2712,6 +2712,24 @@ fn sacred_bark_doubles_fairy_potion_revive() {
 }
 
 #[test]
+fn black_star_adds_second_elite_relic_reward() {
+    // 641: after taking Happy Flower, the next reward is Black Star's second
+    // relic (Question Card), not the card reward overlay.
+    let cfg = default_config(Character::Defect, "641", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 305,
+                "641 still omits Black Star reward last_ok={} want > 305: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

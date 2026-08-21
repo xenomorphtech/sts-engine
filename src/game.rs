@@ -2194,6 +2194,21 @@ impl Game {
                 if let Some(id) = self.take_relic(tier) {
                     self.add_relic_to_rewards(id);
                 }
+                if self.player.has_relic(RelicId::Black_Star) {
+                    // Black Star: a second independent tier roll, excluding
+                    // the three campfire relics from the consumed pool.
+                    let roll = self.rng.relic.random_range(0, 99);
+                    let tier = if roll < 50 {
+                        RelicTier::COMMON
+                    } else if roll > 82 {
+                        RelicTier::RARE
+                    } else {
+                        RelicTier::UNCOMMON
+                    };
+                    if let Some(id) = self.take_noncamp_relic(tier) {
+                        self.add_relic_to_rewards(id);
+                    }
+                }
                 // MonsterRoomElite.addEmeraldKey: after relic(s), before potion/CARD.
                 self.add_emerald_key_reward();
             }
@@ -5909,6 +5924,15 @@ impl Game {
         let player = &self.player;
         self.dungeon
             .next_relic(tier, &|id| crate::dungeon::relic_can_spawn(id, floor, act, room, player))
+    }
+
+    fn take_noncamp_relic(&mut self, tier: RelicTier) -> Option<RelicId> {
+        loop {
+            let id = self.take_relic(tier)?;
+            if !matches!(id, RelicId::Peace_Pipe | RelicId::Shovel | RelicId::Girya) {
+                return Some(id);
+            }
+        }
     }
 
     /// `AbstractDungeon.returnRandomScreenlessRelic(returnRandomRelicTier())`.
