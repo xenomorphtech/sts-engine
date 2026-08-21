@@ -3894,8 +3894,8 @@ pub fn flush_letter_opener(combat: &mut Combat, rng: &mut RngSet) {
     }
 }
 
-/// Seek.use queues BetterDrawPileToHandAction before UseCardAction's Hex and
-/// Ink Bottle reactions. Resolve those reactions only after the GRID closes.
+/// Seek/Hologram queue their pile-selection action before UseCardAction's Hex
+/// and Ink Bottle reactions. Resolve those reactions only after the GRID closes.
 pub fn flush_seek_reactions(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) {
     let hex = std::mem::take(&mut combat.pending_hex_after_seek);
     for _ in 0..hex {
@@ -4211,13 +4211,14 @@ pub fn play_owned_card(
         };
         // UseCardAction walks player powers before relics. Hex therefore
         // inserts its Dazed before Ink Bottle's queued draw (seed 444).
-        let defer_seek_reactions = card.id == CardId::Seek && combat.need_draw_to_hand;
+        let defer_grid_reactions = (card.id == CardId::Seek && combat.need_draw_to_hand)
+            || (card.id == CardId::Hologram && combat.need_discard_to_hand);
         if !matches!(card.id, CardId::Tempest | CardId::Multi_Cast)
             && card.card_type() != CardType::ATTACK
             && player.power_amount(PowerId::Hex) > 0
         {
             let n = player.power_amount(PowerId::Hex);
-            if defer_seek_reactions {
+            if defer_grid_reactions {
                 combat.pending_hex_after_seek += n;
             } else {
                 for _ in 0..n {
@@ -4225,7 +4226,7 @@ pub fn play_owned_card(
                 }
             }
         }
-        if !defer_seek_reactions {
+        if !defer_grid_reactions {
             flush_ink_bottle(player, combat, rng);
         }
         let mut gremlin_horn_triggers =
