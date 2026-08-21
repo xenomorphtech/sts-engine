@@ -196,6 +196,10 @@ impl Combat {
         if player.has_relic(RelicId::FossilizedHelix) {
             player.add_power(PowerId::Buffer, 1);
         }
+        // ClockworkSouvenir.atBattleStart: ArtifactPower 1.
+        if player.has_relic(RelicId::ClockworkSouvenir) {
+            player.add_power(PowerId::Artifact, 1);
+        }
         // StoneCalendar.atBattleStart: counter = 0, then atTurnStart ++.
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
             r.counter = 0;
