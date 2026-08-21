@@ -5625,14 +5625,16 @@ fn apply_card_effect(
             let mut killed = false;
             if let Some(i) = target {
                 let is_minion = combat.monsters.get(i).is_some_and(|m| {
-                    matches!(
-                        m.id,
-                        MonsterId::GremlinFat
-                            | MonsterId::GremlinTsundere
-                            | MonsterId::GremlinThief
-                            | MonsterId::GremlinWarrior
-                            | MonsterId::GremlinWizard
-                    ) && combat.monsters.iter().any(|m| m.id == MonsterId::GremlinLeader)
+                    (matches!(
+                            m.id,
+                            MonsterId::GremlinFat
+                                | MonsterId::GremlinTsundere
+                                | MonsterId::GremlinThief
+                                | MonsterId::GremlinWarrior
+                                | MonsterId::GremlinWizard
+                        ) && combat.monsters.iter().any(|m| m.id == MonsterId::GremlinLeader))
+                        || (m.id == MonsterId::BronzeOrb
+                            && combat.monsters.iter().any(|m| m.id == MonsterId::BronzeAutomaton))
                 });
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
