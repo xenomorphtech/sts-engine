@@ -3473,6 +3473,19 @@ impl Game {
                 "[Pay] #rLose #rALL #rGold.".into(),
                 "[Fight] #gObtain #gRed #gMask.".into(),
             ],
+            "Addict" => {
+                let can_pay = self.player.gold >= 85;
+                data = vec![i32::from(can_pay)];
+                let mut opts = Vec::new();
+                if can_pay {
+                    opts.push("[Offer Gold] #y85 #yGold: #gObtain #ga #gRelic.".into());
+                }
+                opts.push(
+                    "[Rob] #gObtain #ga #gRelic. #rBecome #rCursed #r- #rShame.".into(),
+                );
+                opts.push("[Leave]".into());
+                opts
+            }
             "Nest" => {
                 let gold = if self.ascension >= 15 { 50 } else { 99 };
                 data = vec![gold, 6];
@@ -4069,6 +4082,40 @@ impl Game {
                 }
                 3 => self.open_map(),
                 _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Addict" {
+            if screen == 0 {
+                let can_pay = self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.data.first().copied())
+                    .unwrap_or(0)
+                    != 0;
+                let rob = if can_pay { 1 } else { 0 };
+                let leave = if can_pay { 2 } else { 1 };
+                if can_pay && *index == 0 {
+                    if let Some(relic) = self.next_screenless_relic() {
+                        self.player.gold -= 85;
+                        self.gain_relic(relic);
+                    }
+                } else if *index == rob {
+                    let relic = self.next_screenless_relic();
+                    self.obtain_master_deck_card(CardId::Shame);
+                    if let Some(relic) = relic {
+                        self.gain_relic(relic);
+                    }
+                } else if *index == leave {
+                    self.open_map();
+                    return;
+                }
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Leave]".into()];
+                }
+            } else {
+                self.open_map();
             }
             return;
         }
