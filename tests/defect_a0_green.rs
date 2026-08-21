@@ -2937,8 +2937,8 @@ fn colosseum_slavers_reopen_the_event_without_rewards() {
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 313,
-                "768 still opens rewards after Colosseum Slavers last_ok={} want > 313: {fail}",
+                fail.last_ok > 315,
+                "768 still shifts the post-Colosseum shop last_ok={} want > 315: {fail}",
                 fail.last_ok
             );
         }

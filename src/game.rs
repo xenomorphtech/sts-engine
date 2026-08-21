@@ -2218,7 +2218,19 @@ impl Game {
                 .is_some_and(|event| event.id == "Colosseum" && event.screen == 2);
         if colosseum_first_fight {
             // Colosseum sets rewardAllowed=false for the Slavers. reopen()
-            // returns to POST_COMBAT instead of opening CombatReward.
+            // returns to POST_COMBAT instead of opening CombatReward. The
+            // room still calls addPotionToRewards before checking that flag,
+            // so preserve its roll (and blizzard update) then discard it.
+            let _ = crate::rewards::roll_potion(
+                &mut self.rng,
+                &mut self.potion_blizzard,
+                false,
+                false,
+                false,
+                self.character,
+                self.rewards.len(),
+                self.player.has_relic(RelicId::White_Beast_Statue),
+            );
             self.rewards.clear();
             self.combat = None;
             if let Some(event) = self.event.as_mut() {
