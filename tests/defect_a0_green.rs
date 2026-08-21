@@ -686,6 +686,25 @@ fn collector_spawn_initializes_torch_head_moves_and_ai_rng() {
 }
 
 #[test]
+fn collector_revives_dead_torch_head_slots() {
+    // Seed 4 kills both original Torch Heads. Java's <=25 AI roll selects
+    // REVIVE, creates one replacement for each dead enemy slot, initializes
+    // both moves, and only then rolls the Collector's next move.
+    let cfg = default_config(Character::Defect, "4", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 511,
+                "4 still fails at Collector Torch Head revive last_ok={} want > 511: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

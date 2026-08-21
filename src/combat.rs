@@ -1804,6 +1804,8 @@ impl Monster {
                     self.set_move(1, Intent::Unknown, 0, 1);
                 } else if self.extra >= 3 && !self.split_triggered {
                     self.set_move(4, Intent::StrongDebuff, 0, 1);
+                } else if num <= 25 && allies < 3 && !self.last_move(5) {
+                    self.set_move(5, Intent::Unknown, 0, 1);
                 } else if num <= 70 && !self.last_two(2) {
                     self.set_move(2, Intent::Attack, fire, 1);
                 } else if !self.last_move(3) {
@@ -2605,6 +2607,9 @@ impl Monster {
                 self.split_triggered = true;
                 self.extra += 1;
             }
+            (MonsterId::TheCollector, 5) => {
+                self.extra += 1;
+            }
             (MonsterId::TorchHead, 1) => {
                 let _ = hit_player(player, self, rng, 7, 1);
             }
@@ -2930,6 +2935,25 @@ fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet, ascension: i32, paren
     left.roll_move(rng);
     right.roll_move(rng);
     vec![left, right]
+}
+
+fn collector_revives(monsters: &[Monster], rng: &mut RngSet, ascension: i32) -> Vec<Monster> {
+    let mut revived = Vec::with_capacity(2);
+    // enemySlots retains one current TorchHead per slot. Dead historical
+    // summons stay in MonsterGroup, so revive only a slot with no living head.
+    for offset_x in [-185, -370] {
+        let occupied = monsters
+            .iter()
+            .any(|m| m.id == MonsterId::TorchHead && m.alive() && m.offset_x == offset_x);
+        if !occupied {
+            let mut torch = spawn_monster(MonsterId::TorchHead, rng, ascension);
+            torch.set_move(1, Intent::Attack, 7, 1);
+            torch.offset_x = offset_x;
+            torch.roll_move(rng);
+            revived.push(torch);
+        }
+    }
+    revived
 }
 
 /// SpawnMonsterAction smart insert: position = count of monsters with drawX < new.drawX.
@@ -5589,7 +5613,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let skip_roll = combat.monsters[i].skip_roll_after_turn();
         let id = combat.monsters[i].id;
         let used_move = combat.monsters[i].next_move;
-        let spawned = combat.monsters[i].take_turn(player, rng, combat.ascension);
+        let mut spawned = combat.monsters[i].take_turn(player, rng, combat.ascension);
+        if id == MonsterId::TheCollector && used_move == 5 {
+            spawned = Some(collector_revives(&combat.monsters, rng, combat.ascension));
+        }
         let static_n = player.pending_static;
         player.pending_static = 0;
         for _ in 0..static_n {
@@ -5675,7 +5702,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 }
             }
             if !skip_roll {
-                if combat.monsters[parent_idx].id == MonsterId::GremlinLeader {
+                if matches!(
+                    combat.monsters[parent_idx].id,
+                    MonsterId::GremlinLeader | MonsterId::TheCollector
+                ) {
                     let missing: i32 = combat
                         .monsters
                         .iter()
