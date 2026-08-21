@@ -2585,6 +2585,24 @@ fn tempest_hex_inserts_dazed_before_nested_channel_actions() {
 }
 
 #[test]
+fn sacred_bark_doubles_energy_potion() {
+    // 197: Sacred Bark doubles Energy Potion from 2 to 4 energy. The extra
+    // two energy remain for Reinforced Body after three preceding cards.
+    let cfg = default_config(Character::Defect, "197", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 283,
+                "197 still misses doubled Energy Potion last_ok={} want > 283: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

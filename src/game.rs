@@ -1904,7 +1904,15 @@ impl Game {
                 PotionId::Duplication => {
                     self.player.duplication += 1;
                 }
-                PotionId::Energy => self.player.energy += 2,
+                PotionId::Energy => {
+                    // AbstractPotion.getPotency doubles Energy Potion's base 2.
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        4
+                    } else {
+                        2
+                    };
+                    self.player.energy += potency;
+                }
                 PotionId::Blood => {
                     let heal = (self.player.max_hp as f32 * 0.2).floor() as i32;
                     self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
