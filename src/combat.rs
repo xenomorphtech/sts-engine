@@ -5099,9 +5099,16 @@ fn apply_card_effect(
                 OrbKind::Lightning,
                 OrbKind::Plasma,
             ];
+            // Chaos.use constructs every ChannelAction first. Snapshot all
+            // random orb types before a full slot can evoke Lightning and
+            // consume cardRandomRng for its target.
+            let mut rolled = Vec::with_capacity(n);
             for _ in 0..n {
                 let i = rng.card_random.random_int(KINDS.len() as i32 - 1) as usize;
-                channel_orb(player, combat, rng, KINDS[i]);
+                rolled.push(KINDS[i]);
+            }
+            for kind in rolled {
+                channel_orb(player, combat, rng, kind);
             }
         }
         CardId::White_Noise => {
