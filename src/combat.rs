@@ -274,7 +274,7 @@ impl Combat {
         let dead_before_hourglass = monsters.iter().filter(|m| m.dead).count();
         if player.has_relic(RelicId::Mercury_Hourglass) {
             for m in monsters.iter_mut().filter(|m| m.alive()) {
-                deal_thorns(m, 3);
+                deal_thorns(m, rng, 3);
             }
         }
 
@@ -3183,14 +3183,14 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
             }
         }
         for _ in 0..static_n {
-            channel_static_lightning_mid_hit(player, monster);
+            channel_static_lightning_mid_hit(player, monster, rng);
         }
         // ThornsPower.onAttacked addToTop DamageAction. If this hit is lethal,
         // ExactTextSim death snapshots before that thorns DamageAction (seed 1
         // AcidSlime_M 13 vs 10). Skip bounce when the player is already dead.
         let thorns = player.power_amount(PowerId::Thorns);
         if thorns > 0 && player.hp > 0 {
-            deal_thorns(monster, thorns);
+            deal_thorns(monster, rng, thorns);
             let spores = monster.power_amount(PowerId::SporeCloud);
             if monster.dead && spores > 0 {
                 player.add_power(PowerId::Vulnerable, spores);
@@ -3358,7 +3358,12 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
                         monster.set_move(4, Intent::Unknown, 0, 1);
                     }
                 } else {
+                    let newly_dead = !monster.dead;
                     monster.dead = true;
+                    if newly_dead && monster.id == MonsterId::Mugger {
+                        // Mugger.die -> playDeathSfx consumes aiRng.random(2).
+                        rng.ai.random_int(2);
+                    }
                     let spores = monster.power_amount(PowerId::SporeCloud);
                     if spores > 0 {
                         player.add_power(PowerId::Vulnerable, spores);
@@ -3508,10 +3513,20 @@ pub(crate) fn flush_guardian_defensive_block(combat: &mut Combat) {
     }
 }
 
-pub fn deal_thorns(monster: &mut Monster, amount: i32) {
-    if amount <= 0 || !monster.alive() || monster.half_dead {
-        return;
+pub fn deal_thorns(monster: &mut Monster, rng: &mut RngSet, amount: i32) {
+    if deal_thorns_inner(monster, amount) {
+        // Mugger.die -> playDeathSfx consumes aiRng.random(2). This
+        // apparently cosmetic hook changes later monsters' move rolls,
+        // so it must run at the lethal damage boundary (seed 359).
+        rng.ai.random_int(2);
     }
+}
+
+fn deal_thorns_inner(monster: &mut Monster, amount: i32) -> bool {
+    if amount <= 0 || !monster.alive() || monster.half_dead {
+        return false;
+    }
+    let mut mugger_died = false;
     let dmg = apply_block(&mut monster.block, amount);
     if dmg > 0 {
         if monster.id == MonsterId::Transient {
@@ -3529,12 +3544,14 @@ pub fn deal_thorns(monster: &mut Monster, amount: i32) {
                 monster.set_move(4, Intent::Unknown, 0, 1);
             } else {
                 monster.dead = true;
+                mugger_died = monster.id == MonsterId::Mugger;
             }
         } else {
             guardian_mode_shift_on_hp_loss(monster, dmg);
         }
     }
     maybe_split(monster);
+    mugger_died
 }
 
 /// Player-sourced ApplyPowerAction against a monster. SadisticPower observes
@@ -3543,6 +3560,7 @@ pub fn deal_thorns(monster: &mut Monster, amount: i32) {
 pub fn apply_player_power_to_monster(
     player: &Player,
     monster: &mut Monster,
+    rng: &mut RngSet,
     id: PowerId,
     amount: i32,
 ) {
@@ -3559,7 +3577,7 @@ pub fn apply_player_power_to_monster(
     };
     monster.add_power(id, amount);
     if sadistic > 0 {
-        deal_thorns(monster, sadistic);
+        deal_thorns(monster, rng, sadistic);
     }
 }
 
@@ -3666,7 +3684,7 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
             if r.counter == 3 {
                 r.counter = 0;
                 for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    deal_thorns(monster, 5);
+                    deal_thorns(monster, rng, 5);
                 }
             }
         }
@@ -3697,7 +3715,7 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
         let n = player.power_amount(PowerId::Heatsink);
         if n > 0 {
             let drawn = draw_cards_rng(player, n, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, drawn);
+            apply_fire_breathing(player, &mut combat.monsters, rng, drawn);
         }
         // StormPower.onUseCard queues ChannelAction addToBot after card.use()
         // ApplyPower, so Focus from this Power applies before the Lightning
@@ -3783,7 +3801,7 @@ pub fn flush_dark_embrace(player: &mut Player, combat: &mut Combat, rng: &mut Rn
     combat.pending_dark_embrace = 0;
     if n > 0 && !combat.all_dead() {
         let drawn = draw_cards_rng(player, n, Some(rng));
-        apply_fire_breathing(player, &mut combat.monsters, drawn);
+        apply_fire_breathing(player, &mut combat.monsters, rng, drawn);
     }
 }
 
@@ -3794,7 +3812,7 @@ fn flush_ink_bottle(player: &mut Player, combat: &mut Combat, rng: &mut RngSet) 
     combat.pending_ink_bottle = 0;
     if n > 0 && !combat.all_dead() {
         let drawn = draw_cards_rng(player, n, Some(rng));
-        apply_fire_breathing(player, &mut combat.monsters, drawn);
+        apply_fire_breathing(player, &mut combat.monsters, rng, drawn);
     }
 }
 
@@ -3840,14 +3858,19 @@ pub fn draw_pile_to_hand(player: &mut Player, index: usize) {
     player.hand.push(c);
 }
 
-pub fn apply_fire_breathing(player: &Player, monsters: &mut [Monster], statuses: i32) {
+pub fn apply_fire_breathing(
+    player: &Player,
+    monsters: &mut [Monster],
+    rng: &mut RngSet,
+    statuses: i32,
+) {
     let dmg = player.power_amount(PowerId::FireBreathing);
     if dmg <= 0 || statuses <= 0 {
         return;
     }
     for _ in 0..statuses {
         for monster in monsters.iter_mut().filter(|m| m.alive()) {
-            deal_thorns(monster, dmg);
+            deal_thorns(monster, rng, dmg);
         }
     }
 }
@@ -4263,7 +4286,7 @@ fn unceasing_top_on_refresh_hand(player: &mut Player, combat: &mut Combat, rng: 
         return;
     }
     let n = draw_cards_rng(player, 1, Some(rng));
-    apply_fire_breathing(player, &mut combat.monsters, n);
+    apply_fire_breathing(player, &mut combat.monsters, rng, n);
 }
 
 /// PlayTopCardAction: autoplay the top of the draw pile (shuffle discard first
@@ -4423,6 +4446,7 @@ fn apply_card_effect(
                         apply_player_power_to_monster(
                             player,
                             m,
+                            rng,
                             PowerId::Vulnerable,
                             card.base_magic as i32,
                         );
@@ -4462,7 +4486,7 @@ fn apply_card_effect(
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 damage_monster(monster, player, rng, dmg, hits);
                 if card.id == CardId::Thunderclap {
-                    apply_player_power_to_monster(player, monster, PowerId::Vulnerable, 1);
+                    apply_player_power_to_monster(player, monster, rng, PowerId::Vulnerable, 1);
                 }
             }
             if card.id == CardId::Whirlwind {
@@ -4473,12 +4497,12 @@ fn apply_card_effect(
             let n = card.base_magic as i32;
             if player.hand.is_empty() {
                 let drawn = draw_cards_rng(player, n, Some(rng));
-                apply_fire_breathing(player, &mut combat.monsters, drawn);
+                apply_fire_breathing(player, &mut combat.monsters, rng, drawn);
             } else if player.hand.len() == 1 {
                 let c = player.hand.remove(0);
                 exhaust_card(player, combat, c, rng);
                 let drawn = draw_cards_rng(player, n, Some(rng));
-                apply_fire_breathing(player, &mut combat.monsters, drawn);
+                apply_fire_breathing(player, &mut combat.monsters, rng, drawn);
             } else {
                 combat.need_exhaust_select = true;
                 combat.draw_after_exhaust = n;
@@ -4507,7 +4531,7 @@ fn apply_card_effect(
             }
             player.energy += n;
             let drawn = draw_cards_rng(player, n, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, drawn);
+            apply_fire_breathing(player, &mut combat.monsters, rng, drawn);
         }
         CardId::Multi_Cast => {
             // MulticastAction: if hasOrb, effect = energyOnUse (+2 Chemical X, +1 upgraded).
@@ -4564,6 +4588,7 @@ fn apply_card_effect(
                     apply_player_power_to_monster(
                         player,
                         m,
+                        rng,
                         PowerId::Vulnerable,
                         card.base_magic.max(1) as i32,
                     );
@@ -4584,6 +4609,7 @@ fn apply_card_effect(
                             apply_player_power_to_monster(
                                 player,
                                 m,
+                                rng,
                                 PowerId::Weak,
                                 card.base_magic.max(1) as i32,
                             );
@@ -4600,7 +4626,7 @@ fn apply_card_effect(
             // until those attack hooks have run above.
             if combat.cards_played_this_turn < card.base_magic.max(3) as i32 {
                 let n = draw_cards_rng(player, 1, Some(rng));
-                apply_fire_breathing(player, &mut combat.monsters, n);
+                apply_fire_breathing(player, &mut combat.monsters, rng, n);
             }
             if !defer_ftl_damage {
                 if let Some(i) = target {
@@ -4642,7 +4668,7 @@ fn apply_card_effect(
             // DrawCardAction when the beam ends combat (seed 158).
             if !combat.all_dead() {
                 let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
-                apply_fire_breathing(player, &mut combat.monsters, n);
+                apply_fire_breathing(player, &mut combat.monsters, rng, n);
             }
         }
         CardId::Compile_Driver => {
@@ -4658,12 +4684,12 @@ fn apply_card_effect(
                 }
             }
             let n = draw_cards_rng(player, kinds.len() as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Coolheaded => {
             channel_orb(player, combat, rng, OrbKind::Frost);
             let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Tempest => {
             // TempestAction: effect = energyOnUse, +2 Chemical X, +1 if upgraded.
@@ -4710,14 +4736,14 @@ fn apply_card_effect(
                 shuffle_java(&mut player.draw, seed);
             }
             let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Finesse => {
             if block > 0 {
                 player.block += block;
             }
             let n = draw_cards_rng(player, 1, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Reboot => {
             // ShuffleAllAction finishes (discard.shuffle + souls addToTop to
@@ -4735,7 +4761,7 @@ fn apply_card_effect(
             let seed = rng.shuffle.random_long();
             shuffle_java(&mut player.draw, seed);
             let n = draw_cards_rng(player, card.base_magic.max(4) as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Creative_AI => {
             player.add_power(PowerId::CreativeAI, card.base_magic.max(1) as i32);
@@ -4749,7 +4775,7 @@ fn apply_card_effect(
         CardId::Master_of_Strategy => {
             // DrawCardAction(magic 3, 4 upgraded) then exhaust.
             let n = draw_cards_rng(player, card.base_magic.max(3) as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Scrape => {
             if let Some(i) = target {
@@ -4760,7 +4786,7 @@ fn apply_card_effect(
             let n = card.base_magic.max(4) as i32;
             let before = player.hand.len();
             let statuses = draw_cards_rng(player, n, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, statuses);
+            apply_fire_breathing(player, &mut combat.monsters, rng, statuses);
             let drawn = player.hand.len().saturating_sub(before);
             let start = player.hand.len().saturating_sub(drawn);
             let mut i = start;
@@ -4802,7 +4828,7 @@ fn apply_card_effect(
             // ConditionalDrawAction: draw magic if no ATTACK remains in hand.
             if !player.hand.iter().any(|c| c.card_type() == CardType::ATTACK) {
                 let n = draw_cards_rng(player, card.base_magic.max(2) as i32, Some(rng));
-                apply_fire_breathing(player, &mut combat.monsters, n);
+                apply_fire_breathing(player, &mut combat.monsters, rng, n);
             }
         }
         CardId::Stack => {
@@ -4918,7 +4944,7 @@ fn apply_card_effect(
                 }
             }
             let n = draw_cards_rng(player, 1, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Panacea => {
             player.add_power(PowerId::Artifact, card.base_magic.max(1) as i32);
@@ -5055,6 +5081,7 @@ fn apply_card_effect(
                     apply_player_power_to_monster(
                         player,
                         m,
+                        rng,
                         PowerId::LockOn,
                         card.base_magic.max(2) as i32,
                     );
@@ -5066,11 +5093,11 @@ fn apply_card_effect(
             let n = card.base_magic.max(2) as i32;
             if card.upgraded {
                 for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    apply_player_power_to_monster(player, monster, PowerId::Weak, n);
+                    apply_player_power_to_monster(player, monster, rng, PowerId::Weak, n);
                 }
             } else if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    apply_player_power_to_monster(player, m, PowerId::Weak, n);
+                    apply_player_power_to_monster(player, m, rng, PowerId::Weak, n);
                 }
             }
         }
@@ -5079,11 +5106,11 @@ fn apply_card_effect(
             let n = card.base_magic.max(2) as i32;
             if card.upgraded {
                 for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                    apply_player_power_to_monster(player, monster, PowerId::Vulnerable, n);
+                    apply_player_power_to_monster(player, monster, rng, PowerId::Vulnerable, n);
                 }
             } else if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
-                    apply_player_power_to_monster(player, m, PowerId::Vulnerable, n);
+                    apply_player_power_to_monster(player, m, rng, PowerId::Vulnerable, n);
                 }
             }
         }
@@ -5094,7 +5121,7 @@ fn apply_card_effect(
         }
         CardId::Steam_Power => {
             let n = draw_cards_rng(player, card.base_magic.max(2) as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
             player.discard.push(Card::new(CardId::Burn));
         }
         CardId::Storm => {
@@ -5118,9 +5145,9 @@ fn apply_card_effect(
                 if let Some(m) = combat.monsters.get_mut(i) {
                     let amt = card.base_magic.max(9) as i32;
                     let had_art = m.power_amount(PowerId::Artifact) > 0;
-                    apply_player_power_to_monster(player, m, PowerId::Strength, -amt);
+                    apply_player_power_to_monster(player, m, rng, PowerId::Strength, -amt);
                     if !had_art {
-                        apply_player_power_to_monster(player, m, PowerId::Shackled, amt);
+                        apply_player_power_to_monster(player, m, rng, PowerId::Shackled, amt);
                     }
                 }
             }
@@ -5272,7 +5299,7 @@ fn apply_card_effect(
         }
         CardId::Skim => {
             let n = draw_cards_rng(player, card.base_magic.max(3) as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         CardId::Self_Repair => {
             player.add_power(PowerId::SelfRepair, card.base_magic.max(7) as i32);
@@ -5337,7 +5364,7 @@ fn apply_card_effect(
         }
         CardId::Thinking_Ahead => {
             let n = draw_cards_rng(player, 2, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
             if !player.hand.is_empty() {
                 combat.need_put_on_deck = true;
             }
@@ -5443,7 +5470,7 @@ fn apply_card_effect(
             if card.id == CardId::Shrug_It_Off {
                 reshuffle_if_needed(player, rng);
                 let n = crate::combat::draw_cards_rng(player, 1, Some(rng));
-                apply_fire_breathing(player, &mut combat.monsters, n);
+                apply_fire_breathing(player, &mut combat.monsters, rng, n);
             }
             if card.id == CardId::Armaments && card.upgraded {
                 for c in &mut player.hand {
@@ -5492,6 +5519,7 @@ fn apply_card_effect(
                         apply_player_power_to_monster(
                             player,
                             m,
+                            rng,
                             PowerId::Weak,
                             card.base_magic as i32,
                         );
@@ -5501,7 +5529,7 @@ fn apply_card_effect(
             if card.id == CardId::Pommel_Strike {
                 reshuffle_if_needed(player, rng);
                 let n = draw_cards_rng(player, card.base_magic as i32, Some(rng));
-                apply_fire_breathing(player, &mut combat.monsters, n);
+                apply_fire_breathing(player, &mut combat.monsters, rng, n);
             }
         }
         CardId::J_A_X_ => {
@@ -5529,7 +5557,7 @@ fn apply_card_effect(
             player.energy += 2;
             reshuffle_if_needed(player, rng);
             let n = draw_cards_rng(player, card.base_magic as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            apply_fire_breathing(player, &mut combat.monsters, rng, n);
         }
         _ => {
             if dmg > 0 {
@@ -5575,7 +5603,7 @@ fn resolve_gremlin_horn_triggers(
     for _ in 0..triggers {
         player.energy += 1;
         let n = draw_cards_rng(player, 1, Some(rng));
-        apply_fire_breathing(player, &mut combat.monsters, n);
+        apply_fire_breathing(player, &mut combat.monsters, rng, n);
     }
 }
 
@@ -5641,7 +5669,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     {
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
-            deal_thorns(m, 52);
+            deal_thorns(m, rng, 52);
         }
         gremlin_horn_on_kills(player, combat, rng, dead_before);
         flush_spore_cloud(player, combat);
@@ -5823,7 +5851,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 // DamageAllEnemiesAction uses THORNS, so every monster's
                 // damage override still fires. In particular, The Bomb can
                 // force Slime Boss / large slimes to Split before their turn.
-                deal_thorns(monster, bomb_dmg);
+                deal_thorns(monster, rng, bomb_dmg);
             }
             if combat.all_dead() {
                 return;
@@ -6120,7 +6148,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if player.has_relic(RelicId::Mercury_Hourglass) {
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
-            deal_thorns(m, 3);
+            deal_thorns(m, rng, 3);
         }
         gremlin_horn_on_kills(player, combat, rng, dead_before);
         flush_spore_cloud(player, combat);
@@ -6150,17 +6178,17 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         }
         reshuffle_if_needed(player, rng);
         let statuses = draw_cards_rng(player, n, Some(rng));
-        apply_fire_breathing(player, &mut combat.monsters, statuses);
+        apply_fire_breathing(player, &mut combat.monsters, rng, statuses);
     }
     // DrawPower (Machine Learning) bumps gameHandSize; DrawCardAction uses that.
     let draw_n = 5
         + if player.has_relic(RelicId::Snecko_Eye) { 2 } else { 0 }
         + player.power_amount(PowerId::DrawCard);
     let statuses = draw_cards_rng(player, draw_n, Some(rng));
-    apply_fire_breathing(player, &mut combat.monsters, statuses);
+    apply_fire_breathing(player, &mut combat.monsters, rng, statuses);
     if pocketwatch {
         let n = draw_cards_rng(player, 3, Some(rng));
-        apply_fire_breathing(player, &mut combat.monsters, n);
+        apply_fire_breathing(player, &mut combat.monsters, rng, n);
     }
     // MayhemPower.atStartOfTurn queues a wrapper addToBot whose update
     // addToBot PlayTopCardAction. DrawCardAction is queued after the wrapper,
@@ -6351,7 +6379,11 @@ fn decrease_max_orb_slots(player: &mut Player, amount: i32) {
 /// all-enemy damage, so resolve a lethal hit on the current attacker now: in
 /// Java that DamageAllEnemiesAction runs before the next queued DamageAction
 /// and a dying source cancels its later hit (seed 572 Guardian Twin Slam).
-fn channel_static_lightning_mid_hit(player: &mut Player, attacker: &mut Monster) {
+fn channel_static_lightning_mid_hit(
+    player: &mut Player,
+    attacker: &mut Monster,
+    rng: &mut RngSet,
+) {
     if player.max_orbs <= 0 {
         return;
     }
@@ -6367,10 +6399,10 @@ fn channel_static_lightning_mid_hit(player: &mut Player, attacker: &mut Monster)
                 if player.power_amount(PowerId::Electro) > 0 && attacker.alive() {
                     let mut probe = attacker.clone();
                     let probe_amt = apply_lock_on(&probe, amt);
-                    deal_thorns(&mut probe, probe_amt);
+                    deal_thorns_inner(&mut probe, probe_amt);
                     if probe.dead {
                         let attacker_amt = apply_lock_on(attacker, amt);
-                        deal_thorns(attacker, attacker_amt);
+                        deal_thorns(attacker, rng, attacker_amt);
                     }
                 }
             }
@@ -6394,7 +6426,7 @@ fn flush_mid_hit_evokes(player: &mut Player, combat: &mut Combat, rng: &mut RngS
     }
     let dark = std::mem::take(&mut player.pending_evoke_dark);
     for amt in dark {
-        dark_evoke_hit(combat, amt);
+        dark_evoke_hit(combat, rng, amt);
     }
 }
 
@@ -6435,7 +6467,7 @@ fn apply_evoke(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, orb: 
     match orb.kind {
         OrbKind::Lightning => lightning_hit_player(Some(player), combat, rng, amt),
         OrbKind::Frost => gain_player_block(player, amt),
-        OrbKind::Dark => dark_evoke_hit(combat, amt),
+        OrbKind::Dark => dark_evoke_hit(combat, rng, amt),
         OrbKind::Plasma => player.energy += amt,
     }
 }
@@ -6509,7 +6541,7 @@ fn lightning_hit(combat: &mut Combat, rng: &mut RngSet, amount: i32) {
 
 /// DarkOrbEvokeAction ctor: first `!isDeadOrEscaped` monster with lowest `currentHealth`.
 /// Ties keep the earlier monster. No cardRandomRng.
-fn dark_evoke_hit(combat: &mut Combat, amount: i32) {
+fn dark_evoke_hit(combat: &mut Combat, rng: &mut RngSet, amount: i32) {
     if amount <= 0 {
         return;
     }
@@ -6527,7 +6559,7 @@ fn dark_evoke_hit(combat: &mut Combat, amount: i32) {
     }
     if let Some(i) = best {
         if let Some(m) = combat.monsters.get_mut(i) {
-            deal_thorns(m, apply_lock_on(m, amount));
+            deal_thorns(m, rng, apply_lock_on(m, amount));
         }
     }
 }
@@ -6551,7 +6583,7 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
         for i in alive {
             if let Some(m) = combat.monsters.get_mut(i) {
                 let amt = apply_lock_on(m, amount);
-                deal_thorns(m, amt);
+                deal_thorns(m, rng, amt);
             }
         }
         return;
@@ -6565,7 +6597,7 @@ fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut 
     }
     if let Some(m) = combat.monsters.get_mut(alive[pick]) {
         let amt = apply_lock_on(m, amount);
-        deal_thorns(m, amt);
+        deal_thorns(m, rng, amt);
     }
 }
 

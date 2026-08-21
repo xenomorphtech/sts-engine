@@ -1764,7 +1764,12 @@ impl Game {
                 PotionId::Swift => {
                     let statuses = combat::draw_cards_rng(&mut self.player, 3, Some(&mut self.rng));
                     if let Some(combat) = self.combat.as_mut() {
-                        combat::apply_fire_breathing(&mut self.player, &mut combat.monsters, statuses);
+                        combat::apply_fire_breathing(
+                            &mut self.player,
+                            &mut combat.monsters,
+                            &mut self.rng,
+                            statuses,
+                        );
                     }
                 }
                 PotionId::Block => {
@@ -1787,6 +1792,7 @@ impl Game {
                             combat::apply_player_power_to_monster(
                                 &self.player,
                                 m,
+                                &mut self.rng,
                                 crate::ids::PowerId::Vulnerable,
                                 3,
                             );
@@ -1800,6 +1806,7 @@ impl Game {
                             combat::apply_player_power_to_monster(
                                 &self.player,
                                 m,
+                                &mut self.rng,
                                 crate::ids::PowerId::Weak,
                                 3,
                             );
@@ -1832,7 +1839,7 @@ impl Game {
                             } else {
                                 20
                             };
-                            combat::deal_thorns(m, damage);
+                            combat::deal_thorns(m, &mut self.rng, damage);
                         }
                         // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
                         // addToBot Draw+Energy if combat is not over (seed 773).
@@ -1849,7 +1856,7 @@ impl Game {
                     if let Some(combat) = self.combat.as_mut() {
                         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
                         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                            combat::deal_thorns(m, 10);
+                            combat::deal_thorns(m, &mut self.rng, 10);
                         }
                         combat::gremlin_horn_on_kills(
                             &mut self.player,
@@ -1960,6 +1967,7 @@ impl Game {
                             combat::apply_fire_breathing(
                                 &mut self.player,
                                 &mut combat.monsters,
+                                &mut self.rng,
                                 statuses,
                             );
                         }
@@ -5397,7 +5405,12 @@ impl Game {
         if let Some(combat) = self.combat.as_mut() {
             combat.draw_after_exhaust = 0;
             let drawn = crate::combat::draw_cards_rng(&mut self.player, n, Some(&mut self.rng));
-            crate::combat::apply_fire_breathing(&self.player, &mut combat.monsters, drawn);
+            crate::combat::apply_fire_breathing(
+                &self.player,
+                &mut combat.monsters,
+                &mut self.rng,
+                drawn,
+            );
         }
     }
 
@@ -5512,7 +5525,12 @@ impl Game {
                     self.player.discard.append(&mut self.pending_cards);
                     if let Some(combat) = self.combat.as_mut() {
                         let drawn = crate::combat::draw_cards_rng(&mut self.player, n, Some(&mut self.rng));
-                        crate::combat::apply_fire_breathing(&self.player, &mut combat.monsters, drawn);
+                        crate::combat::apply_fire_breathing(
+                            &self.player,
+                            &mut combat.monsters,
+                            &mut self.rng,
+                            drawn,
+                        );
                     }
                     self.gambling_select = false;
                     self.screen = Screen::Combat;

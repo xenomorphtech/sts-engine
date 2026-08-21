@@ -2420,6 +2420,25 @@ fn slavers_collar_temporarily_increases_energy_in_elite_combat() {
 }
 
 #[test]
+fn mugger_death_advances_ai_rng_before_later_monster_rolls() {
+    // 359: a passive Lightning hit kills Mugger before Looter acts. Mugger's
+    // death SFX consumes aiRng.random(2), changing Looter's post-attack move
+    // from Lunge to Smoke Bomb.
+    let cfg = default_config(Character::Defect, "359", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 258,
+                "359 still misses Mugger death AI RNG last_ok={} want > 258: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
