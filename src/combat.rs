@@ -335,6 +335,7 @@ fn is_boss_encounter(id: EncounterId) -> bool {
             | EncounterId::AwakenedOne
             | EncounterId::Champ
             | EncounterId::Collector
+            | EncounterId::DonuAndDeca
             | EncounterId::ShieldAndSpear
             | EncounterId::CorruptHeart
     )
@@ -400,6 +401,12 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
         }
         MonsterId::CorruptHeart => {
             monster.add_power(PowerId::Artifact, 2);
+        }
+        MonsterId::Deca | MonsterId::Donu => {
+            monster.add_power(
+                PowerId::Artifact,
+                if monster.ascension >= 19 { 3 } else { 2 },
+            );
         }
         MonsterId::BookOfStabbing => {
             monster.add_power(PowerId::PainfulStabs, 1);
@@ -470,6 +477,19 @@ fn apply_group_move(combat: &mut Combat, idx: usize, id: MonsterId, used_move: i
             };
             for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 m.add_power(PowerId::Strength, str);
+            }
+        }
+        (MonsterId::Deca, 2) => {
+            for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                m.block += 16;
+                if combat.ascension >= 19 {
+                    m.add_power(PowerId::PlatedArmor, 3);
+                }
+            }
+        }
+        (MonsterId::Donu, 2) => {
+            for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
+                m.add_power(PowerId::Strength, 3);
             }
         }
         (MonsterId::Centurion, 2) => {
@@ -940,6 +960,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
         MonsterId::SpireShield => (110, 110),
         MonsterId::SpireSpear => (160, 160),
         MonsterId::CorruptHeart => (750, 750),
+        MonsterId::Deca | MonsterId::Donu => {
+            if a9 {
+                (265, 265)
+            } else {
+                (250, 250)
+            }
+        }
         MonsterId::BookOfStabbing => (160, 164),
         MonsterId::Spiker => (42, 56),
         MonsterId::Exploder => (30, 30),
@@ -1361,6 +1388,37 @@ impl Monster {
                     self.set_move(2, Intent::Attack, 40, 1);
                 } else {
                     self.set_move(4, Intent::Buff, 0, 1);
+                }
+            }
+            MonsterId::Deca => {
+                let damage = if self.ascension >= 4 { 12 } else { 10 };
+                if self.first_move {
+                    self.first_move = false;
+                    self.set_move(0, Intent::AttackDebuff, damage, 2);
+                } else if self.last_move(0) {
+                    self.set_move(
+                        2,
+                        if self.ascension >= 19 {
+                            Intent::DefendBuff
+                        } else {
+                            Intent::Defend
+                        },
+                        0,
+                        1,
+                    );
+                } else {
+                    self.set_move(0, Intent::AttackDebuff, damage, 2);
+                }
+            }
+            MonsterId::Donu => {
+                let damage = if self.ascension >= 4 { 12 } else { 10 };
+                if self.first_move {
+                    self.first_move = false;
+                    self.set_move(2, Intent::Buff, 0, 1);
+                } else if self.last_move(2) {
+                    self.set_move(0, Intent::Attack, damage, 2);
+                } else {
+                    self.set_move(2, Intent::Buff, 0, 1);
                 }
             }
             MonsterId::Hexaghost => {
@@ -2488,6 +2546,18 @@ impl Monster {
             (MonsterId::SpireSpear, 2) => {
                 player.add_power_from_monster(PowerId::Vulnerable, 2);
             }
+            (MonsterId::Deca, 0) => {
+                let damage = if ascension >= 4 { 12 } else { 10 };
+                let _ = hit_player(player, self, rng, damage, 2);
+                player.discard.push(Card::new(CardId::Dazed));
+                player.discard.push(Card::new(CardId::Dazed));
+            }
+            (MonsterId::Deca, 2) => {}
+            (MonsterId::Donu, 0) => {
+                let damage = if ascension >= 4 { 12 } else { 10 };
+                let _ = hit_player(player, self, rng, damage, 2);
+            }
+            (MonsterId::Donu, 2) => {}
             (MonsterId::Spiker, 1) => {
                 let _ = hit_player(player, self, rng, 7, 1);
             }

@@ -1231,6 +1231,7 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
         EncounterId::ExordiumWildlife => &[MonsterId::FungiBeast, MonsterId::JawWorm],
         EncounterId::ShieldAndSpear => &[MonsterId::SpireShield, MonsterId::SpireSpear],
         EncounterId::CorruptHeart => &[MonsterId::CorruptHeart],
+        EncounterId::DonuAndDeca => &[MonsterId::Deca, MonsterId::Donu],
         EncounterId::SphericGuardian => &[MonsterId::SphericGuardian],
         EncounterId::SphereAndTwoShapes => &[
             MonsterId::Spiker,

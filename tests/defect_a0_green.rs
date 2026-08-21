@@ -2035,6 +2035,24 @@ fn sphere_and_two_shapes_uses_independent_ancient_shape_rolls() {
 }
 
 #[test]
+fn donu_and_deca_boss_uses_paired_alternating_moves() {
+    // 4: the Act 3 boss is Deca then Donu. Both start with Artifact; Deca
+    // opens with Beam while Donu opens with Circle of Protection.
+    let cfg = default_config(Character::Defect, "4", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 796,
+                "4 still fails at Donu and Deca last_ok={} want > 796: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
