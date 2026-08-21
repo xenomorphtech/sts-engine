@@ -343,6 +343,7 @@ pub fn end_of_turn(powers: &mut Vec<Power>) {
             && p.id != PowerId::LoseStrength
             && p.id != PowerId::LoseDexterity
             && p.id != PowerId::Entangled
+            && p.id != PowerId::Amplify
     });
     // Java keeps negative Strength/Dexterity (Lagavulin siphon is -1); drop only 0.
     powers.retain(|p| (p.id != PowerId::Strength && p.id != PowerId::Dexterity) || p.amount != 0);

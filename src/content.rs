@@ -301,6 +301,8 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Force_Field, true) => CardStats::skill(4, 16, -1),
         (CardId::Buffer, false) => CardStats::skill(2, -1, 1),
         (CardId::Buffer, true) => CardStats::skill(2, -1, 2),
+        (CardId::Amplify, false) => CardStats::skill(1, -1, 1),
+        (CardId::Amplify, true) => CardStats::skill(1, -1, 2),
         (CardId::Defragment, false) => CardStats::skill(1, -1, 1),
         (CardId::Defragment, true) => CardStats::skill(1, -1, 2),
         (CardId::Biased_Cognition, false) => CardStats::skill(1, -1, 4),

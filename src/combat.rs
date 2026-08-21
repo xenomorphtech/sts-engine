@@ -3745,12 +3745,19 @@ pub fn play_owned_card(
     // deals so Sweeping Beam hits the 20 block (seed 149 Guardian 200 vs 194).
     flush_guardian_defensive_block(combat);
 
-    let plays = if player.duplication > 0 {
+    let mut plays = if player.duplication > 0 {
         player.duplication -= 1;
         2
     } else {
         1
     };
+    if card.card_type() == CardType::POWER && player.power_amount(PowerId::Amplify) > 0 {
+        plays += 1;
+        if let Some(power) = player.powers.iter_mut().find(|p| p.id == PowerId::Amplify) {
+            power.amount -= 1;
+        }
+        player.powers.retain(|p| p.id != PowerId::Amplify || p.amount > 0);
+    }
     // AbstractCard.energyOnUse = EnergyPanel.totalCount at play. The
     // Duplication copy is CardQueueItem(tmp, m, card.energyOnUse, true, true)
     // so X-cost uses the original amount and freeToPlayOnce (seed 991).
@@ -4802,6 +4809,9 @@ fn apply_card_effect(
         }
         CardId::Storm => {
             player.add_power(PowerId::Storm, card.base_magic.max(1) as i32);
+        }
+        CardId::Amplify => {
+            player.add_power(PowerId::Amplify, card.base_magic.max(1) as i32);
         }
         CardId::Double_Energy => {
             player.energy *= 2;

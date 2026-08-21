@@ -310,6 +310,24 @@ fn coffee_dripper_skips_rest_option() {
 }
 
 #[test]
+fn amplify_queues_the_next_power_twice() {
+    // Seed 89 plays Amplify, then Electrodynamics against Bronze Automaton.
+    // The purged copy counts as another Power play and channels two more orbs.
+    let cfg = default_config(Character::Defect, "89", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 435,
+                "89 still fails at Amplify/Electrodynamics last_ok={} want > 435: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

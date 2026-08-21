@@ -221,6 +221,7 @@ pub enum PowerId {
     CreativeAI,
     LockOn,
     Storm,
+    Amplify,
     NoBlock,
     HelloWorld,
     StaticDischarge,
