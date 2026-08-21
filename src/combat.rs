@@ -5903,8 +5903,11 @@ fn apply_card_effect(
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 damage_monster(monster, player, rng, dmg, 1);
             }
-            // DamageAction -> GameActionManager.clearPostCombatActions drops ChannelAction.
-            if !combat.all_dead() {
+            // DamageAllEnemiesAction finishes its target loop even when a
+            // Spiker's Thorns kills the player, but the action manager then
+            // stops before Doom and Gloom's queued ChannelAction (seed 144).
+            // A cleared combat likewise drops that ChannelAction.
+            if player.hp > 0 && !combat.all_dead() {
                 for _ in 0..card.base_magic.max(1) {
                     channel_orb(player, combat, rng, OrbKind::Dark);
                 }
