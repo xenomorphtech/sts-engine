@@ -82,6 +82,15 @@ impl Combat {
                 }
             }
         }
+        // RedMask.atBattleStart: apply Weak 1 to every monster. This is one
+        // ApplyPowerAction per monster, so Artifact is consumed independently.
+        if player.has_relic(RelicId::Red_Mask) {
+            for m in &mut monsters {
+                if m.alive() {
+                    m.add_power(PowerId::Weak, 1);
+                }
+            }
+        }
         // PhilosopherStone.atBattleStart: Strength 1 on every monster
         // (seed 645 Looter+Mugger 11 not 10, hp 58 vs 60).
         if player.has_relic(RelicId::Philosophers_Stone) {

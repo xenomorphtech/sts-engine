@@ -201,17 +201,18 @@ fn gremlin_leader_encounter_has_minions_and_leader() {
 }
 
 #[test]
-fn slavers_encounter_includes_taskmaster() {
+fn slavers_encounter_includes_taskmaster_and_honors_red_mask() {
     // Seed 340 reaches Slavers after Masked Bandits and Nest. Java constructs
-    // Blue Slaver, Taskmaster (SlaverBoss), then Red Slaver.
+    // Blue Slaver, Taskmaster (SlaverBoss), then Red Slaver. The Red Mask from
+    // Bandits weakens all three at battle start, preventing HP loss on turn 1.
     let cfg = default_config(Character::Defect, "340", Unlocks::fixture(), 0);
     match walk_oracle(&cfg) {
         Ok(_) => {}
         Err(fail) if fail.mismatched == ["io"] => {}
         Err(fail) => {
             assert!(
-                fail.last_ok > 288,
-                "340 still fails at Slavers last_ok={} want > 288: {fail}",
+                fail.last_ok > 296,
+                "340 still fails at Slavers/Red Mask last_ok={} want > 296: {fail}",
                 fail.last_ok
             );
         }
