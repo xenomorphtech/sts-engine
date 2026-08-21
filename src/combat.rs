@@ -5279,8 +5279,10 @@ fn apply_card_effect(
                 damage_monster(monster, player, rng, dmg, 1);
             }
             // DamageAllEnemiesAction.clearPostCombatActions drops the queued
-            // DrawCardAction when the beam ends combat (seed 158).
-            if !combat.all_dead() {
+            // DrawCardAction when the beam ends combat (seed 158), and the
+            // action manager stops before it when Spiker Thorns kills the
+            // player during the AOE (seed 145).
+            if player.hp > 0 && !combat.all_dead() {
                 let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
                 apply_fire_breathing(player, &mut combat.monsters, rng, n);
             }
@@ -5903,6 +5905,10 @@ fn apply_card_effect(
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 damage_monster(monster, player, rng, dmg, 1);
             }
+            // Darkling.damage synchronously kills the group when the final
+            // member becomes half-dead. That makes the AOE's post-combat
+            // cleanup clear the following ChannelAction (seed 145).
+            resolve_darklings(combat);
             // DamageAllEnemiesAction finishes its target loop even when a
             // Spiker's Thorns kills the player, but the action manager then
             // stops before Doom and Gloom's queued ChannelAction (seed 144).
