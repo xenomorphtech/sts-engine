@@ -3932,6 +3932,7 @@ pub fn play_owned_card(
             && player.draw.iter().filter(|c| c.card_type() == CardType::SKILL).count() > 1)
         || (card.id == CardId::Secret_Weapon
             && player.draw.iter().filter(|c| c.card_type() == CardType::ATTACK).count() > 1);
+    let mut original_resolved_before_copy = false;
     for play_i in 0..plays {
         if play_i > 0 {
             card.free_to_play_once = true;
@@ -4107,6 +4108,26 @@ pub fn play_owned_card(
                 }
             }
         }
+        if play_i == 0
+            && plays > 1
+            && !needs_select
+            && card.card_type() != CardType::POWER
+        {
+            // DuplicationPower queues a separate CardQueueItem. Java drains
+            // the original card's use actions and UseCardAction before that
+            // queued copy can play. In particular, Overclock resolves Draw,
+            // Burn, then discards the original before the copy adds its Burn.
+            let mut original = card;
+            original.free_to_play_once = false;
+            if original.exhaust {
+                exhaust_card(player, combat, original, rng);
+            } else {
+                player.discard.push(original);
+            }
+            flush_dark_embrace(player, combat, rng);
+            unceasing_top_on_refresh_hand(player, combat, rng);
+            original_resolved_before_copy = true;
+        }
     }
     // Duplication copy is a separate CardQueueItem with freeToPlayOnce; the
     // original is discarded without that flag. Leaving it set made Scrape keep
@@ -4127,6 +4148,8 @@ pub fn play_owned_card(
         // UseCardAction runs after BetterDiscardPileToHandAction, so the played
         // card is still in limbo while GRID is open.
         combat.pending_exhaust = Some(card);
+    } else if original_resolved_before_copy {
+        // The original already reached its pile before the queued copy.
     } else if card.exhaust {
         exhaust_card(player, combat, card, rng);
     } else if card.card_type() != CardType::POWER {

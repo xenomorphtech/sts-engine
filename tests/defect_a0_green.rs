@@ -2071,6 +2071,25 @@ fn deferred_ftl_uses_pre_relic_damage_snapshot() {
 }
 
 #[test]
+fn duplicated_overclock_discards_original_between_burns() {
+    // 123: DuplicationPower's copied Overclock is a later CardQueueItem.
+    // Original Burn, original Steam Power discard, then copied Burn is the
+    // input order for the next shuffle (Burn is drawn, not Steam Power).
+    let cfg = default_config(Character::Defect, "123", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 206,
+                "123 still fails at Duplication/Overclock queue order last_ok={} want > 206: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
