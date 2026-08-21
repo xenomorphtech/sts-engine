@@ -864,6 +864,25 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn duplication_does_not_leave_original_free() {
+    // 423: DuplicationPotion copy is a separate CardQueueItem with
+    // freeToPlayOnce; the original Zap is discarded without it. Scrape then
+    // discards the redrawn Zap (cost 1). Rust kept Zap in hand.
+    let cfg = default_config(Character::Defect, "423", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 172,
+                "423 still fails at Duplication/Scrape Zap last_ok={} want > 172: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn seek_upgraded_grid_picks_two() {
     // 96: Apotheosis upgrades Seek to magic 2. BetterDrawPileToHandAction
     // GRID stays open after the first Choose (Sweeping Beam); second is

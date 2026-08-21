@@ -3669,6 +3669,10 @@ pub fn play_owned_card(
             }
         }
     }
+    // Duplication copy is a separate CardQueueItem with freeToPlayOnce; the
+    // original is discarded without that flag. Leaving it set made Scrape keep
+    // a redrawn Zap (seed 423 hand Zap vs discarded).
+    card.free_to_play_once = false;
 
     // BattleStartEffect.showIntent often lands during the first card's
     // queued actions (DamageAction duration). UseCardAction itself does not
