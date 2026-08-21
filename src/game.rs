@@ -1747,12 +1747,18 @@ impl Game {
                     self.player.add_power(crate::ids::PowerId::LoseDexterity, 5);
                 }
                 PotionId::Steroid => {
-                    // Flex Potion: Strength 5 + LoseStrength 5. Combat only.
+                    // Flex Potion: Strength + LoseStrength at getPotency().
                     if self.combat.is_none() {
                         return;
                     }
-                    self.player.add_power(crate::ids::PowerId::Strength, 5);
-                    self.player.add_power(crate::ids::PowerId::LoseStrength, 5);
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        10
+                    } else {
+                        5
+                    };
+                    self.player.add_power(crate::ids::PowerId::Strength, potency);
+                    self.player
+                        .add_power(crate::ids::PowerId::LoseStrength, potency);
                 }
                 PotionId::Regen => {
                     // RegenPotion: RegenPower(player, 5). Heals at end of turn
@@ -1852,11 +1858,16 @@ impl Game {
                     }
                 }
                 PotionId::Explosive => {
-                    // ExplosivePotion.use: DamageAllEnemiesAction(createDamageMatrix(10, true), NORMAL).
+                    // ExplosivePotion.use: DamageAllEnemiesAction using getPotency().
+                    let damage = if self.player.has_relic(RelicId::SacredBark) {
+                        20
+                    } else {
+                        10
+                    };
                     if let Some(combat) = self.combat.as_mut() {
                         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
                         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                            combat::deal_thorns(m, &mut self.rng, 10);
+                            combat::deal_thorns(m, &mut self.rng, damage);
                         }
                         combat::gremlin_horn_on_kills(
                             &mut self.player,
@@ -1912,7 +1923,12 @@ impl Game {
                     if self.combat.is_none() {
                         return;
                     }
-                    self.player.add_power(crate::ids::PowerId::Focus, 2);
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        4
+                    } else {
+                        2
+                    };
+                    self.player.add_power(crate::ids::PowerId::Focus, potency);
                 }
                 PotionId::PotionOfCapacity => {
                     // PotionOfCapacity.use -> IncreaseMaxOrbAction(getPotency()=2).

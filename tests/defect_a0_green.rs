@@ -2439,6 +2439,25 @@ fn mugger_death_advances_ai_rng_before_later_monster_rolls() {
 }
 
 #[test]
+fn sacred_bark_doubles_focus_flex_and_explosive_potions() {
+    // 280: Entropic Brew creates Focus, Flex, and Explosive potions. Sacred
+    // Bark doubles their potency to 4 Focus, 10 temporary Strength, and 20
+    // damage respectively.
+    let cfg = default_config(Character::Defect, "280", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 262,
+                "280 still misses Sacred Bark potion potency last_ok={} want > 262: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
