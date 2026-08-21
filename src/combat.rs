@@ -6166,6 +6166,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             .monsters
             .iter()
             .any(|m| m.alive() && m.block < 3 && m.hp <= 3 - m.block);
+    let mut hourglass_ended_combat = false;
     if hourglass_before_loop {
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
@@ -6173,9 +6174,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         }
         gremlin_horn_on_kills(player, combat, rng, dead_before);
         flush_spore_cloud(player, combat);
-        if combat.all_dead() {
-            return;
-        }
+        hourglass_ended_combat = combat.all_dead();
     }
     // LoopPower.atStartOfTurn calls orb onEndOfTurn while BiasPower still
     // only has an addToBot Focus-1 queued, so lightning/frost/dark snapshot
@@ -6185,6 +6184,12 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         apply_front_orb_passive(player, combat, rng);
     }
     flush_guardian_defensive_block(combat);
+    // clearPostCombatActions keeps GainBlockAction. If Hourglass killed the
+    // final target, Loop's already-queued Frost passive still resolves, while
+    // later start-turn effects are cleared (seed 742).
+    if hourglass_ended_combat {
+        return;
+    }
     let bias = player.power_amount(PowerId::Bias);
     if bias > 0 {
         player.add_power(PowerId::Focus, -bias);

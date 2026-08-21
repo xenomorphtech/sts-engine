@@ -2676,6 +2676,24 @@ fn life_suck_heals_before_queued_thorns() {
 }
 
 #[test]
+fn loop_frost_block_survives_lethal_hourglass() {
+    // 742: Hourglass kills the final monster, but Java's post-combat clear
+    // preserves Loop's queued GainBlockAction from the front Frost orb.
+    let cfg = default_config(Character::Defect, "742", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 303,
+                "742 still drops Loop Frost block last_ok={} want > 303: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
