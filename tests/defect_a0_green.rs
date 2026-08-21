@@ -2256,6 +2256,24 @@ fn velvet_choker_increases_master_energy_on_equip() {
 }
 
 #[test]
+fn jack_of_all_trades_exhausts_and_creates_a_colorless_card() {
+    // 68: Jack of All Trades rolls Madness from the non-healing source
+    // colorless pool, adds it to hand, and exhausts itself.
+    let cfg = default_config(Character::Defect, "68", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 222,
+                "68 still misses Jack of All Trades last_ok={} want > 222: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

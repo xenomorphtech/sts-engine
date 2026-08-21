@@ -658,6 +658,15 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
             ethereal: false,
             innate: true,
         },
+        (CardId::Jack_Of_All_Trades, u) => CardStats {
+            cost: 0,
+            damage: -1,
+            block: -1,
+            magic: if u { 2 } else { 1 },
+            exhaust: true,
+            ethereal: false,
+            innate: false,
+        },
         (CardId::Madness, false) => CardStats {
             cost: 1,
             damage: -1,

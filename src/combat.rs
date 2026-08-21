@@ -5255,6 +5255,33 @@ fn apply_card_effect(
                 p.misc = if card.upgraded { 50 } else { 40 };
             }
         }
+        CardId::Jack_Of_All_Trades => {
+            // returnTrulyRandomColorlessCardInCombat samples the immutable
+            // source pool, excluding cards tagged HEALING. Of the source-pool
+            // colorless cards, only Bandage Up has that tag (Bite is SPECIAL).
+            if let Some(dungeon) = dungeon {
+                let pool: Vec<CardId> = dungeon
+                    .src_colorless_cards
+                    .iter()
+                    .copied()
+                    .filter(|id| *id != CardId::Bandage_Up)
+                    .collect();
+                if !pool.is_empty() {
+                    let mut made = Vec::new();
+                    for _ in 0..card.base_magic.max(1) {
+                        let i = rng.card_random.random_int(pool.len() as i32 - 1) as usize;
+                        made.push(Card::new(pool[i]));
+                    }
+                    for made_card in made {
+                        if player.hand.len() < 10 {
+                            player.hand.push(made_card);
+                        } else {
+                            player.discard.push(made_card);
+                        }
+                    }
+                }
+            }
+        }
         CardId::Madness => {
             // MadnessAction: prefer a card with costForTurn > 0, else cost > 0.
             // getRandomCard(cardRandomRng) then reject until it qualifies.
