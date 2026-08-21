@@ -236,6 +236,7 @@ impl Combat {
                 channeled.push(kind);
             }
         }
+        tick_inserter(player);
         if player.has_relic(RelicId::DataDisk) {
             player.add_power(PowerId::Focus, 1);
         }
@@ -5503,6 +5504,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             player.block = 0;
         }
     }
+    tick_inserter(player);
     // CreativeAI / Hello World roll cardRandomRng immediately in
     // atStartOfTurn. Loop only queues LightningOrbPassiveAction, so the
     // POWER pick must happen before Loop's lightning getRandomMonster
@@ -5620,7 +5622,28 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     }
 }
 
-
+/// Inserter.atTurnStart: count every player turn across combats and add one
+/// combat-only orb slot every second turn.
+fn tick_inserter(player: &mut Player) {
+    let increase = if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Inserter) {
+        if r.counter == -1 {
+            r.counter += 2;
+        } else {
+            r.counter += 1;
+        }
+        if r.counter == 2 {
+            r.counter = 0;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if increase {
+        increase_max_orb_slots(player, 1);
+    }
+}
 
 fn tick_turn_start_block_relics(player: &mut Player) {
     // IncenseBurner.atTurnStart: counter 0 onEquip, +1 each turn, Intangible

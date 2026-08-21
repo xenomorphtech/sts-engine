@@ -5178,7 +5178,8 @@ impl Game {
                 | RelicId::InkBottle
                 | RelicId::Nunchaku
                 | RelicId::Incense_Burner
-                | RelicId::Sundial => 0,
+                | RelicId::Sundial
+                | RelicId::Inserter => 0,
                 RelicId::Matryoshka | RelicId::Omamori => 2,
                 RelicId::NlothsMask => 1,
                 _ => -1,

@@ -129,6 +129,24 @@ fn sadistic_nature_damages_after_player_debuffs() {
 }
 
 #[test]
+fn inserter_adds_an_orb_slot_every_second_turn() {
+    // Seed 935 owns Inserter in the first Act 2 fight. Its second turn must
+    // reset the relic counter and run IncreaseMaxOrbAction before card play.
+    let cfg = default_config(Character::Defect, "935", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 181,
+                "935 still fails at Inserter last_ok={} want > 181: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
