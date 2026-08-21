@@ -2028,7 +2028,13 @@ impl Monster {
             || self.id == MonsterId::TorchHead
     }
 
-    pub fn take_turn(&mut self, player: &mut Player, rng: &mut RngSet, ascension: i32) -> Option<Vec<Monster>> {
+    pub fn take_turn(
+        &mut self,
+        player: &mut Player,
+        rng: &mut RngSet,
+        ascension: i32,
+        gremlin_slots: Option<[i32; 2]>,
+    ) -> Option<Vec<Monster>> {
         if !self.alive() {
             return None;
         }
@@ -2108,7 +2114,7 @@ impl Monster {
                     MonsterId::GremlinWizard,
                 ];
                 let mut kids = Vec::with_capacity(2);
-                for offset in [-366, -170] {
+                for offset in gremlin_slots.unwrap_or([-366, -170]) {
                     let id = pool[rng.ai.random_int(7) as usize];
                     let mut kid = spawn_monster(id, rng, ascension);
                     kid.offset_x = gremlin_draw_x(id, offset);
@@ -3148,6 +3154,59 @@ fn gremlin_draw_x(id: MonsterId, slot_x: i32) -> i32 {
     } else {
         slot_x
     }
+}
+
+fn next_gremlin_summon_slots(monsters: &[Monster]) -> [i32; 2] {
+    let mut occupied = [false; 3];
+    for monster in monsters.iter().filter(|monster| monster.alive()) {
+        let slot_x = if monster.id == MonsterId::GremlinWizard {
+            monster.offset_x + 35
+        } else {
+            monster.offset_x
+        };
+        let slot = match (monster.id, slot_x) {
+            (
+                MonsterId::GremlinFat
+                | MonsterId::GremlinTsundere
+                | MonsterId::GremlinThief
+                | MonsterId::GremlinWarrior
+                | MonsterId::GremlinWizard,
+                -366,
+            ) => Some(0),
+            (
+                MonsterId::GremlinFat
+                | MonsterId::GremlinTsundere
+                | MonsterId::GremlinThief
+                | MonsterId::GremlinWarrior
+                | MonsterId::GremlinWizard,
+                -170,
+            ) => Some(1),
+            (
+                MonsterId::GremlinFat
+                | MonsterId::GremlinTsundere
+                | MonsterId::GremlinThief
+                | MonsterId::GremlinWarrior
+                | MonsterId::GremlinWizard,
+                -532,
+            ) => Some(2),
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            occupied[slot] = true;
+        }
+    }
+    let mut available = [-366, -170];
+    let mut out = 0;
+    for (slot, slot_x) in [-366, -170, -532].into_iter().enumerate() {
+        if !occupied[slot] {
+            available[out] = slot_x;
+            out += 1;
+            if out == available.len() {
+                break;
+            }
+        }
+    }
+    available
 }
 
 
@@ -6215,6 +6274,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let skip_roll = combat.monsters[i].skip_roll_after_turn();
         let id = combat.monsters[i].id;
         let used_move = combat.monsters[i].next_move;
+        let gremlin_slots = if id == MonsterId::GremlinLeader && used_move == 2 {
+            Some(next_gremlin_summon_slots(&combat.monsters))
+        } else {
+            None
+        };
         let mut spawned = if id == MonsterId::Byrd
             && used_move == 1
             && player.power_amount(PowerId::StaticDischarge) > 0
@@ -6235,7 +6299,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             }
             None
         } else {
-            combat.monsters[i].take_turn(player, rng, combat.ascension)
+            combat.monsters[i].take_turn(player, rng, combat.ascension, gremlin_slots)
         };
         if id == MonsterId::TheCollector && used_move == 5 {
             spawned = Some(collector_revives(&combat.monsters, rng, combat.ascension));
