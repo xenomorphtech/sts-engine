@@ -354,6 +354,7 @@ fn is_elite_encounter(id: EncounterId) -> bool {
             | EncounterId::Slavers
             | EncounterId::GremlinLeader
             | EncounterId::GiantHead
+            | EncounterId::Nemesis
             | EncounterId::Reptomancer
     )
 }
@@ -1022,6 +1023,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
         MonsterId::Darkling => (48, 56),
         MonsterId::Transient => (999, 999),
         MonsterId::GiantHead => (500, 500),
+        MonsterId::Nemesis => {
+            if ascension >= 8 {
+                (200, 200)
+            } else {
+                (185, 185)
+            }
+        }
         MonsterId::Reptomancer => {
             if ascension >= 8 {
                 (190, 200)
@@ -1577,6 +1585,55 @@ impl Monster {
                     } else {
                         self.set_move(1, Intent::Debuff, 0, 1);
                     }
+                }
+            }
+            MonsterId::Nemesis => {
+                // Nemesis.getMove decrements scytheCooldown before every
+                // decision. Store that cooldown in extra.
+                self.extra -= 1;
+                let fire = if self.ascension >= 3 { 7 } else { 6 };
+                if self.first_move {
+                    self.first_move = false;
+                    if num < 50 {
+                        self.set_move(2, Intent::Attack, fire, 3);
+                    } else {
+                        self.set_move(4, Intent::Debuff, 0, 1);
+                    }
+                } else if num < 30 {
+                    if !self.last_move(3) && self.extra <= 0 {
+                        self.set_move(3, Intent::Attack, 45, 1);
+                        self.extra = 2;
+                    } else if rng.ai.random_boolean() {
+                        if !self.last_two(2) {
+                            self.set_move(2, Intent::Attack, fire, 3);
+                        } else {
+                            self.set_move(4, Intent::Debuff, 0, 1);
+                        }
+                    } else if !self.last_move(4) {
+                        self.set_move(4, Intent::Debuff, 0, 1);
+                    } else {
+                        self.set_move(2, Intent::Attack, fire, 3);
+                    }
+                } else if num < 65 {
+                    if !self.last_two(2) {
+                        self.set_move(2, Intent::Attack, fire, 3);
+                    } else if rng.ai.random_boolean() {
+                        if self.extra > 0 {
+                            self.set_move(4, Intent::Debuff, 0, 1);
+                        } else {
+                            self.set_move(3, Intent::Attack, 45, 1);
+                            self.extra = 2;
+                        }
+                    } else {
+                        self.set_move(4, Intent::Debuff, 0, 1);
+                    }
+                } else if !self.last_move(4) {
+                    self.set_move(4, Intent::Debuff, 0, 1);
+                } else if rng.ai.random_boolean() && self.extra <= 0 {
+                    self.set_move(3, Intent::Attack, 45, 1);
+                    self.extra = 2;
+                } else {
+                    self.set_move(2, Intent::Attack, fire, 3);
                 }
             }
             MonsterId::Reptomancer => {
@@ -2909,6 +2966,18 @@ impl Monster {
             (MonsterId::GiantHead, 3) => {
                 let _ = hit_player(player, self, rng, 13, 1);
             }
+            (MonsterId::Nemesis, 2) => {
+                let _ = hit_player(player, self, rng, if ascension >= 3 { 7 } else { 6 }, 3);
+            }
+            (MonsterId::Nemesis, 3) => {
+                let _ = hit_player(player, self, rng, 45, 1);
+            }
+            (MonsterId::Nemesis, 4) => {
+                let burns = if ascension >= 18 { 5 } else { 3 };
+                for _ in 0..burns {
+                    player.discard.push(Card::new(CardId::Burn));
+                }
+            }
             (MonsterId::Reptomancer, 1) => {
                 let dmg = if ascension >= 3 { 16 } else { 13 };
                 let _ = hit_player(player, self, rng, dmg, 2);
@@ -3090,6 +3159,16 @@ impl Monster {
                 if self.intent_damage > 0 {
                     hit_player(player, self, rng, self.intent_damage, self.intent_hits.max(1));
                 }
+            }
+        }
+        // Nemesis.takeTurn applies monster Intangible after its move. Its
+        // justApplied flag preserves the stack through the immediately
+        // following end-of-round pass, making every other player turn
+        // intangible.
+        if self.id == MonsterId::Nemesis && self.alive() && self.power_amount(PowerId::Intangible) == 0 {
+            self.add_power(PowerId::Intangible, 1);
+            if let Some(power) = self.powers.iter_mut().find(|p| p.id == PowerId::Intangible) {
+                power.just_applied = true;
             }
         }
         None
@@ -3891,6 +3970,13 @@ fn deal_thorns_inner(monster: &mut Monster, amount: i32) -> bool {
         return false;
     }
     let mut mugger_died = false;
+    // Nemesis.damage caps every positive DamageInfo output, including
+    // THORNS damage from orbs, potions, and turn-start relics.
+    let amount = if monster.power_amount(PowerId::Intangible) > 0 && amount > 1 {
+        1
+    } else {
+        amount
+    };
     let dmg = apply_block(&mut monster.block, amount);
     if dmg > 0 {
         if monster.id == MonsterId::Transient {

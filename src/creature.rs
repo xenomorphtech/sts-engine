@@ -371,9 +371,16 @@ pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {
                     p.amount -= 1;
                 }
             }
-            // IntangiblePlayerPower.atEndOfRound: always ReducePower, no justApplied.
+            // Nemesis uses IntangiblePower.atEndOfTurn, whose constructor's
+            // justApplied flag keeps the first stack through this pass.
+            // Player Intangible uses IntangiblePlayerPower and leaves the
+            // flag false, so it still reduces every round.
             PowerId::Intangible => {
-                p.amount -= 1;
+                if p.just_applied {
+                    p.just_applied = false;
+                } else {
+                    p.amount -= 1;
+                }
             }
             // LockOnPower.atEndOfRound always ReducePower(1); no justApplied skip.
             PowerId::LockOn => {
