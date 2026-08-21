@@ -1014,6 +1014,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (160, 160)
             }
         }
+        MonsterId::SpireGrowth => {
+            if a7 {
+                (190, 190)
+            } else {
+                (170, 170)
+            }
+        }
         MonsterId::AwakenedOne => (300, 300),
         MonsterId::Snecko => {
             if a7 {
@@ -1603,6 +1610,22 @@ impl Monster {
                 } else {
                     let reroll = rng.ai.random_int(69);
                     self.get_move(reroll, rng, missing_hp, allies, index);
+                }
+            }
+            MonsterId::SpireGrowth => {
+                let tackle = if self.ascension >= 2 { 18 } else { 16 };
+                let smash = if self.ascension >= 2 { 25 } else { 22 };
+                let constricted = self.split_triggered;
+                if self.ascension >= 17 && !constricted && !self.last_move(2) {
+                    self.set_move(2, Intent::StrongDebuff, 0, 1);
+                } else if num < 50 && !self.last_two(1) {
+                    self.set_move(1, Intent::Attack, tackle, 1);
+                } else if !constricted && !self.last_move(2) {
+                    self.set_move(2, Intent::StrongDebuff, 0, 1);
+                } else if !self.last_two(3) {
+                    self.set_move(3, Intent::Attack, smash, 1);
+                } else {
+                    self.set_move(1, Intent::Attack, tackle, 1);
                 }
             }
             MonsterId::AwakenedOne => {
@@ -2828,6 +2851,18 @@ impl Monster {
             }
             (MonsterId::GiantHead, 3) => {
                 let _ = hit_player(player, self, rng, 13, 1);
+            }
+            (MonsterId::SpireGrowth, 1) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
+            }
+            (MonsterId::SpireGrowth, 2) => {
+                player.add_power_from_monster(
+                    PowerId::Constricted,
+                    if ascension >= 17 { 12 } else { 10 },
+                );
+            }
+            (MonsterId::SpireGrowth, 3) => {
+                let _ = hit_player(player, self, rng, if ascension >= 2 { 25 } else { 22 }, 1);
             }
             (MonsterId::WrithingMass, 0) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 38 } else { 32 }, 1);
@@ -6084,6 +6119,23 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if plated > 0 {
         player.block += plated;
     }
+    // ConstrictedPower.atEndOfTurn: THORNS damage from Spire Growth.
+    let constricted = player.power_amount(PowerId::Constricted);
+    if constricted > 0 {
+        let dmg = intangible_player(player, constricted);
+        let dmg = apply_block(&mut player.block, dmg);
+        let dmg = buffer_absorb(player, dmg);
+        let dmg = on_lose_hp_last(player, dmg);
+        if dmg > 0 {
+            player.hp -= dmg;
+            if player.hp < 0 {
+                player.hp = 0;
+            }
+            let _ = try_cheat_death(player);
+            red_skull_on_hp_change(player);
+            centennial_puzzle_was_hp_lost(player, rng);
+        }
+    }
     crate::creature::end_of_turn(&mut player.powers);
     // AbstractRoom.endTurn calls resetAttributes on every card in hand,
     // draw, and discard. In particular, temporary setCostForTurn changes
@@ -6330,6 +6382,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             }
         }
         flush_pending_stasis(player, combat);
+        if id == MonsterId::SpireGrowth {
+            combat.monsters[i].split_triggered = player.power_amount(PowerId::Constricted) > 0;
+        }
         if id == MonsterId::TheGuardian
             && used_move == 4
             && combat.monsters[i].alive()
