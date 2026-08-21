@@ -441,6 +441,25 @@ fn magnetism_generates_colorless_card_before_turn_draw() {
 }
 
 #[test]
+fn temporary_card_costs_reset_at_end_of_turn() {
+    // Seed 48 creates a 0-cost Rip and Tear with Attack Potion, plays it, and
+    // redraws it two turns later. AbstractRoom.endTurn resetAttributes makes
+    // it cost 1 again; otherwise Reinforced Body incorrectly retains 1 energy.
+    let cfg = default_config(Character::Defect, "48", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 192,
+                "48 still fails at temporary cost reset last_ok={} want > 192: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

@@ -5351,6 +5351,18 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         player.block += plated;
     }
     crate::creature::end_of_turn(&mut player.powers);
+    // AbstractRoom.endTurn calls resetAttributes on every card in hand,
+    // draw, and discard. In particular, temporary setCostForTurn changes
+    // (Attack Potion, Mummified Hand) must not survive a turn boundary
+    // (seed 48 Rip and Tear left Reinforced Body with one extra energy).
+    for card in player
+        .hand
+        .iter_mut()
+        .chain(player.draw.iter_mut())
+        .chain(player.discard.iter_mut())
+    {
+        card.cost_for_turn = card.cost;
+    }
     // FrozenCore.onPlayerEndTurn: if hasEmptyOrb, channel Frost immediately
     // so TriggerEndOfTurnOrbsAction passives it (seed 870 Parasite 6x2: 2
     // Frost block, hp 65 not 63).
