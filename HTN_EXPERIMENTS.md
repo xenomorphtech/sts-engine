@@ -139,3 +139,16 @@ The goal moved to 1,000-seed cohorts (same paired methodology: fixed source
 | Rank Neow blessings | fresh source `1787329344052076934` | 11.10% | 32.04 | 12.00% | 32.25 | 0 | accepted |
 | Event policy: free shrines, Library read, Cleric purify, Shining Light, fight Masked Bandits | fixed source `1787315208666760241` | 12.00% | 31.94 | 13.00% | 32.15 | 0 | advanced; Golden Idol (121) and Scrap Ooze (127) variants regressed and stay skipped |
 | Event policy | fresh source `1787329866870376876` | 12.40% | 32.28 | 13.40% | 32.24 | 0 | accepted |
+
+## Evolution-strategy parameter optimization
+
+Policy constants moved behind `STS_HTN_PARAMS` (see tools/opt_params*.py);
+each phase's best mean is baked into `tools/params_default.json`. Honest
+numbers are brand-new cohorts never touched during search or validation.
+
+| Phase | Space | Search result | Honest fresh 1k | Decision |
+|---|---|---|---:|---|
+| 1: 38 policy scalars, (3,10)-ES, fixed 500-seed cohort | combat eval, orb values, map/rest/elite gates, pick threshold | 34.10%/38.32 on its search cohort | 31.20%/38.32 (`1787332551475131966`) | baked; damage-chasing fell ~70%, smith-earlier rests, draft threshold 85→65 |
+| 1b: energy boss relic priority (+40 until the run has one) | hand-written on top of phase 1 | +1.0pp fixed | +0.7pp | accepted; 99% of wins vs 76% of losses carried an energy boss relic |
+| 2: +117 dims (per-card pick/upgrade/boss-relic tables, deck shape, fight lengths), fresh search cohort | drafting tables | 40.20%/39.91 search, 40.10%/39.71 phase-1 cohort | 35.20%/39.11 (`1787336748186657062`) | baked; ~5pp cohort adaptation observed, and the sticky-incumbent acceptance gate stalled after gen 15 |
+| 3: per-generation random cohorts, mirrored sampling, pure (μ/μ,λ), + search width/depth and potion thresholds | all of the above | running | — | — |
