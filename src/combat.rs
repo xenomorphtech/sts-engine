@@ -4461,6 +4461,9 @@ fn apply_card_effect(
         CardId::Mayhem => {
             player.add_power(PowerId::Mayhem, card.base_magic.max(1) as i32);
         }
+        CardId::Magnetism => {
+            player.add_power(PowerId::Magnetism, card.base_magic.max(1) as i32);
+        }
         CardId::Master_of_Strategy => {
             // DrawCardAction(magic 3, 4 upgraded) then exhaust.
             let n = draw_cards_rng(player, card.base_magic.max(3) as i32, Some(rng));
@@ -5746,6 +5749,23 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                     player.hand.push(Card::new(id));
                 } else {
                     player.discard.push(Card::new(id));
+                }
+            }
+        }
+    }
+    // MagnetismPower.atStartOfTurn: choose from srcColorlessCardPool with
+    // cardRandomRng, excluding HEALING, then MakeTempCardInHandAction. This
+    // happens before the normal turn draw (seed 719 Metamorphosis).
+    let magnetism = player.power_amount(PowerId::Magnetism);
+    if magnetism > 0 {
+        if let Some(dungeon) = dungeon {
+            for _ in 0..magnetism {
+                if let Some(id) = crate::rewards::random_colorless_in_combat(dungeon, rng) {
+                    if player.hand.len() < 10 {
+                        player.hand.push(Card::new(id));
+                    } else {
+                        player.discard.push(Card::new(id));
+                    }
                 }
             }
         }

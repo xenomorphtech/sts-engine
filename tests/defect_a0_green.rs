@@ -422,6 +422,25 @@ fn snecko_eye_confuses_before_drawing_seven() {
 }
 
 #[test]
+fn magnetism_generates_colorless_card_before_turn_draw() {
+    // Seed 719 plays a Colorless Potion Magnetism. At the next turn start,
+    // cardRandomRng picks Metamorphosis and puts it into hand before Snecko
+    // Eye's seven-card draw consumes its Confusion cost rolls.
+    let cfg = default_config(Character::Defect, "719", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 258,
+                "719 still fails at Magnetism turn start last_ok={} want > 258: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

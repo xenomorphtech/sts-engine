@@ -227,6 +227,7 @@ pub enum PowerId {
     StaticDischarge,
     Confusion,
     StrengthUp,
+    Magnetism,
     Mayhem,
 }
 
