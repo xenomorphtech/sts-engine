@@ -5963,7 +5963,28 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let skip_roll = combat.monsters[i].skip_roll_after_turn();
         let id = combat.monsters[i].id;
         let used_move = combat.monsters[i].next_move;
-        let mut spawned = combat.monsters[i].take_turn(player, rng, combat.ascension);
+        let mut spawned = if id == MonsterId::Byrd
+            && used_move == 1
+            && player.power_amount(PowerId::StaticDischarge) > 0
+        {
+            // Peck is five separate DamageActions. Static Discharge puts its
+            // ChannelActions on top after every hit, so a full orb row evokes
+            // before the next DamageAction and can kill the attacking Byrd.
+            let hits = if combat.ascension >= 2 { 6 } else { 5 };
+            for _ in 0..hits {
+                if !combat.monsters[i].alive() || player.hp <= 0 {
+                    break;
+                }
+                {
+                    let byrd = &mut combat.monsters[i];
+                    let _ = hit_player(player, byrd, rng, 1, 1);
+                }
+                flush_mid_hit_evokes(player, combat, rng);
+            }
+            None
+        } else {
+            combat.monsters[i].take_turn(player, rng, combat.ascension)
+        };
         if id == MonsterId::TheCollector && used_move == 5 {
             spawned = Some(collector_revives(&combat.monsters, rng, combat.ascension));
         }

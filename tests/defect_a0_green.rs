@@ -2910,6 +2910,24 @@ fn hand_drill_applies_vulnerable_after_breaking_monster_block() {
 }
 
 #[test]
+fn static_discharge_evokes_between_byrd_peck_hits() {
+    // 168: two Static Discharge channels resolve after each Peck hit. Their
+    // Lightning evokes kill the Byrd after hit three, cancelling hits 4-5.
+    let cfg = default_config(Character::Defect, "168", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 313,
+                "168 still defers Static Discharge until after Peck last_ok={} want > 313: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
