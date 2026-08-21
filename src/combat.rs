@@ -3796,6 +3796,20 @@ pub fn discard_pile_to_hand(player: &mut Player, index: usize) {
     player.hand.push(c);
 }
 
+/// Resolve AllCostToHandAction's queued DiscardToHandActions against the
+/// discard-pile snapshot taken when AllCostToHandAction ran.
+fn return_all_for_one_cards(player: &mut Player, cards: &[Card]) {
+    for target in cards {
+        if player.hand.len() >= 10 {
+            break;
+        }
+        if let Some(index) = player.discard.iter().position(|card| card == target) {
+            let card = player.discard.remove(index);
+            player.hand.push(card);
+        }
+    }
+}
+
 /// BetterDrawPileToHandAction: move draw[index] to hand if there is room.
 pub fn draw_pile_to_hand(player: &mut Player, index: usize) {
     if index >= player.draw.len() || player.hand.len() >= 10 {
@@ -3933,6 +3947,7 @@ pub fn play_owned_card(
         || (card.id == CardId::Secret_Weapon
             && player.draw.iter().filter(|c| c.card_type() == CardType::ATTACK).count() > 1);
     let mut original_resolved_before_copy = false;
+    let mut all_for_one_after_original = Vec::new();
     for play_i in 0..plays {
         if play_i > 0 {
             card.free_to_play_once = true;
@@ -3976,6 +3991,21 @@ pub fn play_owned_card(
         }
         flush_curl_up(combat);
         flush_guardian_defensive_block(combat);
+        // AllCostToHandAction snapshots eligible discard cards after the hit,
+        // then queues one DiscardToHandAction per card behind Ink Bottle's
+        // DrawCardAction and this card's UseCardAction.
+        let all_for_one_cards: Vec<Card> = if card.id == CardId::All_For_One
+            && !combat.all_dead()
+        {
+            player
+                .discard
+                .iter()
+                .copied()
+                .filter(|card| card.cost == 0 || card.free_to_play_once)
+                .collect()
+        } else {
+            Vec::new()
+        };
         flush_ink_bottle(player, combat, rng);
         // HexPower.onUseCard: Java checks card.type != ATTACK.
         if card.card_type() != CardType::ATTACK && player.power_amount(PowerId::Hex) > 0 {
@@ -4125,8 +4155,15 @@ pub fn play_owned_card(
                 player.discard.push(original);
             }
             flush_dark_embrace(player, combat, rng);
-            unceasing_top_on_refresh_hand(player, combat, rng);
             original_resolved_before_copy = true;
+        }
+        if plays == 1 {
+            all_for_one_after_original = all_for_one_cards;
+        } else {
+            return_all_for_one_cards(player, &all_for_one_cards);
+        }
+        if original_resolved_before_copy && play_i == 0 {
+            unceasing_top_on_refresh_hand(player, combat, rng);
         }
     }
     // Duplication copy is a separate CardQueueItem with freeToPlayOnce; the
@@ -4156,6 +4193,7 @@ pub fn play_owned_card(
         player.discard.push(card);
     }
     flush_dark_embrace(player, combat, rng);
+    return_all_for_one_cards(player, &all_for_one_after_original);
     for monster in combat.monsters.iter_mut() {
         if monster.alive() && monster.powers.iter().any(|p| p.id == PowerId::Slow) {
             monster.add_power(PowerId::Slow, 1);
@@ -4786,20 +4824,8 @@ fn apply_card_effect(
                     damage_monster(m, player, rng, dmg, 1);
                 }
             }
-            // AllCostToHandAction(0): each discard card with cost==0 (or freeToPlayOnce)
-            // queues DiscardToHandAction.
-            let mut i = 0;
-            while i < player.discard.len() {
-                let c = &player.discard[i];
-                if c.cost == 0 || c.free_to_play_once {
-                    if player.hand.len() < 10 {
-                        let c = player.discard.remove(i);
-                        player.hand.push(c);
-                        continue;
-                    }
-                }
-                i += 1;
-            }
+            // play_owned_card resolves AllCostToHandAction after Ink Bottle's
+            // draw and after this card reaches the discard pile.
         }
         CardId::Darkness => {
             channel_orb(player, combat, rng, OrbKind::Dark);

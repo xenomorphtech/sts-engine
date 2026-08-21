@@ -2109,6 +2109,24 @@ fn astrolabe_transforms_colorless_from_colorless_pool() {
 }
 
 #[test]
+fn all_for_one_returns_cards_after_ink_bottle_draw() {
+    // 157: All For One is played with Ink Bottle at 9. Java draws Defend,
+    // discards All For One, then returns Go for the Eyes and Boot Sequence.
+    let cfg = default_config(Character::Defect, "157", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 207,
+                "157 still fails at All For One/Ink Bottle queue order last_ok={} want > 207: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
