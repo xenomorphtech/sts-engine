@@ -24,3 +24,10 @@ gen 19 top=503.9 mean=472.7 kept=False sigma=0.37
 gen 20 top=503.6 mean=475.3 kept=False sigma=0.33
   validate search1k=402/39.91 holdout1k=401/39.71
 gen 21 top=493.6 mean=482.8 kept=False sigma=0.28
+gen 22 top=486.6 mean=479.0 kept=False sigma=0.25
+gen 23 top=497.1 mean=491.3 kept=False sigma=0.21
+gen 24 top=489.0 mean=472.7 kept=False sigma=0.20
+gen 25 top=495.1 mean=487.1 kept=False sigma=0.20
+  validate search1k=402/39.91 holdout1k=401/39.71
+gen 26 top=496.0 mean=482.7 kept=False sigma=0.20
+gen 27 top=491.1 mean=481.0 kept=False sigma=0.20
