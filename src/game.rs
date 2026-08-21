@@ -5644,6 +5644,11 @@ impl Game {
     }
 
     fn gold_gain(&self, amount: i32) -> i32 {
+        // AbstractPlayer.gainGold consumes the reward but awards nothing while
+        // Ectoplasm is owned.
+        if self.player.has_relic(RelicId::Ectoplasm) {
+            return 0;
+        }
         // RewardItem.applyGoldBonus: TreasureRoom skips Golden Idol.
         if self.current_room == RoomType::Treasure {
             amount

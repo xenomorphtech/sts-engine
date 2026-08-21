@@ -2220,6 +2220,24 @@ fn fusion_hammer_increases_master_energy_on_equip() {
 }
 
 #[test]
+fn ectoplasm_consumes_gold_rewards_without_adding_gold() {
+    // 465: the first Act 2 combat reward is claimed while Ectoplasm is owned.
+    // Java removes GOLD(13) but leaves gold at 149.
+    let cfg = default_config(Character::Defect, "465", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 214,
+                "465 still gains gold through Ectoplasm last_ok={} want > 214: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
