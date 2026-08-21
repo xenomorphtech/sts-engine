@@ -1973,7 +1973,12 @@ impl Game {
                     self.player.hp += potency;
                 }
                 PotionId::EssenceOfSteel => {
-                    self.player.add_power(crate::ids::PowerId::PlatedArmor, 4);
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        8
+                    } else {
+                        4
+                    };
+                    self.player.add_power(crate::ids::PowerId::PlatedArmor, potency);
                 }
                 PotionId::BlessingOfTheForge => {
                     // BlessingOfTheForge.use -> ArmamentsAction(true): upgrade every

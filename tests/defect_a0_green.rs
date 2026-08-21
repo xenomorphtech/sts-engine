@@ -2982,6 +2982,24 @@ fn colosseum_reopen_resets_player_and_prepares_the_deck() {
 }
 
 #[test]
+fn sacred_bark_doubles_essence_of_steel() {
+    // 336: Essence of Steel grants 8 Plated Armor with Sacred Bark, enough
+    // to fully block Snake Plant's 7x3 attack on turn four.
+    let cfg = default_config(Character::Defect, "336", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 324,
+                "336 still uses base Essence of Steel potency last_ok={} want > 324: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
