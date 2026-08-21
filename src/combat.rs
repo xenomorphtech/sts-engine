@@ -4141,6 +4141,12 @@ pub fn play_owned_card(
                 }
             }
         }
+        // If an on-use reaction (notably Guardian Sharp Hide) kills the
+        // player, room updates stop before the queued UseCardAction can move
+        // this card out of limbo or a duplicated CardQueueItem can start.
+        if player.hp <= 0 {
+            return false;
+        }
         if play_i == 0
             && plays > 1
             && !needs_select
@@ -4603,8 +4609,12 @@ fn apply_card_effect(
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
                 damage_monster(monster, player, rng, dmg, 1);
             }
-            let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, n);
+            // DamageAllEnemiesAction.clearPostCombatActions drops the queued
+            // DrawCardAction when the beam ends combat (seed 158).
+            if !combat.all_dead() {
+                let n = draw_cards_rng(player, card.base_magic.max(1) as i32, Some(rng));
+                apply_fire_breathing(player, &mut combat.monsters, n);
+            }
         }
         CardId::Compile_Driver => {
             if let Some(i) = target {

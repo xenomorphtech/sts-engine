@@ -2165,6 +2165,24 @@ fn zero_damage_lightning_still_advances_card_random_rng() {
 }
 
 #[test]
+fn lethal_sweeping_beam_drops_draw_and_stays_in_limbo_on_player_death() {
+    // 158: Sweeping Beam kills Guardian, clearing its queued draw. Sharp Hide
+    // then kills the player before UseCardAction discards the played card.
+    let cfg = default_config(Character::Defect, "158", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 208,
+                "158 still fails at lethal Sweeping Beam queue cleanup last_ok={} want > 208: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
