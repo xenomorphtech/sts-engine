@@ -217,6 +217,17 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
     let danger = (DANGER_BASE + DANGER_SCALE * (1.0 - hp_frac).powi(2))
         * (1.0 + game.ascension as f32 / 50.0);
     match card.id {
+        CardId::Biased_Cognition
+            if game.combat.as_ref().is_some_and(|combat| {
+                combat.monsters.iter().any(|monster| {
+                    monster.id == MonsterId::Champ
+                        && !monster.split_triggered
+                        && monster.hp >= monster.max_hp / 2
+                })
+            }) =>
+        {
+            -2_000.0
+        }
         CardId::Self_Repair => card.base_magic.max(1) as f32 * danger * 1.25,
         CardId::Machine_Learning => {
             let turns_left = fight_length(fight_kind(game), game.dungeon.act);
@@ -734,5 +745,32 @@ mod tests {
         stripped.combat.as_mut().unwrap().monsters[0].block = 10;
 
         assert!(score_state(&before, &stripped) > score_state(&before, &unchanged));
+    }
+
+    #[test]
+    fn biased_cognition_waits_for_champs_second_phase() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.hand = vec![Card::new(CardId::Biased_Cognition)];
+        let play = Action::Play {
+            hand_index: 0,
+            target_index: None,
+        };
+        assert!(setup_play_value(&game, &play) < -1_000.0);
+
+        let champ = &mut game.combat.as_mut().unwrap().monsters[0];
+        champ.hp = champ.max_hp / 2 - 1;
+        assert_eq!(setup_play_value(&game, &play), 0.0);
     }
 }

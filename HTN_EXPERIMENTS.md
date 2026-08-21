@@ -113,3 +113,6 @@ single-acquisition cohorts below and are not numerically comparable to the old
 | Value retained block only once it walls off remaining HP | fixed source `1787315208666760241` | 9.80% (49/500) | 30.95 | 10.40% (52/500) | 31.11 | 0 | advanced after three more wins and higher depth |
 | Value retained block only once it walls off remaining HP | replay source `1787318856394675018` | 9.80% (49/500) | 30.89 | 9.60% (48/500) | 30.89 | 0 | one-win regression with neutral depth; advanced because it fixes a confirmed cap |
 | Value retained block only once it walls off remaining HP | fresh source `1787323430036114759` | 8.60% (43/500) | 30.64 | 9.40% (47/500) | 30.60 | 0 | accepted; four more wins and capped seed `1792856469989672380` now terminates normally in 980 steps |
+| Hold Biased Cognition for Champ's second phase | fixed source `1787315208666760241` | 10.40% (52/500) | 31.11 | 11.00% (55/500) | 31.38 | 0 | advanced after three more wins and higher depth |
+| Hold Biased Cognition for Champ's second phase | replay source `1787318856394675018` | 9.60% (48/500) | 30.89 | 10.00% (50/500) | 31.05 | 0 | advanced after independent confirmation |
+| Hold Biased Cognition for Champ's second phase | fresh source `1787324441138756002` | 9.00% (45/500) | 30.74 | 10.20% (51/500) | 31.07 | 0 | accepted; improved all three paired cohorts |
