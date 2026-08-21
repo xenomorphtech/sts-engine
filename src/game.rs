@@ -3473,6 +3473,11 @@ impl Game {
                 "[Pay] #rLose #rALL #rGold.".into(),
                 "[Fight] #gObtain #gRed #gMask.".into(),
             ],
+            "Nest" => {
+                let gold = if self.ascension >= 15 { 50 } else { 99 };
+                data = vec![gold, 6];
+                vec!["[Continue]".into()]
+            }
             "Forgotten Altar" => {
                 // ForgottenAltar ctor: hpLoss = MathUtils.round(max * 0.25),
                 // A15+ 0.35. Golden Idol option is disabled without the relic;
@@ -4063,6 +4068,61 @@ impl Game {
                     }
                 }
                 3 => self.open_map(),
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Nest" {
+            match screen {
+                0 => {
+                    let gold = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.first().copied())
+                        .unwrap_or(if self.ascension >= 15 { 50 } else { 99 });
+                    let damage = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(1).copied())
+                        .unwrap_or(6);
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec![
+                            format!("[Smash and Grab] #gGain #g{gold} #gGold."),
+                            format!(
+                                "[Stay in Line] #rLose #r{damage} #rHP. #gObtain #gRitual #gDagger."
+                            ),
+                        ];
+                    }
+                }
+                1 => {
+                    if *index == 0 {
+                        if !self.player.has_relic(RelicId::Ectoplasm) {
+                            let gold = self
+                                .event
+                                .as_ref()
+                                .and_then(|e| e.data.first().copied())
+                                .unwrap_or(if self.ascension >= 15 { 50 } else { 99 });
+                            self.player.gold += gold;
+                        }
+                    } else {
+                        // Nest uses player.damage(DamageInfo(null, 6)): owner-null
+                        // damage skips attacker hooks, then Tungsten Rod applies.
+                        let damage = self
+                            .event
+                            .as_ref()
+                            .and_then(|e| e.data.get(1).copied())
+                            .unwrap_or(6);
+                        let damage = combat::on_lose_hp_last(&self.player, damage);
+                        self.player.hp = (self.player.hp - damage).max(0);
+                        combat::red_skull_on_hp_change(&mut self.player);
+                        self.obtain_master_deck_card(CardId::RitualDagger);
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
                 _ => self.open_map(),
             }
             return;

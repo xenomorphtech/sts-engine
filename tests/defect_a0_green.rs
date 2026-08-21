@@ -147,6 +147,24 @@ fn inserter_adds_an_orb_slot_every_second_turn() {
 }
 
 #[test]
+fn nest_waits_for_the_reward_choice() {
+    // Seed 416 enters Nest and chooses Smash and Grab. Continue must expose
+    // the reward choice; taking it grants 99 gold and leaves the event open.
+    let cfg = default_config(Character::Defect, "416", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 196,
+                "416 still fails at Nest last_ok={} want > 196: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
