@@ -5946,12 +5946,19 @@ fn seek_draw_grid_indices(draw: &[Card]) -> Vec<usize> {
         }
     }
     fn grid_name(c: &Card) -> String {
-        match c.sts_id() {
+        let mut name = match c.sts_id() {
             "Strike_B" | "Strike_R" | "Strike_G" | "Strike_P" => "Strike".into(),
             "Defend_B" | "Defend_R" | "Defend_G" | "Defend_P" => "Defend".into(),
             "AscendersBane" => "Ascender's Bane".into(),
             other => other.replace('_', " "),
+        };
+        // AbstractCard.upgradeName appends `+`, and CardNameComparator sorts
+        // the displayed name. This orders Defragment before Defragment+ even
+        // when the upgraded physical copy comes first in the shuffled pile.
+        if c.upgraded {
+            name.push('+');
         }
+        name
     }
     let mut idxs: Vec<usize> = (0..draw.len()).collect();
     idxs.sort_by(|&a, &b| grid_name(&draw[a]).cmp(&grid_name(&draw[b])));

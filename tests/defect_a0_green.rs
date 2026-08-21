@@ -2530,6 +2530,24 @@ fn sacred_bark_doubles_fruit_juice() {
 }
 
 #[test]
+fn seek_grid_sorts_upgraded_duplicate_by_display_name() {
+    // 348: the draw pile contains Defragment and Defragment+. Java's grid
+    // sorts by displayed name, so Choose 2 must take the upgraded copy.
+    let cfg = default_config(Character::Defect, "348", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 272,
+                "348 still selects the wrong Defragment copy last_ok={} want > 272: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
