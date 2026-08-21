@@ -122,6 +122,7 @@ impl Combat {
         player.powers.clear();
         player.pending_static = 0;
         player.pending_evoke_lightning.clear();
+        player.pending_evoke_frost.clear();
         player.pending_evoke_dark.clear();
         player.draw = player.deck.clone();
         player.hand.clear();
@@ -3213,7 +3214,7 @@ fn hit_player_inner(
         // run; a Fairy/Lizard Tail revival still lets them resolve.
         if player.hp > 0 {
             for _ in 0..static_n {
-                channel_static_lightning_mid_hit(player, monster, rng);
+                channel_static_lightning_mid_hit(player, monster, rng, hits == 1);
             }
         }
         // ThornsPower.onAttacked addToTop DamageAction. If this hit is lethal,
@@ -6528,6 +6529,7 @@ fn channel_static_lightning_mid_hit(
     player: &mut Player,
     attacker: &mut Monster,
     rng: &mut RngSet,
+    defer_frost_after_lightning: bool,
 ) {
     if player.max_orbs <= 0 {
         return;
@@ -6538,6 +6540,11 @@ fn channel_static_lightning_mid_hit(
         };
         let amt = orb_evoke_amount(orb, focus_of(player));
         match orb.kind {
+            OrbKind::Frost
+                if defer_frost_after_lightning && !player.pending_evoke_lightning.is_empty() =>
+            {
+                player.pending_evoke_frost.push(amt);
+            }
             OrbKind::Frost => gain_player_block(player, amt),
             OrbKind::Lightning => {
                 player.pending_evoke_lightning.push(amt);
@@ -6569,9 +6576,17 @@ fn flush_mid_hit_evokes(player: &mut Player, combat: &mut Combat, rng: &mut RngS
     for amt in lightning {
         lightning_hit_player(Some(player), combat, rng, amt);
     }
+    let frost = std::mem::take(&mut player.pending_evoke_frost);
+    if !combat.all_dead() {
+        for amt in frost {
+            gain_player_block(player, amt);
+        }
+    }
     let dark = std::mem::take(&mut player.pending_evoke_dark);
-    for amt in dark {
-        dark_evoke_hit(combat, rng, amt);
+    if !combat.all_dead() {
+        for amt in dark {
+            dark_evoke_hit(combat, rng, amt);
+        }
     }
     flush_hand_drill(player, combat, rng);
 }

@@ -3072,6 +3072,25 @@ fn reboot_triggers_shuffle_relics_once() {
 }
 
 #[test]
+fn lethal_static_lightning_cancels_later_frost_block() {
+    // 202: the final Cultist attacks into Static Discharge 2 with full
+    // Lightning/Frost/Frost slots. The first queued channel evokes lethal
+    // Lightning, so Java clears the later Frost channel before it grants block.
+    let cfg = default_config(Character::Defect, "202", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 353,
+                "202 still grants Frost after lethal Static Discharge last_ok={} want > 353: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

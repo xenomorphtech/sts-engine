@@ -58,9 +58,11 @@ pub struct Player {
     /// StaticDischargePower.onAttacked: Lightning channels queued during a hit.
     pub pending_static: i32,
     /// Lightning/Dark evoke amounts deferred from mid-hit Static Discharge
-    /// channels (Frost evoke applies immediately as block). Flushed after
-    /// take_turn so `channel_orb` can borrow Combat.
+    /// channels. A Frost following deferred Lightning in the same one-hit
+    /// action is deferred too, preserving the ChannelAction queue order.
+    /// Flushed after take_turn so `channel_orb` can borrow Combat.
     pub pending_evoke_lightning: Vec<i32>,
+    pub pending_evoke_frost: Vec<i32>,
     pub pending_evoke_dark: Vec<i32>,
     pub orbs: Vec<Orb>,
     /// Combat orb slots (`AbstractPlayer.maxOrbs`). Reset from `master_max_orbs` in
@@ -113,6 +115,7 @@ impl Player {
             duplication: 0,
             pending_static: 0,
             pending_evoke_lightning: Vec::new(),
+            pending_evoke_frost: Vec::new(),
             pending_evoke_dark: Vec::new(),
             orbs: Vec::new(),
             max_orbs: 0,
@@ -162,6 +165,7 @@ impl Player {
             duplication: 0,
             pending_static: 0,
             pending_evoke_lightning: Vec::new(),
+            pending_evoke_frost: Vec::new(),
             pending_evoke_dark: Vec::new(),
             orbs: Vec::new(),
             max_orbs: 3,
