@@ -40,8 +40,10 @@ pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
         if non_progressing_status_play(game, &clone, first) {
             continue;
         }
-        let rebound_value = rebound_play_value(game, first) + greedy_rest(&mut clone);
-        let score = score_state(game, &clone) + rebound_value;
+        let strategic_value = rebound_play_value(game, first)
+            + setup_play_value(game, first)
+            + greedy_rest(&mut clone);
+        let score = score_state(game, &clone) + strategic_value;
         if score > best_score {
             best_score = score;
             best_first = Some(*first);
@@ -60,7 +62,7 @@ pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
 }
 
 fn greedy_rest(game: &mut Game) -> f32 {
-    let mut rebound_value = 0.0;
+    let mut strategic_value = 0.0;
     for _ in 0..8 {
         if game.screen != Screen::Combat || game.player.hp <= 0 {
             break;
@@ -88,7 +90,9 @@ fn greedy_rest(game: &mut Game) -> f32 {
             if non_progressing_status_play(game, &c, play) {
                 continue;
             }
-            let s = score_state(game, &c) + rebound_play_value(game, play);
+            let s = score_state(game, &c)
+                + rebound_play_value(game, play)
+                + setup_play_value(game, play);
             if s > best_s {
                 best_s = s;
                 best = Some(play.clone());
@@ -103,10 +107,10 @@ fn greedy_rest(game: &mut Game) -> f32 {
             }
             break;
         };
-        rebound_value += rebound_play_value(game, &best);
+        strategic_value += rebound_play_value(game, &best) + setup_play_value(game, &best);
         game.step(&best);
     }
-    rebound_value
+    strategic_value
 }
 
 fn non_progressing_status_play(before: &Game, after: &Game, action: &Action) -> bool {
@@ -171,6 +175,30 @@ fn rebound_play_value(game: &Game, action: &Action) -> f32 {
     let repeatable_output =
         card.base_damage.max(0) as f32 * 2.5 + card.base_block.max(0) as f32 * 2.0;
     (tactical + repeatable_output).clamp(8.0, 100.0)
+}
+
+/// Value Self Repair's delayed heal while deciding whether to spend energy on
+/// it. The cloned engine cannot observe that payoff until combat ends, so the
+/// shallow turn search otherwise skips it for immediate chip damage.
+fn setup_play_value(game: &Game, action: &Action) -> f32 {
+    let Action::Play { hand_index, .. } = action else {
+        return 0.0;
+    };
+    let Some(card) = game.player.hand.get(*hand_index) else {
+        return 0.0;
+    };
+    let hp_frac = game.player.hp as f32 / game.player.max_hp.max(1) as f32;
+    let danger = (DANGER_BASE + DANGER_SCALE * (1.0 - hp_frac).powi(2))
+        * (1.0 + game.ascension as f32 / 50.0);
+    match card.id {
+        CardId::Self_Repair => card.base_magic.max(1) as f32 * danger * 1.25,
+        CardId::Machine_Learning => {
+            let turns_left = fight_length(fight_kind(game), game.dungeon.act);
+            let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
+            card.base_magic.max(1) as f32 * turns_left * damage_weight * 2.2
+        }
+        _ => 0.0,
+    }
 }
 
 fn score_state(before: &Game, after: &Game) -> f32 {
@@ -507,6 +535,37 @@ mod tests {
             target_index: None,
         };
         assert!(rebound_play_value(&game, &glacier) > rebound_play_value(&game, &strike));
+    }
+
+    #[test]
+    fn wounded_boss_fight_values_self_repair_before_chip_damage() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.hp = 20;
+        game.player.energy = 1;
+        game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Self_Repair)];
+
+        let legal = game.legal_actions();
+        assert_eq!(
+            plan_turn(&game, &legal),
+            Action::Play {
+                hand_index: 1,
+                target_index: None,
+            }
+        );
     }
 
     #[test]

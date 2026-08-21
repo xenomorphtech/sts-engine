@@ -1,11 +1,24 @@
 # HTN A0 experiments
 
-All reported runs use Defect, 100 seeds, `--max-steps 100000`, and the release
-build. A thesis is first replayed against the fixed cohort where its failure was
-observed; if it improves that diagnosed behavior, it is then evaluated on a
-newly randomized cohort. The 15% target is judged only on a fresh randomized
-cohort. Seed sources make randomized cohorts exactly replayable without making
-the final evaluation reuse a tuning cohort.
+The concise strategy ledger, including discarded ideas and genuine synergy
+groups, is maintained in [`HTN_STRATEGY_LOG.html`](HTN_STRATEGY_LOG.html).
+
+The historical runs in the first table use Defect, 100 seeds,
+`--max-steps 100000`, and the release build. New optimization runs use 500
+seeds and a 5,000-step cap: a normal run needs hundreds of decisions, so every
+capped seed is a loop bug to diagnose rather than an outcome to hide behind a
+large limit. A thesis is first replayed against the fixed cohort where its
+failure was observed; if it improves that diagnosed behavior, it is then
+evaluated on a newly randomized cohort. Seed sources make randomized cohorts
+exactly replayable without making the final evaluation reuse a tuning cohort.
+
+The runs through source `1787318422655767662` predate the boss-relic
+acquisition fix and are retained as historical strategy comparisons only. The
+engine exposed the same boss reward after it was taken, so HTN selected it
+twice; energy relics could therefore grant two energy and every final relic
+list contained duplicate boss relics. Current milestones start from the
+single-acquisition cohorts below and are not numerically comparable to the old
+15% milestone.
 
 | Thesis | Historical win rate | Historical mean floor | Fresh cohort | Fresh win rate | Fresh mean floor | Decision |
 |---|---:|---:|---|---:|---:|---|
@@ -20,3 +33,36 @@ the final evaluation reuse a tuning cohort.
 | Combat legality: Medical Kit/Blue Candle and zero-progress loop guard | 13% | 30.32 | replay source `1787313410802255679` | 20% | 32.98 | accepted; eliminated cap (seed `8204511003183509530`) |
 | Validation after loop fix | — | — | source `1787314071256080154` | 12% | 30.51 | fresh reference for target diagnosis; zero caps |
 | Targeting: prioritize Donu, Cultists, Bronze Orbs, and Torch Heads | replay source `1787314071256080154`: 14% | 30.57 | source `1787314207414780189` | **15%** | 30.01 | accepted; zero caps and three diagnosed Donu losses became wins |
+
+## 500-seed optimization runs
+
+| Thesis | Cohort | Before win rate | Before mean floor | After win rate | After mean floor | Caps | Decision |
+|---|---|---:|---:|---:|---:|---:|---|
+| Delayed Self Repair healing is invisible to the shallow turn search | fixed source `1787315208666760241` | 11.60% (58/500) | 29.76 | 12.40% (62/500) | 29.99 | 0 | accepted; seed `6156007182303515596` changed from floor-31 loss to win, seed `1883842478669890359` improved floor 31→42 |
+| Delayed Self Repair healing is invisible to the shallow turn search | fresh source `1787316226187148540` | 8.40% (42/500) | 29.12 | 11.00% (55/500) | 29.66 | 0 | accepted; paired milestone binary against changed binary |
+| Shop strategy: prioritize Strike purge at value 330 | fixed source `1787315208666760241` | 12.40% (62/500) | 29.99 | 14.20% (71/500) | 30.17 | 0 | rejected after fresh cohort did not generalize |
+| Shop strategy: prioritize Strike purge at value 330 | fresh source `1787316573696228393` | 13.40% (67/500) | 30.79 | 13.40% (67/500) | 30.41 | 0 | rejected: same wins, lower mean floor |
+| Shop strategy: moderate Strike purge value 240 | fixed source `1787315208666760241` | 12.40% (62/500) | 29.99 | 14.80% (74/500) | 30.47 | 0 | rejected on the previously observed fresh cohort |
+| Shop strategy: moderate Strike purge value 240 | replay source `1787316573696228393` | 13.40% (67/500) | 30.79 | 13.00% (65/500) | 30.55 | 0 | rejected; no new random cohort warranted |
+| Delayed Buffer prevention | fixed source `1787315208666760241` | 12.40% (62/500) | 29.99 | 12.80% (64/500) | 29.81 | 0 | tested fresh because Automaton seed `1883842478669890359` improved floor 42→47 |
+| Delayed Buffer prevention | fresh source `1787316759813919465` | 10.40% (52/500) | 29.81 | 9.80% (49/500) | 29.68 | 0 | rejected |
+| Delayed Loop output | fixed source `1787315208666760241` | 12.40% (62/500) | 29.99 | 11.60% (58/500) | 29.65 | 0 | rejected before fresh cohort |
+| Delayed Machine Learning draw | fixed source `1787315208666760241` | 12.40% (62/500) | 29.99 | 12.40% (62/500) | 30.09 | 0 | accepted provisionally; three wins gained and three lost, with higher mean floor |
+| Delayed Machine Learning draw | fresh source `1787316864833023929` | 11.40% (57/500) | 29.92 | 11.60% (58/500) | 30.03 | 0 | accepted; small consistent paired improvement |
+| Draft synergy: require two Frost sources before taking Blizzard | fixed source `1787315208666760241` | 12.40% (62/500) | 30.09 | 13.80% (69/500) | 30.62 | 0 | tested fresh after a clear fixed-cohort gain |
+| Draft synergy: require two Frost sources before taking Blizzard | fresh source `1787317200265831039` | 14.40% (72/500) | 30.68 | 14.00% (70/500) | 30.77 | 0 | rejected: two fewer wins despite slightly higher mean floor |
+| Broad card/shop/boss package planner v1 | fixed source `1787315208666760241` | 12.40% (62/500) | 30.09 | 11.80% (59/500) | 30.04 | 0 | rejected as a bundle and decomposed by acquisition context |
+| Deck-aware boss relic priorities v1 | fixed source `1787315208666760241` | 12.40% (62/500) | 30.09 | 9.60% (48/500) | 28.98 | 0 | rejected: package bonuses over-selected Inserter instead of reliable energy relics |
+| Deck-aware shop relic value | fixed source `1787315208666760241` | 12.40% (62/500) | 30.09 | 12.80% (64/500) | 30.09 | 0 | advanced to independent cohorts |
+| Deck-aware shop relic value | replay source `1787317200265831039` | 14.40% (72/500) | 30.68 | 14.40% (72/500) | 30.67 | 0 | neutral confirmation; advanced to a new random cohort |
+| Deck-aware shop relic value | fresh source `1787318292151234368` | 11.40% (57/500) | 29.99 | 11.80% (59/500) | 30.16 | 0 | accepted |
+| Card-package HTN on top of deck-aware shops | fixed source `1787315208666760241` | 12.80% (64/500) | 30.09 | 14.40% (72/500) | 31.21 | 0 | advanced to independent cohorts |
+| Card-package HTN on top of deck-aware shops | replay source `1787317200265831039` | 14.40% (72/500) | 30.67 | 15.40% (77/500) | 31.20 | 0 | crossed 15% on an observed independent source |
+| Card-package HTN on top of deck-aware shops | fresh source `1787318422655767662` | 11.40% (57/500) | 30.01 | 11.60% (58/500) | 30.31 | 0 | accepted; smaller but positive paired generalization |
+
+## Corrected single-boss-relic baseline
+
+| Thesis | Cohort | Before win rate | Before mean floor | After win rate | After mean floor | Caps | Decision |
+|---|---|---:|---:|---:|---:|---:|---|
+| Card-package HTN plus deck-aware shop relics | fixed source `1787315208666760241` | 3.00% (15/500) | 27.58 | 5.40% (27/500) | 28.54 | 0 | accepted after boss relics were limited to one acquisition |
+| Card-package HTN plus deck-aware shop relics | fresh source `1787318856394675018` | 1.80% (9/500) | 27.65 | 3.80% (19/500) | 28.21 | 0 | accepted; paired generalization on the corrected engine |

@@ -5,6 +5,7 @@
 //! and the same map/reward/rest/shop/card-pick tables.
 
 mod agent;
+mod deckplan;
 mod strategy;
 mod turnplan;
 

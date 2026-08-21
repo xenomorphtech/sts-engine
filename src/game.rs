@@ -534,7 +534,7 @@ impl Game {
                     Screen::Neow => self.neow_options.len(),
                     Screen::Event => self.event.as_ref().map(|e| e.options.len()).unwrap_or(0),
                     Screen::Treasure => 1,
-                    Screen::BossRelic => self.boss_relics.len() + 1,
+                    Screen::BossRelic => self.boss_relics.len(),
                     _ => 0,
                 };
                 for i in 0..n {
@@ -3361,6 +3361,11 @@ impl Game {
                 .or_else(|| self.boss_relics.get(*index).copied());
             if let Some(id) = picked {
                 self.gain_relic(id);
+                // The choice screen closes after one relic. Keep the screen
+                // itself available for Proceed (or for a relic's intermediate
+                // Grid/CombatReward screen), but never expose the three offers
+                // for a second acquisition.
+                self.boss_relics.clear();
             }
             return;
         }

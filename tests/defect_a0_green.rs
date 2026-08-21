@@ -20,6 +20,41 @@ fn walk_a0(seed: &str) -> Result<sts_engine::walk::WalkOk, sts_engine::walk::Wal
 }
 
 #[test]
+fn boss_relic_choice_can_only_be_taken_once() {
+    use sts_engine::action::Action;
+    use sts_engine::game::{Game, Screen};
+    use sts_engine::ids::RelicId;
+
+    let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+    game.screen = Screen::BossRelic;
+    game.boss_relics = vec![
+        RelicId::Cursed_Key,
+        RelicId::Runic_Pyramid,
+        RelicId::Inserter,
+    ];
+    let choose = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| {
+            matches!(action, Action::Choose { label: Some(label), .. } if label == RelicId::Cursed_Key.sts_id())
+        })
+        .expect("Cursed Key choice");
+
+    let energy_before = game.player.energy_master;
+    game.step(&choose);
+    assert_eq!(game.player.energy_master, energy_before + 1);
+    assert_eq!(
+        game.player
+            .relics
+            .iter()
+            .filter(|relic| relic.id == RelicId::Cursed_Key)
+            .count(),
+        1
+    );
+    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
+}
+
+#[test]
 fn registry_file_is_loadable() {
     let path = registry_path();
     if !path.exists() {

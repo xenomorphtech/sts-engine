@@ -67,6 +67,7 @@ struct SeedDetail {
     diagnostics: RunDiagnostics,
     final_focus: i32,
     final_orbs: String,
+    final_relics: String,
     final_deck: String,
 }
 
@@ -102,6 +103,14 @@ impl SeedDetail {
                 .orbs
                 .iter()
                 .map(|orb| format!("{:?}:{}", orb.kind, orb.evoke))
+                .collect::<Vec<_>>()
+                .join(","),
+            final_relics: run
+                .game
+                .player
+                .relics
+                .iter()
+                .map(|relic| relic.id.sts_id())
                 .collect::<Vec<_>>()
                 .join(","),
             final_deck: run
@@ -450,14 +459,14 @@ fn print_batch(
         steps_per_second,
     );
     if diagnostics {
-        println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining\tnormals\telites\trests\tevents\tshops\ttreasures\tbosses\tboss_entry_hp\trested\tsmithed\trecalled\tact1_path\tact2_path\tact3_path\tact4_path\tfinal_focus\tfinal_orbs\tfinal_deck");
+        println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining\tnormals\telites\trests\tevents\tshops\ttreasures\tbosses\tboss_entry_hp\trested\tsmithed\trecalled\tact1_path\tact2_path\tact3_path\tact4_path\tfinal_focus\tfinal_orbs\tfinal_relics\tfinal_deck");
     } else {
         println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining");
     }
     for detail in details {
         if diagnostics {
             println!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 detail.seed,
                 detail.outcome.label(),
                 detail.floor_achieved,
@@ -479,6 +488,7 @@ fn print_batch(
                 detail.diagnostics.paths[3],
                 detail.final_focus,
                 detail.final_orbs,
+                detail.final_relics,
                 detail.final_deck,
             );
         } else {
@@ -499,7 +509,7 @@ fn main() {
     let mut count: usize = 1;
     let mut concurrent: usize = 1;
     let mut ascension: i32 = 0;
-    let mut max_steps: usize = 4000;
+    let mut max_steps: usize = 5000;
     let mut diagnostics = false;
     let mut randomize = false;
     let mut random_source: Option<i64> = None;
@@ -528,7 +538,7 @@ fn main() {
             }
             "--a0" => ascension = 0,
             "--a20" => ascension = 20,
-            "--max-steps" => max_steps = args.next().and_then(|s| s.parse().ok()).unwrap_or(4000),
+            "--max-steps" => max_steps = args.next().and_then(|s| s.parse().ok()).unwrap_or(5000),
             "--diagnostics" => diagnostics = true,
             "--random-seeds" => randomize = true,
             "--seed-source" => {
@@ -537,7 +547,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics]\n\nBatch mode runs seeds in one process and prints aggregate throughput, win rate, and per-seed results. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible."
+                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics]\n\nBatch mode runs seeds in one process and prints aggregate throughput, win rate, and per-seed results. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
                 );
                 return;
             }
