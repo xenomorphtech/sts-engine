@@ -1,6 +1,7 @@
 use crate::action::{Action, PotionOp};
 use crate::game::{Game, Screen};
 use crate::ids::PotionId;
+use std::collections::VecDeque;
 
 use super::{strategy, turnplan};
 
@@ -8,7 +9,7 @@ use super::{strategy, turnplan};
 #[derive(Clone, Debug, Default)]
 pub struct HtnAgent {
     visited_shop_floors: Vec<i32>,
-    recent: Vec<String>,
+    recent: VecDeque<(Screen, i32, Action)>,
 }
 
 impl HtnAgent {
@@ -96,10 +97,10 @@ impl HtnAgent {
     }
 
     fn anti_stall(&mut self, game: &Game, cmd: Action, legal: &[Action]) -> Action {
-        let key = format!("{:?}:{}:{:?}", game.screen, game.dungeon.floor, cmd);
-        self.recent.push(key.clone());
+        let key = (game.screen, game.dungeon.floor, cmd.clone());
+        self.recent.push_back(key.clone());
         if self.recent.len() > 12 {
-            self.recent.remove(0);
+            self.recent.pop_front();
         }
         let repeats = self.recent.iter().filter(|k| *k == &key).count();
         if repeats >= 3 && matches!(cmd, Action::Choose { .. } | Action::Skip | Action::Proceed) {

@@ -68,9 +68,7 @@ pub struct JavaRng {
 pub fn load_first_snapshot(path: impl AsRef<Path>) -> std::io::Result<JavaEnvelope> {
     let file = File::open(path)?;
     let mut lines = BufReader::new(file).lines();
-    let line = lines
-        .next()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "empty jsonl"))??;
+    let line = lines.next().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "empty jsonl"))??;
     serde_json::from_str(&line).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
@@ -87,35 +85,20 @@ impl ParityReport {
 
 pub fn compare_generation(game: &Game, java: &JavaEnvelope) -> ParityReport {
     let mut report = ParityReport::default();
-    check(
-        &mut report,
-        "boss",
-        game.dungeon.boss.as_str(),
-        java.state.dungeon.boss.as_str(),
-    );
-    check(
-        &mut report,
-        "monster_list",
-        &game.dungeon.monster_list,
-        &java.state.dungeon.monster_list,
-    );
-    check(
-        &mut report,
-        "elite_list",
-        &game.dungeon.elite_list,
-        &java.state.dungeon.elite_monster_list,
-    );
+    check(&mut report, "boss", game.dungeon.boss.as_str(), java.state.dungeon.boss.as_str());
+    check(&mut report, "monster_list", game.dungeon.monster_list.as_ref(), &java.state.dungeon.monster_list);
+    check(&mut report, "elite_list", game.dungeon.elite_list.as_ref(), &java.state.dungeon.elite_monster_list);
     check(
         &mut report,
         "common_relics",
-        &game.dungeon.common_relics,
-        &java.state.dungeon.common_relic_pool,
+        game.dungeon.common_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+        java.state.dungeon.common_relic_pool.iter().map(String::as_str).collect::<Vec<_>>(),
     );
     check(
         &mut report,
         "uncommon_relics",
-        &game.dungeon.uncommon_relics,
-        &java.state.dungeon.uncommon_relic_pool,
+        game.dungeon.uncommon_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+        java.state.dungeon.uncommon_relic_pool.iter().map(String::as_str).collect::<Vec<_>>(),
     );
     check_rng(&mut report, "monster", game.rng.monster.snapshot(), &java.state.rng.monster);
     check_rng(&mut report, "map", game.rng.map.snapshot(), &java.state.rng.map);
@@ -128,9 +111,7 @@ pub fn compare_generation(game: &Game, java: &JavaEnvelope) -> ParityReport {
 
 fn check<T: PartialEq + std::fmt::Debug>(report: &mut ParityReport, name: &str, got: T, expected: T) {
     if got != expected {
-        report
-            .mismatches
-            .push(format!("{name}: got {got:?} expected {expected:?}"));
+        report.mismatches.push(format!("{name}: got {got:?} expected {expected:?}"));
     }
 }
 

@@ -5,8 +5,12 @@
 //! cargo run --release --bin sts-htn -- --seed 0 --count 100 --concurrent 6 --a0
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -14,14 +18,340 @@ use sts_engine::game::{Game, Screen};
 use sts_engine::htn::HtnAgent;
 use sts_engine::ids::{Character, PowerId, RoomType};
 use sts_engine::rng::StsRandom;
-use sts_engine::Unlocks;
+use sts_engine::{Action, Unlocks};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 enum Outcome {
     Win,
     Loss,
     Capped,
     Stopped,
+}
+
+/// Stable, compact engine checkpoint. There is deliberately one record per
+/// seed: this is a regression oracle, not a trace or an HTN diagnostics log.
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
+struct FinalState {
+    seed: i64,
+    outcome: Outcome,
+    steps: usize,
+    floor: i32,
+    act: i32,
+    screen: String,
+    room: String,
+    hp: i32,
+    max_hp: i32,
+    block: i32,
+    gold: i32,
+    energy: i32,
+    energy_master: i32,
+    deck: Vec<String>,
+    relics: Vec<String>,
+    potions: Vec<String>,
+    powers: Vec<String>,
+    orbs: Vec<String>,
+    combat: Option<String>,
+    rng: sts_engine::rng::RngSetSnapshot,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ActionLog {
+    seed: i64,
+    actions: Vec<Action>,
+}
+
+fn load_action_log(path: &Path) -> Result<Vec<ActionLog>, String> {
+    let input =
+        BufReader::new(File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?);
+    input
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line = line.map_err(|e| e.to_string())?;
+            serde_json::from_str(&line)
+                .map_err(|e| format!("{} line {}: {e}", path.display(), i + 1))
+        })
+        .collect()
+}
+
+impl FinalState {
+    fn from_run(seed: i64, run: &RunResult) -> Self {
+        let game = &run.game;
+        Self {
+            seed,
+            outcome: run.outcome,
+            steps: run.steps,
+            floor: game.dungeon.floor,
+            act: game.dungeon.act as i32,
+            screen: format!("{:?}", game.screen),
+            room: format!("{:?}", game.current_room),
+            hp: game.player.hp,
+            max_hp: game.player.max_hp,
+            block: game.player.block,
+            gold: game.player.gold,
+            energy: game.player.energy,
+            energy_master: game.player.energy_master,
+            deck: game.player.deck.iter().map(compact_card).collect(),
+            relics: game
+                .player
+                .relics
+                .iter()
+                .map(|r| format!("{}:{}:{}", r.id.sts_id(), r.counter, u8::from(r.used_up)))
+                .collect(),
+            potions: game
+                .player
+                .potions
+                .iter()
+                .map(|p| format!("{}:{}", p.id.sts_id(), p.slot))
+                .collect(),
+            powers: game
+                .player
+                .powers
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{:?}:{}:{}:{}:{}",
+                        p.id,
+                        p.amount,
+                        u8::from(p.just_applied),
+                        u8::from(p.skip_first),
+                        p.misc
+                    )
+                })
+                .collect(),
+            orbs: game
+                .player
+                .orbs
+                .iter()
+                .map(|o| format!("{:?}:{}", o.kind, o.evoke))
+                .collect(),
+            combat: game.combat.as_ref().map(|c| {
+                let monsters = c
+                    .monsters
+                    .iter()
+                    .map(|m| {
+                        format!(
+                            "{}:{}/{}:{:?}:{}x{}:{}:{}",
+                            m.id.sts_id(),
+                            m.hp,
+                            m.max_hp,
+                            m.intent,
+                            m.intent_damage,
+                            m.intent_hits,
+                            u8::from(m.dead),
+                            u8::from(m.escaped)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{:?}:{}:[{}]", c.encounter, c.turn, monsters)
+            }),
+            rng: game.rng.snapshot(),
+        }
+    }
+}
+
+fn compact_card(card: &sts_engine::card::Card) -> String {
+    format!(
+        "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+        card.sts_id(),
+        card.times_upgraded,
+        card.cost,
+        card.cost_for_turn,
+        card.base_damage,
+        card.base_block,
+        card.base_magic,
+        card.misc,
+        u8::from(card.free_to_play_once),
+        u8::from(card.exhaust),
+        u8::from(card.ethereal),
+        u8::from(card.retain),
+        u8::from(card.innate),
+        u8::from(card.in_bottle),
+        u8::from(card.upgraded),
+    )
+}
+
+fn write_fixture(path: &Path, states: &[FinalState]) -> Result<(), String> {
+    let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    let mut out = BufWriter::new(file);
+    for state in states {
+        serde_json::to_writer(&mut out, state).map_err(|e| e.to_string())?;
+        writeln!(out).map_err(|e| e.to_string())?;
+    }
+    out.flush().map_err(|e| e.to_string())
+}
+
+fn write_action_log(path: &Path, logs: &[ActionLog]) -> Result<(), String> {
+    let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    let mut out = BufWriter::new(file);
+    for log in logs {
+        serde_json::to_writer(&mut out, log).map_err(|e| e.to_string())?;
+        writeln!(out).map_err(|e| e.to_string())?;
+    }
+    out.flush().map_err(|e| e.to_string())
+}
+
+fn run_final_batch(
+    seeds: &[i64],
+    concurrent: usize,
+    character: Character,
+    ascension: i32,
+    max_steps: usize,
+    unlocks: &Unlocks,
+) -> Vec<FinalState> {
+    let next_offset = AtomicUsize::new(0);
+    let mut states = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(concurrent.min(seeds.len()));
+        for _ in 0..concurrent.min(seeds.len()) {
+            workers.push(scope.spawn(|| {
+                let mut local = Vec::new();
+                loop {
+                    let offset = next_offset.fetch_add(1, Ordering::Relaxed);
+                    if offset >= seeds.len() {
+                        break;
+                    }
+                    let seed = seeds[offset];
+                    local.push(FinalState::from_run(
+                        seed,
+                        &run_seed(seed, character, ascension, max_steps, unlocks, false, false),
+                    ));
+                }
+                local
+            }));
+        }
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("HTN worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    states.sort_unstable_by_key(|state| state.seed);
+    states
+}
+
+fn run_action_batch(
+    seeds: &[i64],
+    concurrent: usize,
+    character: Character,
+    ascension: i32,
+    max_steps: usize,
+    unlocks: &Unlocks,
+) -> Vec<ActionLog> {
+    let next_offset = AtomicUsize::new(0);
+    let mut logs = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(concurrent.min(seeds.len()));
+        for _ in 0..concurrent.min(seeds.len()) {
+            workers.push(scope.spawn(|| {
+                let mut local = Vec::new();
+                loop {
+                    let offset = next_offset.fetch_add(1, Ordering::Relaxed);
+                    if offset >= seeds.len() {
+                        break;
+                    }
+                    let seed = seeds[offset];
+                    let run = run_seed(seed, character, ascension, max_steps, unlocks, false, true);
+                    local.push(ActionLog {
+                        seed,
+                        actions: run.actions,
+                    });
+                }
+                local
+            }));
+        }
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("HTN worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    logs.sort_unstable_by_key(|log| log.seed);
+    logs
+}
+
+fn replay_action_batch(
+    logs: &[ActionLog],
+    concurrent: usize,
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+) -> Vec<FinalState> {
+    let next_offset = AtomicUsize::new(0);
+    let mut states = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(concurrent.min(logs.len()));
+        for _ in 0..concurrent.min(logs.len()) {
+            workers.push(scope.spawn(|| {
+                let mut local = Vec::new();
+                loop {
+                    let offset = next_offset.fetch_add(1, Ordering::Relaxed);
+                    if offset >= logs.len() {
+                        break;
+                    }
+                    let log = &logs[offset];
+                    let mut game = Game::new(log.seed, character, ascension, unlocks.clone());
+                    let mut steps = 0;
+                    for action in &log.actions {
+                        game.step(action);
+                        steps += 1;
+                    }
+                    let outcome =
+                        if game.done && game.player.hp > 0 && game.screen != Screen::Terminal {
+                            Outcome::Win
+                        } else if game.player.hp <= 0 {
+                            Outcome::Loss
+                        } else {
+                            Outcome::Stopped
+                        };
+                    let run = RunResult {
+                        game,
+                        steps,
+                        outcome,
+                        diagnostics: RunDiagnostics::default(),
+                        actions: Vec::new(),
+                    };
+                    local.push(FinalState::from_run(log.seed, &run));
+                }
+                local
+            }));
+        }
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("replay worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    states.sort_unstable_by_key(|state| state.seed);
+    states
+}
+
+fn compare_fixture(path: &Path, actual: &[FinalState]) -> Result<(), String> {
+    let input =
+        BufReader::new(File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?);
+    let expected: Vec<FinalState> = input
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line = line.map_err(|e| e.to_string())?;
+            serde_json::from_str(&line)
+                .map_err(|e| format!("{} line {}: {e}", path.display(), i + 1))
+        })
+        .collect::<Result<_, _>>()?;
+    if expected.len() != actual.len() {
+        return Err(format!(
+            "fixture count differs: expected {}, got {}",
+            expected.len(),
+            actual.len()
+        ));
+    }
+    for (expected, actual) in expected.iter().zip(actual) {
+        if expected != actual {
+            return Err(format!(
+                "seed {} final state differs\nexpected: {}\nactual:   {}",
+                actual.seed,
+                serde_json::to_string(expected).unwrap(),
+                serde_json::to_string(actual).unwrap()
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Outcome {
@@ -40,6 +370,7 @@ struct RunResult {
     steps: usize,
     outcome: Outcome,
     diagnostics: RunDiagnostics,
+    actions: Vec<Action>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -179,6 +510,7 @@ fn run_batch(
     ascension: i32,
     max_steps: usize,
     unlocks: &Unlocks,
+    collect_diagnostics: bool,
 ) -> Vec<SeedDetail> {
     let count = seeds.len();
     let worker_count = concurrent.min(count);
@@ -186,7 +518,15 @@ fn run_batch(
         return seeds
             .iter()
             .map(|&seed| {
-                let run = run_seed(seed, character, ascension, max_steps, unlocks);
+                let run = run_seed(
+                    seed,
+                    character,
+                    ascension,
+                    max_steps,
+                    unlocks,
+                    collect_diagnostics,
+                    false,
+                );
                 SeedDetail::from_run(seed, &run)
             })
             .collect();
@@ -205,7 +545,15 @@ fn run_batch(
                         break;
                     }
                     let seed = seeds[offset];
-                    let run = run_seed(seed, character, ascension, max_steps, unlocks);
+                    let run = run_seed(
+                        seed,
+                        character,
+                        ascension,
+                        max_steps,
+                        unlocks,
+                        collect_diagnostics,
+                        false,
+                    );
                     local.push(SeedDetail::from_run(seed, &run));
                 }
                 local
@@ -226,11 +574,14 @@ fn run_seed(
     ascension: i32,
     max_steps: usize,
     unlocks: &Unlocks,
+    collect_diagnostics: bool,
+    collect_actions: bool,
 ) -> RunResult {
     let mut game = Game::new(seed, character, ascension, unlocks.clone());
     let mut agent = HtnAgent::new();
     let mut steps = 0usize;
     let mut diagnostics = RunDiagnostics::default();
+    let mut actions = Vec::new();
 
     while !game.done && game.player.hp > 0 && game.screen != Screen::Terminal && steps < max_steps {
         let action = agent.decide(&game);
@@ -238,7 +589,7 @@ fn run_seed(
             break;
         }
         let screen_before = game.screen;
-        if screen_before == Screen::Map {
+        if collect_diagnostics && screen_before == Screen::Map {
             if let sts_engine::Action::Choose {
                 room: Some(room), ..
             } = &action
@@ -273,7 +624,7 @@ fn run_seed(
                 let act_index = (game.dungeon.act as usize).saturating_sub(1).min(3);
                 diagnostics.paths[act_index].push(symbol);
             }
-        } else if screen_before == Screen::Rest {
+        } else if collect_diagnostics && screen_before == Screen::Rest {
             if let sts_engine::Action::Choose {
                 label: Some(label), ..
             } = &action
@@ -288,6 +639,9 @@ fn run_seed(
             }
         }
         game.step(&action);
+        if collect_actions {
+            actions.push(action);
+        }
         steps += 1;
     }
 
@@ -306,6 +660,7 @@ fn run_seed(
         steps,
         outcome,
         diagnostics,
+        actions,
     }
 }
 
@@ -511,6 +866,10 @@ fn main() {
     let mut ascension: i32 = 0;
     let mut max_steps: usize = 5000;
     let mut diagnostics = false;
+    let mut fixture_jsonl: Option<PathBuf> = None;
+    let mut compare_jsonl: Option<PathBuf> = None;
+    let mut actions_jsonl: Option<PathBuf> = None;
+    let mut replay_actions_jsonl: Option<PathBuf> = None;
     let mut randomize = false;
     let mut random_source: Option<i64> = None;
     let mut args = env::args().skip(1);
@@ -540,6 +899,10 @@ fn main() {
             "--a20" => ascension = 20,
             "--max-steps" => max_steps = args.next().and_then(|s| s.parse().ok()).unwrap_or(5000),
             "--diagnostics" => diagnostics = true,
+            "--fixture-jsonl" => fixture_jsonl = args.next().map(PathBuf::from),
+            "--compare-jsonl" => compare_jsonl = args.next().map(PathBuf::from),
+            "--actions-jsonl" => actions_jsonl = args.next().map(PathBuf::from),
+            "--replay-actions-jsonl" => replay_actions_jsonl = args.next().map(PathBuf::from),
             "--random-seeds" => randomize = true,
             "--seed-source" => {
                 random_source = args.next().and_then(|s| s.parse().ok());
@@ -547,7 +910,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics]\n\nBatch mode runs seeds in one process and prints aggregate throughput, win rate, and per-seed results. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
+                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH] [--replay-actions-jsonl PATH]\n\nBatch mode runs seeds in one process and prints aggregate throughput, win rate, and per-seed results. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl optionally accumulates only each seed's actions in memory and writes them once after the batch. --replay-actions-jsonl bypasses HTN and replays that action log; combine it with --compare-jsonl for an engine-only exact gate. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
                 );
                 return;
             }
@@ -567,10 +930,49 @@ fn main() {
         eprintln!("--concurrent must be greater than zero");
         std::process::exit(2);
     }
+    let write_modes = usize::from(fixture_jsonl.is_some()) + usize::from(actions_jsonl.is_some());
+    if write_modes > 1
+        || (compare_jsonl.is_some() && write_modes > 0)
+        || (replay_actions_jsonl.is_some() && write_modes > 0)
+    {
+        eprintln!("choose only one of --fixture-jsonl, --compare-jsonl, and --actions-jsonl");
+        std::process::exit(2);
+    }
 
     // Load the profile-backed unlock data once, then clone the in-memory value
     // into each fresh game. No assets or profile files are reloaded per seed.
     let unlocks = Unlocks::fixture();
+    if let Some(actions_path) = replay_actions_jsonl {
+        let logs = match load_action_log(&actions_path) {
+            Ok(logs) if !logs.is_empty() => logs,
+            Ok(_) => {
+                eprintln!("{} contains no action logs", actions_path.display());
+                std::process::exit(2);
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        };
+        let start = Instant::now();
+        let states = replay_action_batch(&logs, concurrent, character, ascension, &unlocks);
+        let elapsed = start.elapsed();
+        if let Some(path) = compare_jsonl {
+            if let Err(message) = compare_fixture(&path, &states) {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        let steps: usize = states.iter().map(|state| state.steps).sum();
+        eprintln!(
+            "replayed {} seeds / {} actions in {:.3}s ({:.0} actions/s)",
+            states.len(),
+            steps,
+            elapsed.as_secs_f64(),
+            steps as f64 / elapsed.as_secs_f64().max(f64::EPSILON)
+        );
+        return;
+    }
     let random_source = if randomize {
         Some(random_source.unwrap_or_else(|| {
             let nanos = SystemTime::now()
@@ -587,16 +989,71 @@ fn main() {
     } else {
         consecutive_seeds(seed, count)
     };
+    if let Some(path) = actions_jsonl {
+        let start = Instant::now();
+        let logs = run_action_batch(
+            &seeds, concurrent, character, ascension, max_steps, &unlocks,
+        );
+        match write_action_log(&path, &logs) {
+            Ok(()) => eprintln!(
+                "wrote {} action logs to {} in {:.3}s",
+                logs.len(),
+                path.display(),
+                start.elapsed().as_secs_f64()
+            ),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if fixture_jsonl.is_some() || compare_jsonl.is_some() {
+        let start = Instant::now();
+        let states = run_final_batch(
+            &seeds, concurrent, character, ascension, max_steps, &unlocks,
+        );
+        let result = if let Some(path) = fixture_jsonl {
+            write_fixture(&path, &states)
+                .map(|_| format!("wrote {} states to {}", states.len(), path.display()))
+        } else {
+            let path = compare_jsonl.unwrap();
+            compare_fixture(&path, &states)
+                .map(|_| format!("matched {} states in {}", states.len(), path.display()))
+        };
+        match result {
+            Ok(message) => eprintln!("{} in {:.3}s", message, start.elapsed().as_secs_f64()),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if count == 1 {
         let actual_seed = seeds[0];
-        let run = run_seed(actual_seed, character, ascension, max_steps, &unlocks);
+        let run = run_seed(
+            actual_seed,
+            character,
+            ascension,
+            max_steps,
+            &unlocks,
+            diagnostics,
+            false,
+        );
         print_single(actual_seed, character, ascension, &run);
         return;
     }
 
     let start = Instant::now();
     let details = run_batch(
-        &seeds, concurrent, character, ascension, max_steps, &unlocks,
+        &seeds,
+        concurrent,
+        character,
+        ascension,
+        max_steps,
+        &unlocks,
+        diagnostics,
     );
     let elapsed = start.elapsed();
     let mut stats = BatchStats::default();

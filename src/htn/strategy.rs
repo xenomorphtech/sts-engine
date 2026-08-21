@@ -352,23 +352,6 @@ pub fn boss_relic(game: &Game, legal: &[Action]) -> Action {
 
 pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
     let empty_potions = game.player.potions.iter().any(|p| p.id == PotionId::Slot);
-    let curses = game
-        .player
-        .deck
-        .iter()
-        .filter(|c| c.card_type() == CardType::CURSE)
-        .count();
-    let strikes = game
-        .player
-        .deck
-        .iter()
-        .filter(|c| {
-            matches!(
-                c.id,
-                CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P
-            )
-        })
-        .count();
     let mut best: Option<(&Action, i32)> = None;
     for action in legal {
         let Action::Choose {
@@ -378,13 +361,7 @@ pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
             continue;
         };
         let value = if label == "purge" {
-            if curses > 0 {
-                240
-            } else if strikes > 0 {
-                165
-            } else {
-                60
-            }
+            deckplan::shop_purge_value(game)
         } else if let Some(id) = CardId::from_sts_id(label) {
             score_card(game, &Card::new(id)) - 10
         } else if let Some(id) = RelicId::from_sts_id(label) {
@@ -1079,9 +1056,11 @@ mod tests {
     }
 
     #[test]
-    fn defect_engine_and_claw_are_draftable() {
-        let game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+    fn defect_engine_and_supported_claw_are_draftable() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
         assert!(score_card(&game, &Card::new(CardId::Defragment)) > 300);
+        assert!(score_card(&game, &Card::new(CardId::Gash)) < PICK_THRESHOLD);
+        game.player.deck.push(Card::new(CardId::All_For_One));
         assert!(score_card(&game, &Card::new(CardId::Gash)) >= PICK_THRESHOLD);
         assert!(score_card(&game, &Card::new(CardId::Rebound)) >= PICK_THRESHOLD);
     }

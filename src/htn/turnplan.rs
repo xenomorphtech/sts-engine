@@ -197,6 +197,12 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
             let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
             card.base_magic.max(1) as f32 * turns_left * damage_weight * 2.2
         }
+        CardId::Echo_Form => {
+            let turns_left = fight_length(fight_kind(game), game.dungeon.act).max(1.0);
+            let damage_weight = DMG_BASE + DMG_PER_TURN * turns_left;
+            card.base_magic.max(1) as f32 * turns_left * damage_weight * 12.0
+        }
+        CardId::Buffer => card.base_magic.max(1) as f32 * danger * 20.0,
         _ => 0.0,
     }
 }
@@ -557,6 +563,68 @@ mod tests {
         game.player.hp = 20;
         game.player.energy = 1;
         game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Self_Repair)];
+
+        let legal = game.legal_actions();
+        assert_eq!(
+            plan_turn(&game, &legal),
+            Action::Play {
+                hand_index: 1,
+                target_index: None,
+            }
+        );
+    }
+
+    #[test]
+    fn safe_boss_fight_values_echo_form_before_chip_damage() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 3;
+        game.combat.as_mut().unwrap().monsters[0].intent_damage = 0;
+        game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Echo_Form)];
+
+        let legal = game.legal_actions();
+        assert_eq!(
+            plan_turn(&game, &legal),
+            Action::Play {
+                hand_index: 1,
+                target_index: None,
+            }
+        );
+    }
+
+    #[test]
+    fn safe_boss_fight_values_buffer_before_chip_damage() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 2;
+        game.combat.as_mut().unwrap().monsters[0].intent_damage = 0;
+        game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Buffer)];
 
         let legal = game.legal_actions();
         assert_eq!(

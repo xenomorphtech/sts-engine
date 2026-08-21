@@ -7,6 +7,7 @@ use crate::ids::{CardId, CardRarity, CardType, Character, EncounterId, PotionId,
 use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -39,12 +40,7 @@ pub struct Reward {
 
 impl Reward {
     fn new(kind: RewardKind) -> Self {
-        Self {
-            kind,
-            taken: false,
-            relic_link: None,
-            card_options: None,
-        }
+        Self { kind, taken: false, relic_link: None, card_options: None }
     }
 }
 
@@ -88,7 +84,7 @@ pub struct Game {
     pub seed: i64,
     pub ascension: i32,
     pub character: Character,
-    pub unlocks: Unlocks,
+    pub unlocks: Arc<Unlocks>,
     pub rng: RngSet,
     pub player: Player,
     pub dungeon: Dungeon,
@@ -165,24 +161,11 @@ enum ShopKind {
 }
 
 fn match_play_options(cards: &[MatchCard]) -> Vec<String> {
-    cards
-        .iter()
-        .filter(|c| c.flipped)
-        .map(|c| {
-            if c.revealed {
-                c.id.sts_id().to_string()
-            } else {
-                "hidden card".into()
-            }
-        })
-        .collect()
+    cards.iter().filter(|c| c.flipped).map(|c| if c.revealed { c.id.sts_id().to_string() } else { "hidden card".into() }).collect()
 }
 
 fn purgeable_card(c: &Card) -> bool {
-    !matches!(
-        c.id,
-        CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane
-    )
+    !matches!(c.id, CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane)
 }
 
 fn shop_card_matches(card: &Card, label: &str) -> bool {
@@ -304,7 +287,7 @@ impl Game {
             seed,
             ascension,
             character,
-            unlocks,
+            unlocks: Arc::new(unlocks),
             rng,
             player: {
                 let mut p = Player::for_character(character);
@@ -342,11 +325,7 @@ impl Game {
             chest_tier: RelicTier::COMMON,
             hand_held: Vec::new(),
             pending_room: None,
-            shop: ShopState {
-                purge_cost: 75,
-                purge_available: true,
-                ..ShopState::default()
-            },
+            shop: ShopState { purge_cost: 75, purge_available: true, ..ShopState::default() },
             rest_smithing: false,
             rest_smith_picked: false,
             rest_selected: false,
@@ -367,10 +346,7 @@ impl Game {
             toolbox_reward: false,
             pending_ornithopter_heal: false,
         };
-        game.neow_options = vec![NeowOption {
-            label: "[Talk]".into(),
-            kind: NeowKind::ThreeCards,
-        }];
+        game.neow_options = vec![NeowOption { label: "[Talk]".into(), kind: NeowKind::ThreeCards }];
         game
     }
 
@@ -402,23 +378,16 @@ impl Game {
                         if card.cost_for_turn > self.player.energy as i16 && card.cost_for_turn >= 0 {
                             continue;
                         }
-                        if card.card_type() == crate::ids::CardType::ATTACK
-                            && self.player.power_amount(crate::ids::PowerId::Entangled) > 0
+                        if card.card_type() == crate::ids::CardType::ATTACK && self.player.power_amount(crate::ids::PowerId::Entangled) > 0
                         {
                             continue;
                         }
                         if card.needs_target() {
                             for (t, _) in combat.living() {
-                                actions.push(Action::Play {
-                                    hand_index: i,
-                                    target_index: Some(t),
-                                });
+                                actions.push(Action::Play { hand_index: i, target_index: Some(t) });
                             }
                         } else {
-                            actions.push(Action::Play {
-                                hand_index: i,
-                                target_index: None,
-                            });
+                            actions.push(Action::Play { hand_index: i, target_index: None });
                         }
                     }
                     actions.push(Action::EndTurn);
@@ -430,24 +399,12 @@ impl Game {
                                 || pot.id == PotionId::Weak
                             {
                                 for (t, _) in combat.living() {
-                                    actions.push(Action::Potion {
-                                        action: PotionOp::Use,
-                                        slot,
-                                        target_index: Some(t),
-                                    });
+                                    actions.push(Action::Potion { action: PotionOp::Use, slot, target_index: Some(t) });
                                 }
                             } else {
-                                actions.push(Action::Potion {
-                                    action: PotionOp::Use,
-                                    slot,
-                                    target_index: None,
-                                });
+                                actions.push(Action::Potion { action: PotionOp::Use, slot, target_index: None });
                             }
-                            actions.push(Action::Potion {
-                                action: PotionOp::Discard,
-                                slot,
-                                target_index: None,
-                            });
+                            actions.push(Action::Potion { action: PotionOp::Discard, slot, target_index: None });
                         }
                     }
                 }
@@ -469,13 +426,7 @@ impl Game {
                         actions.push(Action::Proceed);
                     } else {
                         for (i, card) in self.player.deck.iter().filter(|card| card.can_upgrade()).enumerate() {
-                            actions.push(Action::Choose {
-                                index: i,
-                                label: Some(card.sts_id().to_string()),
-                                x: None,
-                                y: None,
-                                room: None,
-                            });
+                            actions.push(Action::Choose { index: i, label: Some(card.sts_id().to_string()), x: None, y: None, room: None });
                         }
                         if actions.is_empty() {
                             actions.push(Action::Proceed);
@@ -485,46 +436,22 @@ impl Game {
                     actions.push(Action::Proceed);
                 } else {
                     for (i, kind) in self.campfire_options().into_iter().enumerate() {
-                        actions.push(Action::Choose {
-                            index: i,
-                            label: Some(kind.into()),
-                            x: None,
-                            y: None,
-                            room: None,
-                        });
+                        actions.push(Action::Choose { index: i, label: Some(kind.into()), x: None, y: None, room: None });
                     }
                 }
             }
             Screen::Shop => {
                 if !self.shop.open {
-                    actions.push(Action::Choose {
-                        index: 0,
-                        label: Some("shop".into()),
-                        x: None,
-                        y: None,
-                        room: None,
-                    });
+                    actions.push(Action::Choose { index: 0, label: Some("shop".into()), x: None, y: None, room: None });
                 } else {
                     for (index, kind) in self.shop_affordable().into_iter().enumerate() {
                         let label = match kind {
                             ShopKind::Purge => Some("purge".to_string()),
-                            ShopKind::Card(i) => {
-                                self.shop.cards.get(i).map(|offer| offer.item.sts_id().to_string())
-                            }
-                            ShopKind::Relic(i) => {
-                                self.shop.relics.get(i).map(|offer| offer.item.sts_id().to_string())
-                            }
-                            ShopKind::Potion(i) => {
-                                self.shop.potions.get(i).map(|offer| offer.item.sts_id().to_string())
-                            }
+                            ShopKind::Card(i) => self.shop.cards.get(i).map(|offer| offer.item.sts_id().to_string()),
+                            ShopKind::Relic(i) => self.shop.relics.get(i).map(|offer| offer.item.sts_id().to_string()),
+                            ShopKind::Potion(i) => self.shop.potions.get(i).map(|offer| offer.item.sts_id().to_string()),
                         };
-                        actions.push(Action::Choose {
-                            index,
-                            label,
-                            x: None,
-                            y: None,
-                            room: None,
-                        });
+                        actions.push(Action::Choose { index, label, x: None, y: None, room: None });
                     }
                 }
                 actions.push(Action::Proceed);
@@ -545,13 +472,7 @@ impl Game {
                         Screen::BossRelic => self.boss_relics.get(i).map(|r| r.sts_id().to_string()),
                         _ => None,
                     };
-                    actions.push(Action::Choose {
-                        index: i,
-                        label,
-                        x: None,
-                        y: None,
-                        room: None,
-                    });
+                    actions.push(Action::Choose { index: i, label, x: None, y: None, room: None });
                 }
                 if self.screen == Screen::BossRelic {
                     actions.push(Action::Proceed);
@@ -569,18 +490,10 @@ impl Game {
                                 continue;
                             }
                             let label = match grid.kind {
-                                GridKind::DiscardToHand => {
-                                    self.player.discard.get(pile_i).map(|c| c.sts_id().to_string())
-                                }
+                                GridKind::DiscardToHand => self.player.discard.get(pile_i).map(|c| c.sts_id().to_string()),
                                 _ => self.player.deck.get(pile_i).map(|c| c.sts_id().to_string()),
                             };
-                            actions.push(Action::Choose {
-                                index: i,
-                                label,
-                                x: None,
-                                y: None,
-                                room: None,
-                            });
+                            actions.push(Action::Choose { index: i, label, x: None, y: None, room: None });
                         }
                     }
                 }
@@ -598,13 +511,7 @@ impl Game {
                             RewardKind::EmeraldKey => "EMERALD_KEY",
                             RewardKind::SapphireKey => "SAPPHIRE_KEY",
                         };
-                        actions.push(Action::Choose {
-                            index: compact,
-                            label: Some(label.into()),
-                            x: None,
-                            y: None,
-                            room: None,
-                        });
+                        actions.push(Action::Choose { index: compact, label: Some(label.into()), x: None, y: None, room: None });
                         compact += 1;
                     }
                 }
@@ -612,13 +519,7 @@ impl Game {
             }
             Screen::CardReward => {
                 for (i, card) in self.card_reward.iter().enumerate() {
-                    actions.push(Action::Choose {
-                        index: i,
-                        label: Some(card.sts_id().to_string()),
-                        x: None,
-                        y: None,
-                        room: None,
-                    });
+                    actions.push(Action::Choose { index: i, label: Some(card.sts_id().to_string()), x: None, y: None, room: None });
                 }
                 if !self.toolbox_reward {
                     actions.push(Action::Skip);
@@ -626,13 +527,7 @@ impl Game {
             }
             Screen::HandSelect => {
                 for (i, card) in self.player.hand.iter().enumerate() {
-                    actions.push(Action::Choose {
-                        index: i,
-                        label: Some(card.sts_id().to_string()),
-                        x: None,
-                        y: None,
-                        room: None,
-                    });
+                    actions.push(Action::Choose { index: i, label: Some(card.sts_id().to_string()), x: None, y: None, room: None });
                 }
                 actions.push(Action::Proceed);
             }
@@ -700,12 +595,7 @@ impl Game {
                 _ => {}
             }
         }
-        if let Action::Potion {
-            action: op,
-            slot,
-            target_index,
-        } = action
-        {
+        if let Action::Potion { action: op, slot, target_index } = action {
             self.use_potion(*op, *slot, *target_index);
             if let Some(dest) = self.pending_room.take() {
                 self.enter_room(dest.0, dest.1, dest.2);
@@ -750,10 +640,7 @@ impl Game {
             if let Some(opt) = self.neow_options.get(*index).cloned() {
                 self.apply_neow(opt.kind);
             }
-            if matches!(
-                self.screen,
-                Screen::CombatReward | Screen::CardReward | Screen::Grid
-            ) {
+            if matches!(self.screen, Screen::CombatReward | Screen::CardReward | Screen::Grid) {
                 self.neow_screen = 99;
                 return;
             }
@@ -768,10 +655,7 @@ impl Game {
     /// masterDeck at that snapshot.
     fn present_neow_leave(&mut self) {
         self.flush_pending_cards();
-        self.neow_options = vec![NeowOption {
-            label: "[Leave]".into(),
-            kind: NeowKind::ThreeCards,
-        }];
+        self.neow_options = vec![NeowOption { label: "[Leave]".into(), kind: NeowKind::ThreeCards }];
         self.neow_screen = 99;
         self.screen = Screen::Neow;
     }
@@ -786,13 +670,7 @@ impl Game {
             NeowKind::TransformCard,
             NeowKind::RandomColorless,
         ];
-        let cat1 = [
-            NeowKind::ThreePotions,
-            NeowKind::RandomCommonRelic,
-            NeowKind::TenHp,
-            NeowKind::ThreeEnemyKill,
-            NeowKind::HundredGold,
-        ];
+        let cat1 = [NeowKind::ThreePotions, NeowKind::RandomCommonRelic, NeowKind::TenHp, NeowKind::ThreeEnemyKill, NeowKind::HundredGold];
         let pick = |rng: &mut StsRandom, opts: &[NeowKind]| opts[rng.random_range(0, opts.len() as i32 - 1) as usize];
         let a = pick(&mut self.neow_rng, &cat0);
         let b = pick(&mut self.neow_rng, &cat1);
@@ -815,22 +693,10 @@ impl Game {
         let c = pick(&mut self.neow_rng, &cat2);
         let _ = self.neow_rng.random_range(0, 0);
         self.neow_options = vec![
-            NeowOption {
-                label: format!("{a:?}"),
-                kind: a,
-            },
-            NeowOption {
-                label: format!("{b:?}"),
-                kind: b,
-            },
-            NeowOption {
-                label: format!("{c:?}"),
-                kind: c,
-            },
-            NeowOption {
-                label: "Boss Relic".into(),
-                kind: NeowKind::BossRelic,
-            },
+            NeowOption { label: format!("{a:?}"), kind: a },
+            NeowOption { label: format!("{b:?}"), kind: b },
+            NeowOption { label: format!("{c:?}"), kind: c },
+            NeowOption { label: "Boss Relic".into(), kind: NeowKind::BossRelic },
         ];
     }
 
@@ -861,11 +727,7 @@ impl Game {
                 self.screen = Screen::CombatReward;
             }
             NeowKind::ThreeEnemyKill => {
-                self.player.relics.push(RelicInstance {
-                    id: RelicId::NeowsBlessing,
-                    counter: 3,
-                    used_up: false,
-                });
+                self.player.relics.push(RelicInstance { id: RelicId::NeowsBlessing, counter: 3, used_up: false });
             }
             NeowKind::RandomCommonRelic => {
                 if let Some(id) = self.take_relic(RelicTier::COMMON) {
@@ -913,11 +775,7 @@ impl Game {
                 "library_pre blizz={} card_rng={} commons={:?}",
                 self.card_blizz,
                 self.rng.card.counter,
-                self.dungeon
-                    .common_cards
-                    .iter()
-                    .map(|id| id.sts_id())
-                    .collect::<Vec<_>>()
+                self.dungeon.common_cards.iter().map(|id| id.sts_id()).collect::<Vec<_>>()
             );
         }
         let cards = self.generate_library_cards();
@@ -1016,14 +874,7 @@ impl Game {
     /// (TreasureRoomBoss is not TreasureRoom). Seed 906 hp 36 vs 41.
     fn on_equip_tiny_house(&mut self) {
         let seed = self.rng.misc.random_long();
-        let mut idxs: Vec<usize> = self
-            .player
-            .deck
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.can_upgrade())
-            .map(|(i, _)| i)
-            .collect();
+        let mut idxs: Vec<usize> = self.player.deck.iter().enumerate().filter(|(_, c)| c.can_upgrade()).map(|(i, _)| i).collect();
         crate::java_util::shuffle_java(&mut idxs, seed);
         if let Some(&idx) = idxs.first() {
             if let Some(card) = self.player.deck.get_mut(idx) {
@@ -1035,26 +886,14 @@ impl Game {
         self.add_gold_to_rewards(50);
         let potion = crate::rewards::get_random_potion_misc(&mut self.rng, self.character);
         self.rewards.push(Reward::new(RewardKind::Potion(potion)));
-        self.rewards.push(Reward {
-            kind: RewardKind::Card,
-            taken: false,
-            relic_link: None,
-            card_options: None,
-        });
+        self.rewards.push(Reward { kind: RewardKind::Card, taken: false, relic_link: None, card_options: None });
         self.generate_card_reward();
         self.screen = Screen::CombatReward;
     }
 
     /// Astrolabe.onEquip: GRID of 3 purgeable cards, then transformCard(c, true, miscRng).
     fn open_astrolabe_grid(&mut self) {
-        let idxs: Vec<usize> = self
-            .player
-            .deck
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| purgeable_card(c))
-            .map(|(i, _)| i)
-            .collect();
+        let idxs: Vec<usize> = self.player.deck.iter().enumerate().filter(|(_, c)| purgeable_card(c)).map(|(i, _)| i).collect();
         if idxs.is_empty() {
             return;
         }
@@ -1103,7 +942,7 @@ impl Game {
             // transformCard routes colorless sources through
             // returnTrulyRandomColorlessCardFromAvailable, whose list is the
             // addToBottom copy held in srcColorlessCardPool.
-            let mut pool = self.dungeon.src_colorless_cards.clone();
+            let mut pool = self.dungeon.src_colorless_cards.as_ref().clone();
             pool.retain(|id| *id != avoid);
             if pool.is_empty() {
                 return None;
@@ -1111,10 +950,10 @@ impl Game {
             let idx = self.rng.misc.random_int(pool.len() as i32 - 1) as usize;
             return Some(pool[idx]);
         }
-        let mut pool: Vec<CardId> = self.dungeon.common_cards.clone();
-        let mut uncommons = self.dungeon.uncommon_cards.clone();
+        let mut pool: Vec<CardId> = self.dungeon.common_cards.as_ref().clone();
+        let mut uncommons = self.dungeon.uncommon_cards.as_ref().clone();
         uncommons.reverse();
-        let mut rares = self.dungeon.rare_cards.clone();
+        let mut rares = self.dungeon.rare_cards.as_ref().clone();
         rares.reverse();
         pool.extend(uncommons);
         pool.extend(rares);
@@ -1127,14 +966,8 @@ impl Game {
     }
 
     fn open_empty_cage_grid(&mut self) {
-        let idxs: Vec<usize> = self
-            .player
-            .deck
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| purgeable_card(c) && !c.in_bottle)
-            .map(|(i, _)| i)
-            .collect();
+        let idxs: Vec<usize> =
+            self.player.deck.iter().enumerate().filter(|(_, c)| purgeable_card(c) && !c.in_bottle).map(|(i, _)| i).collect();
         if idxs.is_empty() {
             return;
         }
@@ -1152,11 +985,7 @@ impl Game {
     }
 
     fn open_bottle_grid(&mut self, typ: CardType) {
-        let any = self
-            .player
-            .deck
-            .iter()
-            .any(|c| purgeable_card(c) && c.card_type() == typ);
+        let any = self.player.deck.iter().any(|c| purgeable_card(c) && c.card_type() == typ);
         if !any {
             return;
         }
@@ -1180,16 +1009,8 @@ impl Game {
         let mut out = Vec::new();
         for _ in 0..n {
             // rollRarity always consumes neowRng.randomBoolean(0.33), even when rareOnly.
-            let rolled = if self.neow_rng.random_boolean_chance(0.33) {
-                CardRarity::UNCOMMON
-            } else {
-                CardRarity::COMMON
-            };
-            let rarity = if rare_only {
-                CardRarity::RARE
-            } else {
-                rolled
-            };
+            let rolled = if self.neow_rng.random_boolean_chance(0.33) { CardRarity::UNCOMMON } else { CardRarity::COMMON };
+            let rarity = if rare_only { CardRarity::RARE } else { rolled };
             let pool: &[CardId] = match rarity {
                 CardRarity::RARE => &self.dungeon.rare_cards,
                 CardRarity::UNCOMMON => &self.dungeon.uncommon_cards,
@@ -1217,31 +1038,17 @@ impl Game {
             return seek_draw_grid_indices(&self.player.draw);
         }
         if kind == GridKind::SkillFromDeck {
-            return self
-                .combat
-                .as_ref()
-                .map(|c| c.skill_from_deck.clone())
-                .unwrap_or_default();
+            return self.combat.as_ref().map(|c| c.skill_from_deck.clone()).unwrap_or_default();
         }
         if kind == GridKind::Library {
-            let n = self
-                .event
-                .as_ref()
-                .map(|e| e.library_cards.len())
-                .unwrap_or(0);
+            let n = self.event.as_ref().map(|e| e.library_cards.len()).unwrap_or(0);
             return (0..n).collect();
         }
         if let GridKind::Bottle(typ) = kind {
             // CardGroup.getCardsOfType uses addToBottom (insert at 0), reversing
             // master-deck order. getPurgeableCards then getSkills/Attacks/Powers.
-            let mut idxs: Vec<usize> = self
-                .player
-                .deck
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| purgeable_card(c) && c.card_type() == typ)
-                .map(|(i, _)| i)
-                .collect();
+            let mut idxs: Vec<usize> =
+                self.player.deck.iter().enumerate().filter(|(_, c)| purgeable_card(c) && c.card_type() == typ).map(|(i, _)| i).collect();
             idxs.reverse();
             return idxs;
         }
@@ -1253,11 +1060,9 @@ impl Game {
                 GridKind::Upgrade => c.can_upgrade(),
                 GridKind::Purge => purgeable_card(c) && !c.in_bottle,
                 GridKind::Transform => purgeable_card(c),
-                GridKind::DiscardToHand
-                | GridKind::DrawPileToHand
-                | GridKind::SkillFromDeck
-                | GridKind::Bottle(_)
-                | GridKind::Library => true,
+                GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck | GridKind::Bottle(_) | GridKind::Library => {
+                    true
+                }
             })
             .map(|(i, _)| i)
             .collect()
@@ -1282,12 +1087,8 @@ impl Game {
                 // BetterDrawPileToHandAction(Seek+) opens with numCards=2;
                 // selectedCards stay until the count is met (seed 96 GRID
                 // still open after Choose 3, Melter is the second pick).
-                let combat_multi = matches!(
-                    kind,
-                    GridKind::DiscardToHand
-                        | GridKind::DrawPileToHand
-                        | GridKind::SkillFromDeck
-                ) && needed > 1;
+                let combat_multi =
+                    matches!(kind, GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck) && needed > 1;
                 if !combat_multi
                     && (matches!(
                         kind,
@@ -1360,12 +1161,10 @@ impl Game {
                     self.shop.purge_available = false;
                     self.shop.purge_cost += 25;
                 }
-                let bonfire = self.grid.as_ref().is_some_and(|g| g.return_event)
-                    && self.event.as_ref().is_some_and(|e| e.id == "Bonfire Elementals");
+                let bonfire =
+                    self.grid.as_ref().is_some_and(|g| g.return_event) && self.event.as_ref().is_some_and(|e| e.id == "Bonfire Elementals");
                 let designer_full = self.grid.as_ref().is_some_and(|g| g.return_event)
-                    && self.event.as_ref().is_some_and(|e| {
-                        e.id == "Designer" && e.data.get(6).copied().unwrap_or(0) != 0
-                    });
+                    && self.event.as_ref().is_some_and(|e| e.id == "Designer" && e.data.get(6).copied().unwrap_or(0) != 0);
                 for i in idxs.into_iter().rev() {
                     if i < self.player.deck.len() {
                         if bonfire {
@@ -1378,14 +1177,7 @@ impl Game {
                     // Designer REMOVE_AND_UPGRADE: shuffle remaining upgradables
                     // with miscRng.randomLong and upgrade the first.
                     let seed = self.rng.misc.random_long();
-                    let mut up: Vec<usize> = self
-                        .player
-                        .deck
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, c)| c.can_upgrade())
-                        .map(|(i, _)| i)
-                        .collect();
+                    let mut up: Vec<usize> = self.player.deck.iter().enumerate().filter(|(_, c)| c.can_upgrade()).map(|(i, _)| i).collect();
                     shuffle_java(&mut up, seed);
                     if let Some(&i) = up.first() {
                         if let Some(c) = self.player.deck.get_mut(i) {
@@ -1402,9 +1194,7 @@ impl Game {
                 }
             }
             GridKind::Transform => {
-                let astrolabe = self.grid.as_ref().is_some_and(|g| {
-                    g.needed == 3 && g.return_screen == Some(Screen::BossRelic)
-                });
+                let astrolabe = self.grid.as_ref().is_some_and(|g| g.needed == 3 && g.return_screen == Some(Screen::BossRelic));
                 if astrolabe {
                     // Astrolabe.giveCards: transformCard(c, true, miscRng) and
                     // obtain immediately (seed 133 Gash+/White Noise+/Steam+).
@@ -1431,17 +1221,10 @@ impl Game {
                     // BetterDiscardPileToHandAction iterates selectedCards in
                     // click order and sets each moved card's cost for turn.
                     let room = 10usize.saturating_sub(self.player.hand.len());
-                    let chosen: Vec<Card> = selection_order
-                        .iter()
-                        .take(room)
-                        .filter_map(|&i| self.player.discard.get(i).cloned())
-                        .collect();
-                    let mut remove: Vec<usize> = selection_order
-                        .iter()
-                        .take(room)
-                        .copied()
-                        .filter(|&i| i < self.player.discard.len())
-                        .collect();
+                    let chosen: Vec<Card> =
+                        selection_order.iter().take(room).filter_map(|&i| self.player.discard.get(i).cloned()).collect();
+                    let mut remove: Vec<usize> =
+                        selection_order.iter().take(room).copied().filter(|&i| i < self.player.discard.len()).collect();
                     remove.sort_unstable();
                     for i in remove.into_iter().rev() {
                         self.player.discard.remove(i);
@@ -1469,11 +1252,7 @@ impl Game {
                 }
             }
             GridKind::Library => {
-                let cards = self
-                    .event
-                    .as_ref()
-                    .map(|e| e.library_cards.clone())
-                    .unwrap_or_default();
+                let cards = self.event.as_ref().map(|e| e.library_cards.clone()).unwrap_or_default();
                 for i in idxs {
                     if let Some(card) = cards.get(i).cloned() {
                         self.pending_cards.push(card);
@@ -1489,10 +1268,10 @@ impl Game {
         // commonCardPool (running, addToTop=append) then srcUncommonCardPool
         // and srcRareCardPool. src pools are copied with addToBottom, which
         // reverses each rarity relative to the running pools.
-        let mut pool: Vec<CardId> = self.dungeon.common_cards.clone();
-        let mut uncommons = self.dungeon.uncommon_cards.clone();
+        let mut pool: Vec<CardId> = self.dungeon.common_cards.as_ref().clone();
+        let mut uncommons = self.dungeon.uncommon_cards.as_ref().clone();
         uncommons.reverse();
-        let mut rares = self.dungeon.rare_cards.clone();
+        let mut rares = self.dungeon.rare_cards.as_ref().clone();
         rares.reverse();
         pool.extend(uncommons);
         pool.extend(rares);
@@ -1534,12 +1313,7 @@ impl Game {
         let back_to_combat = self
             .grid
             .as_ref()
-            .is_some_and(|g| {
-                matches!(
-                    g.kind,
-                    GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck
-                )
-            });
+            .is_some_and(|g| matches!(g.kind, GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck));
         let back_to_event = self.grid.as_ref().is_some_and(|g| g.return_event);
         let back_to_shop = self.grid.as_ref().is_some_and(|g| g.return_shop);
         let return_screen = self.grid.as_ref().and_then(|g| g.return_screen);
@@ -1649,21 +1423,14 @@ impl Game {
             return;
         }
         let (mx, my, room) = if let (Some(x), Some(y)) = (*x, *y) {
-            choices
-                .into_iter()
-                .find(|c| c.0 == x && c.1 == y)
-                .unwrap_or_else(|| {
-                    let room = if y >= 0 && (y as usize) < self.dungeon.map.height() && x >= 0 {
-                        self.dungeon
-                            .map
-                            .node(x, y)
-                            .room
-                            .unwrap_or(RoomType::Monster)
-                    } else {
-                        RoomType::Monster
-                    };
-                    (x, y, room)
-                })
+            choices.into_iter().find(|c| c.0 == x && c.1 == y).unwrap_or_else(|| {
+                let room = if y >= 0 && (y as usize) < self.dungeon.map.height() && x >= 0 {
+                    self.dungeon.map.node(x, y).room.unwrap_or(RoomType::Monster)
+                } else {
+                    RoomType::Monster
+                };
+                (x, y, room)
+            })
         } else {
             match choices.get(*index).copied() {
                 Some(choice) => choice,
@@ -1710,7 +1477,7 @@ impl Game {
         self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
         self.maw_bank_on_enter_room();
         if y >= 0 && y < self.dungeon.map.height() as i32 && x >= 0 {
-            self.dungeon.map.node_mut(x, y).taken = true;
+            std::sync::Arc::make_mut(&mut self.dungeon.map).node_mut(x, y).taken = true;
         }
         match room {
             RoomType::Monster | RoomType::Elite | RoomType::Boss => self.start_combat_in_current_room(),
@@ -1720,12 +1487,7 @@ impl Game {
                 self.rest_selected = false;
                 // RestRoom.onPlayerEntry: every relic.onEnterRestRoom.
                 // AncientTeaSet sets counter = -2 (armed for the next fight).
-                if let Some(r) = self
-                    .player
-                    .relics
-                    .iter_mut()
-                    .find(|r| r.id == RelicId::Ancient_Tea_Set)
-                {
+                if let Some(r) = self.player.relics.iter_mut().find(|r| r.id == RelicId::Ancient_Tea_Set) {
                     r.counter = -2;
                 }
                 // EternalFeather.onEnterRoom RestRoom: heal (masterDeck/5)*3.
@@ -1762,19 +1524,10 @@ impl Game {
 
     fn step_combat(&mut self, action: &Action) {
         match action {
-            Action::Play {
-                hand_index,
-                target_index,
-            } => {
+            Action::Play { hand_index, target_index } => {
                 if let Some(combat) = self.combat.as_mut() {
-                    let select = combat::play_card(
-                        &mut self.player,
-                        combat,
-                        *hand_index,
-                        *target_index,
-                        &mut self.rng,
-                        Some(&self.dungeon),
-                    );
+                    let select =
+                        combat::play_card(&mut self.player, combat, *hand_index, *target_index, &mut self.rng, Some(&self.dungeon));
                     // Player death wins a simultaneous-death race. A card's
                     // queued hits can finish the enemy after reactive damage
                     // has already killed the player (seed 760 Rip and Tear
@@ -1814,11 +1567,7 @@ impl Game {
                     }
                 }
             }
-            Action::Potion {
-                action,
-                slot,
-                target_index,
-            } => self.use_potion(*action, *slot, *target_index),
+            Action::Potion { action, slot, target_index } => self.use_potion(*action, *slot, *target_index),
             _ => {}
         }
     }
@@ -1835,26 +1584,16 @@ impl Game {
             match id {
                 PotionId::Strength => {
                     if self.combat.is_some() {
-                        let potency = if self.player.has_relic(RelicId::SacredBark) {
-                            4
-                        } else {
-                            2
-                        };
-                        self.player
-                            .add_power(crate::ids::PowerId::Strength, potency);
+                        let potency = if self.player.has_relic(RelicId::SacredBark) { 4 } else { 2 };
+                        self.player.add_power(crate::ids::PowerId::Strength, potency);
                     } else {
                         return;
                     }
                 }
                 PotionId::Dexterity => {
                     if self.combat.is_some() {
-                        let potency = if self.player.has_relic(RelicId::SacredBark) {
-                            4
-                        } else {
-                            2
-                        };
-                        self.player
-                            .add_power(crate::ids::PowerId::Dexterity, potency);
+                        let potency = if self.player.has_relic(RelicId::SacredBark) { 4 } else { 2 };
+                        self.player.add_power(crate::ids::PowerId::Dexterity, potency);
                     } else {
                         return;
                     }
@@ -1866,65 +1605,36 @@ impl Game {
                     if self.combat.is_none() {
                         return;
                     }
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        10
-                    } else {
-                        5
-                    };
-                    self.player
-                        .add_power(crate::ids::PowerId::Dexterity, potency);
-                    self.player
-                        .add_power(crate::ids::PowerId::LoseDexterity, potency);
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 10 } else { 5 };
+                    self.player.add_power(crate::ids::PowerId::Dexterity, potency);
+                    self.player.add_power(crate::ids::PowerId::LoseDexterity, potency);
                 }
                 PotionId::Steroid => {
                     // Flex Potion: Strength + LoseStrength at getPotency().
                     if self.combat.is_none() {
                         return;
                     }
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        10
-                    } else {
-                        5
-                    };
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 10 } else { 5 };
                     self.player.add_power(crate::ids::PowerId::Strength, potency);
-                    self.player
-                        .add_power(crate::ids::PowerId::LoseStrength, potency);
+                    self.player.add_power(crate::ids::PowerId::LoseStrength, potency);
                 }
                 PotionId::Regen => {
                     // AbstractPotion.getPotency doubles the base 5 with
                     // Sacred Bark. Regen heals at end of turn, then decrements.
                     if self.combat.is_some() {
-                        let potency = if self.player.has_relic(RelicId::SacredBark) {
-                            10
-                        } else {
-                            5
-                        };
+                        let potency = if self.player.has_relic(RelicId::SacredBark) { 10 } else { 5 };
                         self.player.add_power(crate::ids::PowerId::Regen, potency);
                     }
                 }
                 PotionId::Swift => {
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        6
-                    } else {
-                        3
-                    };
-                    let statuses =
-                        combat::draw_cards_rng(&mut self.player, potency, Some(&mut self.rng));
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 6 } else { 3 };
+                    let statuses = combat::draw_cards_rng(&mut self.player, potency, Some(&mut self.rng));
                     if let Some(combat) = self.combat.as_mut() {
-                        combat::apply_fire_breathing(
-                            &mut self.player,
-                            &mut combat.monsters,
-                            &mut self.rng,
-                            statuses,
-                        );
+                        combat::apply_fire_breathing(&mut self.player, &mut combat.monsters, &mut self.rng, statuses);
                     }
                 }
                 PotionId::Block => {
-                    self.player.block += if self.player.has_relic(RelicId::SacredBark) {
-                        24
-                    } else {
-                        12
-                    };
+                    self.player.block += if self.player.has_relic(RelicId::SacredBark) { 24 } else { 12 };
                 }
                 PotionId::Ancient => {
                     // AncientPotion.use: ArtifactPower(getPotency()=1) in combat only.
@@ -1937,18 +1647,8 @@ impl Game {
                     // isSourceMonster=false). Sacred Bark doubles base 3.
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         if let Some(m) = combat.monsters.get_mut(t) {
-                            let potency = if self.player.has_relic(RelicId::SacredBark) {
-                                6
-                            } else {
-                                3
-                            };
-                            combat::apply_player_power_to_monster(
-                                &self.player,
-                                m,
-                                &mut self.rng,
-                                crate::ids::PowerId::Vulnerable,
-                                potency,
-                            );
+                            let potency = if self.player.has_relic(RelicId::SacredBark) { 6 } else { 3 };
+                            combat::apply_player_power_to_monster(&self.player, m, &mut self.rng, crate::ids::PowerId::Vulnerable, potency);
                         }
                     }
                 }
@@ -1956,13 +1656,7 @@ impl Game {
                     // WeakenPotion: WeakPower(target, 3, isSourceMonster=false).
                     if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
                         if let Some(m) = combat.monsters.get_mut(t) {
-                            combat::apply_player_power_to_monster(
-                                &self.player,
-                                m,
-                                &mut self.rng,
-                                crate::ids::PowerId::Weak,
-                                3,
-                            );
+                            combat::apply_player_power_to_monster(&self.player, m, &mut self.rng, crate::ids::PowerId::Weak, 3);
                         }
                     }
                 }
@@ -1971,18 +1665,9 @@ impl Game {
                     // AbstractPotion.getPotency doubles its base 1 with Sacred
                     // Bark. Player ritual ticks atEndOfTurn with no skipFirst.
                     if self.combat.is_some() {
-                        let potency = if self.player.has_relic(RelicId::SacredBark) {
-                            2
-                        } else {
-                            1
-                        };
+                        let potency = if self.player.has_relic(RelicId::SacredBark) { 2 } else { 1 };
                         self.player.add_power(crate::ids::PowerId::Ritual, potency);
-                        if let Some(p) = self
-                            .player
-                            .powers
-                            .iter_mut()
-                            .find(|p| p.id == crate::ids::PowerId::Ritual)
-                        {
+                        if let Some(p) = self.player.powers.iter_mut().find(|p| p.id == crate::ids::PowerId::Ritual) {
                             p.skip_first = false;
                         }
                     }
@@ -1993,49 +1678,27 @@ impl Game {
                         if let Some(m) = combat.monsters.get_mut(t) {
                             // AbstractPotion.getPotency doubles FirePotion's
                             // base 20 while Sacred Bark is held.
-                            let damage = if self.player.has_relic(RelicId::SacredBark) {
-                                40
-                            } else {
-                                20
-                            };
+                            let damage = if self.player.has_relic(RelicId::SacredBark) { 40 } else { 20 };
                             combat::deal_thorns(m, &mut self.rng, damage);
                         }
                         // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
                         // addToBot Draw+Energy if combat is not over (seed 773).
-                        combat::gremlin_horn_on_kills(
-                            &mut self.player,
-                            combat,
-                            &mut self.rng,
-                            dead_before,
-                        );
+                        combat::gremlin_horn_on_kills(&mut self.player, combat, &mut self.rng, dead_before);
                     }
                 }
                 PotionId::Explosive => {
                     // ExplosivePotion.use: DamageAllEnemiesAction using getPotency().
-                    let damage = if self.player.has_relic(RelicId::SacredBark) {
-                        20
-                    } else {
-                        10
-                    };
+                    let damage = if self.player.has_relic(RelicId::SacredBark) { 20 } else { 10 };
                     if let Some(combat) = self.combat.as_mut() {
                         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
                         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
                             combat::deal_thorns(m, &mut self.rng, damage);
                         }
-                        combat::gremlin_horn_on_kills(
-                            &mut self.player,
-                            combat,
-                            &mut self.rng,
-                            dead_before,
-                        );
+                        combat::gremlin_horn_on_kills(&mut self.player, combat, &mut self.rng, dead_before);
                     }
                 }
                 PotionId::LiquidBronze => {
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        6
-                    } else {
-                        3
-                    };
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 6 } else { 3 };
                     self.player.add_power(crate::ids::PowerId::Thorns, potency);
                 }
                 PotionId::Duplication => {
@@ -2043,11 +1706,7 @@ impl Game {
                 }
                 PotionId::Energy => {
                     // AbstractPotion.getPotency doubles Energy Potion's base 2.
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        4
-                    } else {
-                        2
-                    };
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 4 } else { 2 };
                     self.player.energy += potency;
                 }
                 PotionId::Blood => {
@@ -2056,20 +1715,12 @@ impl Game {
                     crate::combat::red_skull_on_hp_change(&mut self.player);
                 }
                 PotionId::FruitJuice => {
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        10
-                    } else {
-                        5
-                    };
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 10 } else { 5 };
                     self.player.max_hp += potency;
                     self.player.hp += potency;
                 }
                 PotionId::EssenceOfSteel => {
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        8
-                    } else {
-                        4
-                    };
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 8 } else { 4 };
                     self.player.add_power(crate::ids::PowerId::PlatedArmor, potency);
                 }
                 PotionId::BlessingOfTheForge => {
@@ -2094,20 +1745,12 @@ impl Game {
                     if self.combat.is_none() {
                         return;
                     }
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        4
-                    } else {
-                        2
-                    };
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 4 } else { 2 };
                     self.player.add_power(crate::ids::PowerId::Focus, potency);
                 }
                 PotionId::PotionOfCapacity => {
                     // PotionOfCapacity.use -> IncreaseMaxOrbAction(potency).
-                    let potency = if self.player.has_relic(RelicId::SacredBark) {
-                        4
-                    } else {
-                        2
-                    };
+                    let potency = if self.player.has_relic(RelicId::SacredBark) { 4 } else { 2 };
                     combat::increase_max_orb_slots(&mut self.player, potency);
                 }
                 PotionId::EssenceOfDarkness => {
@@ -2116,12 +1759,7 @@ impl Game {
                     if let Some(combat) = self.combat.as_mut() {
                         let n = self.player.max_orbs;
                         for _ in 0..n {
-                            combat::channel_orb(
-                                &mut self.player,
-                                combat,
-                                &mut self.rng,
-                                crate::creature::OrbKind::Dark,
-                            );
+                            combat::channel_orb(&mut self.player, combat, &mut self.rng, crate::creature::OrbKind::Dark);
                         }
                     }
                 }
@@ -2134,34 +1772,18 @@ impl Game {
                     if let Some(combat) = self.combat.as_mut() {
                         let mut targets = Vec::new();
                         for _ in 0..3 {
-                            targets.push(combat::random_alive_monster(
-                                combat,
-                                &mut self.rng.card_random,
-                            ));
+                            targets.push(combat::random_alive_monster(combat, &mut self.rng.card_random));
                         }
-                        combat::play_top_cards(
-                            &mut self.player,
-                            combat,
-                            &targets,
-                            false,
-                            &mut self.rng,
-                            Some(&self.dungeon),
-                        );
+                        combat::play_top_cards(&mut self.player, combat, &targets, false, &mut self.rng, Some(&self.dungeon));
                     }
                 }
                 PotionId::SneckoOil => {
                     // SneckoOil: DrawCardAction(5) then RandomizeHandCostAction.
                     // cardRandomRng.random(3) for every card with cost >= 0.
                     if self.combat.is_some() {
-                        let statuses =
-                            combat::draw_cards_rng(&mut self.player, 5, Some(&mut self.rng));
+                        let statuses = combat::draw_cards_rng(&mut self.player, 5, Some(&mut self.rng));
                         if let Some(combat) = self.combat.as_mut() {
-                            combat::apply_fire_breathing(
-                                &mut self.player,
-                                &mut combat.monsters,
-                                &mut self.rng,
-                                statuses,
-                            );
+                            combat::apply_fire_breathing(&mut self.player, &mut combat.monsters, &mut self.rng, statuses);
                         }
                         for c in self.player.hand.iter_mut() {
                             if c.cost >= 0 {
@@ -2179,37 +1801,25 @@ impl Game {
                 }
                 PotionId::Attack => {
                     self.begin_potion_discovery(Some(crate::ids::CardType::ATTACK), false);
-                    self.player.potions[slot] = PotionInstance {
-                        id: PotionId::Slot,
-                        slot: slot as i32,
-                    };
+                    self.player.potions[slot] = PotionInstance { id: PotionId::Slot, slot: slot as i32 };
                     self.ornithopter_after_potion(true);
                     return;
                 }
                 PotionId::Skill => {
                     self.begin_potion_discovery(Some(crate::ids::CardType::SKILL), false);
-                    self.player.potions[slot] = PotionInstance {
-                        id: PotionId::Slot,
-                        slot: slot as i32,
-                    };
+                    self.player.potions[slot] = PotionInstance { id: PotionId::Slot, slot: slot as i32 };
                     self.ornithopter_after_potion(true);
                     return;
                 }
                 PotionId::Power => {
                     self.begin_potion_discovery(Some(crate::ids::CardType::POWER), false);
-                    self.player.potions[slot] = PotionInstance {
-                        id: PotionId::Slot,
-                        slot: slot as i32,
-                    };
+                    self.player.potions[slot] = PotionInstance { id: PotionId::Slot, slot: slot as i32 };
                     self.ornithopter_after_potion(true);
                     return;
                 }
                 PotionId::Colorless => {
                     self.begin_potion_discovery(None, true);
-                    self.player.potions[slot] = PotionInstance {
-                        id: PotionId::Slot,
-                        slot: slot as i32,
-                    };
+                    self.player.potions[slot] = PotionInstance { id: PotionId::Slot, slot: slot as i32 };
                     self.ornithopter_after_potion(true);
                     return;
                 }
@@ -2220,16 +1830,9 @@ impl Game {
                     // 861954 used the brew after Wheel of Change; limited=true
                     // burned extra potionRng and the next hallway dropped Regen.
                     let limited = self.combat.is_some();
-                    self.player.potions[slot] = PotionInstance {
-                        id: PotionId::Slot,
-                        slot: slot as i32,
-                    };
+                    self.player.potions[slot] = PotionInstance { id: PotionId::Slot, slot: slot as i32 };
                     for _ in 0..self.player.potion_slots {
-                        let p = crate::rewards::return_random_potion(
-                            &mut self.rng,
-                            self.character,
-                            limited,
-                        );
+                        let p = crate::rewards::return_random_potion(&mut self.rng, self.character, limited);
                         let _ = self.gain_potion(p);
                     }
                     self.on_use_potion_relics();
@@ -2249,24 +1852,21 @@ impl Game {
                 combat::flush_guardian_defensive_block(combat);
             }
         }
-        self.player.potions[slot] = PotionInstance {
-            id: PotionId::Slot,
-            slot: slot as i32,
+        self.player.potions[slot] = PotionInstance { id: PotionId::Slot, slot: slot as i32 };
+        let (all_dead, disc_to_hand, draw_to_hand, discovery, put_on_deck, exhaust_sel, skill_deck) = if let Some(c) = self.combat.as_ref()
+        {
+            (
+                c.all_dead(),
+                c.need_discard_to_hand,
+                c.need_draw_to_hand,
+                c.need_discovery,
+                c.need_put_on_deck,
+                c.need_exhaust_select,
+                c.need_skill_from_deck,
+            )
+        } else {
+            (false, false, false, false, false, false, false)
         };
-        let (all_dead, disc_to_hand, draw_to_hand, discovery, put_on_deck, exhaust_sel, skill_deck) =
-            if let Some(c) = self.combat.as_ref() {
-                (
-                    c.all_dead(),
-                    c.need_discard_to_hand,
-                    c.need_draw_to_hand,
-                    c.need_discovery,
-                    c.need_put_on_deck,
-                    c.need_exhaust_select,
-                    c.need_skill_from_deck,
-                )
-            } else {
-                (false, false, false, false, false, false, false)
-            };
         if all_dead {
             self.finish_combat();
         } else if disc_to_hand {
@@ -2289,30 +1889,13 @@ impl Game {
     fn finish_combat(&mut self) {
         // Looter.die / Mugger.die call addStolenGoldToRewards; EscapeAction
         // only sets room.mugged and keeps the gold.
-        let stolen: i32 = self
-            .combat
-            .as_ref()
-            .map(|c| {
-                c.monsters
-                    .iter()
-                    .filter(|m| !m.escaped)
-                    .map(|m| m.stolen_gold)
-                    .sum()
-            })
-            .unwrap_or(0);
-        if self
-            .combat
-            .as_ref()
-            .is_some_and(|combat| combat.slavers_collar_active)
-        {
+        let stolen: i32 = self.combat.as_ref().map(|c| c.monsters.iter().filter(|m| !m.escaped).map(|m| m.stolen_gold).sum()).unwrap_or(0);
+        if self.combat.as_ref().is_some_and(|combat| combat.slavers_collar_active) {
             self.player.energy_master -= 1;
         }
         after_combat_relics(&mut self.player);
-        let colosseum_first_fight = self.current_room == RoomType::Event
-            && self
-                .event
-                .as_ref()
-                .is_some_and(|event| event.id == "Colosseum" && event.screen == 2);
+        let colosseum_first_fight =
+            self.current_room == RoomType::Event && self.event.as_ref().is_some_and(|event| event.id == "Colosseum" && event.screen == 2);
         if colosseum_first_fight {
             // Colosseum sets rewardAllowed=false for the Slavers. reopen()
             // returns to POST_COMBAT instead of opening CombatReward. The
@@ -2352,9 +1935,7 @@ impl Game {
         let event_room = self.current_room == RoomType::Event;
         // MonsterGroup.haveMonstersEscaped: true only if every monster
         // escaped. Hallway gold and potion then skip (Looter/Mugger run).
-        let all_escaped = self.combat.as_ref().is_some_and(|c| {
-            !c.monsters.is_empty() && c.monsters.iter().all(|m| m.escaped)
-        });
+        let all_escaped = self.combat.as_ref().is_some_and(|c| !c.monsters.is_empty() && c.monsters.iter().all(|m| m.escaped));
         // AbstractRoom.endBattle gold is `instanceof MonsterRoomBoss/Elite/MonsterRoom`.
         // EventRoom keeps pre-seeded rewards (Mushrooms gold+Odd Mushroom, MindBloom, …)
         // and does not roll hallway gold.
@@ -2409,9 +1990,7 @@ impl Game {
         // MonsterRoomBoss in TheBeyond / TheEnding (unless endless).
         // MonsterRoomBoss instanceof MonsterRoom, so Act 1/2 bosses still
         // use chance 40+blizzard. EventRoom uses the same 40+blizzard roll.
-        let skip_potion = !event_room
-            && boss
-            && matches!(self.dungeon.act, crate::ids::Act::Beyond | crate::ids::Act::Ending);
+        let skip_potion = !event_room && boss && matches!(self.dungeon.act, crate::ids::Act::Beyond | crate::ids::Act::Ending);
         // Hallway + all escaped: addPotionToRewards still rolls with chance 0.
         let escaped_hallway = !event_room && !boss && !elite && all_escaped;
         if let Some(p) = crate::rewards::roll_potion(
@@ -2426,12 +2005,7 @@ impl Game {
         ) {
             self.rewards.push(Reward::new(RewardKind::Potion(p)));
         }
-        self.rewards.push(Reward {
-            kind: RewardKind::Card,
-            taken: false,
-            relic_link: None,
-            card_options: None,
-        });
+        self.rewards.push(Reward { kind: RewardKind::Card, taken: false, relic_link: None, card_options: None });
         self.generate_card_reward();
         self.combat = None;
         self.screen = Screen::CombatReward;
@@ -2446,12 +2020,7 @@ impl Game {
             *existing += gold;
             return;
         }
-        self.rewards.push(Reward {
-            kind: RewardKind::Gold(gold),
-            taken: false,
-            relic_link: None,
-            card_options: None,
-        });
+        self.rewards.push(Reward { kind: RewardKind::Gold(gold), taken: false, relic_link: None, card_options: None });
     }
 
     /// AbstractRoom.addStolenGoldToRewards: merge into an existing STOLEN_GOLD item.
@@ -2463,12 +2032,7 @@ impl Game {
             *existing += gold;
             return;
         }
-        self.rewards.push(Reward {
-            kind: RewardKind::StolenGold(gold),
-            taken: false,
-            relic_link: None,
-            card_options: None,
-        });
+        self.rewards.push(Reward { kind: RewardKind::StolenGold(gold), taken: false, relic_link: None, card_options: None });
     }
 
     fn add_relic_to_rewards(&mut self, id: RelicId) {
@@ -2494,11 +2058,7 @@ impl Game {
                             self.player.relics[i].counter = -2;
                             self.player.relics[i].used_up = true;
                         }
-                        let tier = if self.rng.relic.random_boolean_chance(0.75) {
-                            RelicTier::COMMON
-                        } else {
-                            RelicTier::UNCOMMON
-                        };
+                        let tier = if self.rng.relic.random_boolean_chance(0.75) { RelicTier::COMMON } else { RelicTier::UNCOMMON };
                         if let Some(id) = self.take_relic(tier) {
                             self.add_relic_to_rewards(id);
                         }
@@ -2542,11 +2102,7 @@ impl Game {
     }
 
     fn remove_one_relic_from_rewards(&mut self) {
-        let Some(i) = self
-            .rewards
-            .iter()
-            .position(|r| matches!(r.kind, RewardKind::Relic(_)))
-        else {
+        let Some(i) = self.rewards.iter().position(|r| matches!(r.kind, RewardKind::Relic(_))) else {
             return;
         };
         let remove_next = self.rewards[i].relic_link == Some(i + 1);
@@ -2690,7 +2246,9 @@ impl Game {
                         });
                         if let Some(p) = potion {
                             if self.gain_potion(p) {
-                                if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::Potion(x) if x == p && !r.taken)) {
+                                if let Some(r) =
+                                    self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::Potion(x) if x == p && !r.taken))
+                                {
                                     r.taken = true;
                                 }
                             }
@@ -2698,23 +2256,13 @@ impl Game {
                         return;
                     }
                     if label == "CARD" {
-                        if let Some(real) = self
-                            .rewards
-                            .iter()
-                            .position(|r| matches!(r.kind, RewardKind::Card) && !r.taken)
-                        {
+                        if let Some(real) = self.rewards.iter().position(|r| matches!(r.kind, RewardKind::Card) && !r.taken) {
                             self.open_reward_card_at(real);
                         }
                         return;
                     }
                 }
-                let untaken: Vec<usize> = self
-                    .rewards
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, r)| !r.taken)
-                    .map(|(i, _)| i)
-                    .collect();
+                let untaken: Vec<usize> = self.rewards.iter().enumerate().filter(|(_, r)| !r.taken).map(|(i, _)| i).collect();
                 if let Some(&real) = untaken.get(*index) {
                     self.claim_reward_at(real);
                 }
@@ -2797,11 +2345,7 @@ impl Game {
     }
 
     fn open_reward_card_at(&mut self, real: usize) {
-        if let Some(cards) = self
-            .rewards
-            .get(real)
-            .and_then(|reward| reward.card_options.clone())
-        {
+        if let Some(cards) = self.rewards.get(real).and_then(|reward| reward.card_options.clone()) {
             self.card_reward = cards;
         }
         self.active_card_reward = Some(real);
@@ -2872,13 +2416,7 @@ impl Game {
                                 self.player.discard.push(card.clone());
                             }
                         }
-                        crate::rewards::burn_discovery_rng(
-                            &self.dungeon,
-                            &mut self.rng,
-                            self.discovery_typ,
-                            self.discovery_colorless,
-                            15,
-                        );
+                        crate::rewards::burn_discovery_rng(&self.dungeon, &mut self.rng, self.discovery_typ, self.discovery_colorless, 15);
                     } else {
                         crate::rewards::preview_obtain(&self.player, &mut card);
                         self.pending_cards.push(card);
@@ -2965,22 +2503,13 @@ impl Game {
                         let base = name.trim_end_matches('+');
                         if let Some(card) = self.player.deck.iter_mut().find(|c| {
                             let id = c.sts_id();
-                            c.can_upgrade()
-                                && (id == base
-                                    || id.replace('_', " ") == base
-                                    || c.def().sts_id == base)
+                            c.can_upgrade() && (id == base || id.replace('_', " ") == base || c.def().sts_id == base)
                         }) {
                             card.upgrade();
                         }
                     } else {
-                        let upg: Vec<usize> = self
-                            .player
-                            .deck
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, c)| c.can_upgrade())
-                            .map(|(i, _)| i)
-                            .collect();
+                        let upg: Vec<usize> =
+                            self.player.deck.iter().enumerate().filter(|(_, c)| c.can_upgrade()).map(|(i, _)| i).collect();
                         if let Some(&i) = upg.get(*index) {
                             self.player.deck[i].upgrade();
                         }
@@ -3048,19 +2577,9 @@ impl Game {
         // Rebuilding the shop from stock was resetting it to 75, so a second
         // shop still treated purge as 75g and shifted choose indices
         // (144185: index 4 bought Darkness instead of Defragment).
-        let purge_cost = if self.shop.purge_cost > 0 {
-            self.shop.purge_cost
-        } else {
-            75
-        };
-        self.shop = ShopState {
-            open: false,
-            cards: stock.cards,
-            relics: stock.relics,
-            potions: stock.potions,
-            purge_cost,
-            purge_available: true,
-        };
+        let purge_cost = if self.shop.purge_cost > 0 { self.shop.purge_cost } else { 75 };
+        self.shop =
+            ShopState { open: false, cards: stock.cards, relics: stock.relics, potions: stock.potions, purge_cost, purge_available: true };
         self.screen = Screen::Shop;
     }
 
@@ -3092,11 +2611,7 @@ impl Game {
 
     fn maw_bank_on_enter_room(&mut self) {
         // MawBank.onEnterRoom: +12 gold until the relic is used up by spending.
-        let active = self
-            .player
-            .relics
-            .iter()
-            .any(|r| r.id == RelicId::MawBank && !r.used_up);
+        let active = self.player.relics.iter().any(|r| r.id == RelicId::MawBank && !r.used_up);
         if active && !self.player.has_relic(RelicId::Ectoplasm) {
             self.player.gold += 12;
         }
@@ -3106,9 +2621,7 @@ impl Game {
         if !self.shop.open {
             match action {
                 Action::Proceed | Action::Skip => self.open_map(),
-                Action::Choose { label, .. }
-                    if label.as_deref() == Some("shop") || label.is_none() =>
-                {
+                Action::Choose { label, .. } if label.as_deref() == Some("shop") || label.is_none() => {
                     self.shop.open = true;
                 }
                 _ => {}
@@ -3148,12 +2661,7 @@ impl Game {
             return true;
         }
         if let Some(name) = label {
-            if let Some(i) = self
-                .shop
-                .cards
-                .iter()
-                .position(|o| !o.sold && shop_card_matches(&o.item, name))
-            {
+            if let Some(i) = self.shop.cards.iter().position(|o| !o.sold && shop_card_matches(&o.item, name)) {
                 let price = self.shop.cards[i].price;
                 if self.player.gold >= price {
                     self.spend_shop_gold(price);
@@ -3163,12 +2671,7 @@ impl Game {
                 }
                 return true;
             }
-            if let Some(i) = self
-                .shop
-                .relics
-                .iter()
-                .position(|o| !o.sold && shop_relic_matches(o.item, name))
-            {
+            if let Some(i) = self.shop.relics.iter().position(|o| !o.sold && shop_relic_matches(o.item, name)) {
                 let price = self.shop.relics[i].price;
                 if self.player.gold >= price {
                     self.spend_shop_gold(price);
@@ -3181,12 +2684,7 @@ impl Game {
                 }
                 return true;
             }
-            if let Some(i) = self
-                .shop
-                .potions
-                .iter()
-                .position(|o| !o.sold && shop_potion_matches(o.item, name))
-            {
+            if let Some(i) = self.shop.potions.iter().position(|o| !o.sold && shop_potion_matches(o.item, name)) {
                 let price = self.shop.potions[i].price;
                 if self.player.gold >= price && !self.player.has_relic(RelicId::Sozu) {
                     self.spend_shop_gold(price);
@@ -3259,10 +2757,7 @@ impl Game {
             }
             ShopKind::Potion(i) => {
                 if let Some(offer) = self.shop.potions.get_mut(i) {
-                    if !offer.sold
-                        && self.player.gold >= offer.price
-                        && !self.player.has_relic(RelicId::Sozu)
-                    {
+                    if !offer.sold && self.player.gold >= offer.price && !self.player.has_relic(RelicId::Sozu) {
                         let price = offer.price;
                         let id = offer.item;
                         offer.sold = true;
@@ -3287,8 +2782,7 @@ impl Game {
         if self.player.has_relic(RelicId::Smiling_Mask) {
             self.shop.purge_cost = 50;
         } else if affect_purge {
-            self.shop.purge_cost =
-                crate::rewards::gdx_round(self.shop.purge_cost as f32 * multiplier);
+            self.shop.purge_cost = crate::rewards::gdx_round(self.shop.purge_cost as f32 * multiplier);
         }
     }
 
@@ -3352,12 +2846,7 @@ impl Game {
         if let Action::Choose { index, label, .. } = action {
             let picked = label
                 .as_ref()
-                .and_then(|name| {
-                    self.boss_relics
-                        .iter()
-                        .copied()
-                        .find(|id| id.sts_id() == name.as_str())
-                })
+                .and_then(|name| self.boss_relics.iter().copied().find(|id| id.sts_id() == name.as_str()))
                 .or_else(|| self.boss_relics.get(*index).copied());
             if let Some(id) = picked {
                 self.gain_relic(id);
@@ -3416,14 +2905,7 @@ impl Game {
     }
 
     fn start_combat_encounter(&mut self, encounter: EncounterId) {
-        self.combat = Some(Combat::start(
-            encounter,
-            &mut self.player,
-            &mut self.rng,
-            self.dungeon.floor,
-            self.seed,
-            self.ascension,
-        ));
+        self.combat = Some(Combat::start(encounter, &mut self.player, &mut self.rng, self.dungeon.floor, self.seed, self.ascension));
         self.screen = Screen::Combat;
         if self.player.has_relic(RelicId::Toolbox) {
             self.begin_toolbox_reward();
@@ -3440,14 +2922,7 @@ impl Game {
         } else {
             self.dungeon.next_monster().unwrap_or(EncounterId::Cultist)
         };
-        self.combat = Some(Combat::start(
-            encounter,
-            &mut self.player,
-            &mut self.rng,
-            self.dungeon.floor,
-            self.seed,
-            self.ascension,
-        ));
+        self.combat = Some(Combat::start(encounter, &mut self.player, &mut self.rng, self.dungeon.floor, self.seed, self.ascension));
         self.screen = Screen::Combat;
         if self.current_room == RoomType::Elite {
             self.apply_emerald_elite_buff();
@@ -3539,20 +3014,11 @@ impl Game {
         }
         let last = self.rewards.len() - 1;
         self.rewards[last].relic_link = Some(last + 1);
-        self.rewards.push(Reward {
-            kind: RewardKind::SapphireKey,
-            taken: false,
-            relic_link: Some(last),
-            card_options: None,
-        });
+        self.rewards.push(Reward { kind: RewardKind::SapphireKey, taken: false, relic_link: Some(last), card_options: None });
     }
 
     fn claim_emerald_key(&mut self) {
-        if let Some(r) = self
-            .rewards
-            .iter_mut()
-            .find(|r| matches!(r.kind, RewardKind::EmeraldKey) && !r.taken)
-        {
+        if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::EmeraldKey) && !r.taken) {
             r.taken = true;
             self.has_emerald_key = true;
         }
@@ -3562,11 +3028,7 @@ impl Game {
         if self.player.discard.is_empty() {
             return;
         }
-        let needed = if self.player.has_relic(RelicId::SacredBark) {
-            2
-        } else {
-            1
-        };
+        let needed = if self.player.has_relic(RelicId::SacredBark) { 2 } else { 1 };
         if self.player.discard.len() <= needed {
             while !self.player.discard.is_empty() && self.player.hand.len() < 10 {
                 let mut c = self.player.discard.remove(0);
@@ -3623,11 +3085,7 @@ impl Game {
         }
         let monster_size = (self.event_monster_chance * 100.0) as i32;
         // ShopRoom still current when Java rolls, so a shop does not convert into another shop.
-        let shop_size = if prev_room == RoomType::Shop {
-            0
-        } else {
-            (self.event_shop_chance * 100.0) as i32
-        };
+        let shop_size = if prev_room == RoomType::Shop { 0 } else { (self.event_shop_chance * 100.0) as i32 };
         let treasure_size = (self.event_treasure_chance * 100.0) as i32;
         let idx = (roll * 100.0) as i32;
         let mut fill = 0;
@@ -3697,17 +3155,12 @@ impl Game {
         let dungeon_id = self.dungeon.id;
         let cursed = self.player.deck.iter().any(|c| {
             c.card_type() == crate::ids::CardType::CURSE
-                && !matches!(
-                    c.id,
-                    CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane
-                )
+                && !matches!(c.id, CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane)
         });
-        for e in &self.dungeon.special_one_time {
+        for e in self.dungeon.special_one_time.iter() {
             let include = match e.as_str() {
                 "Fountain of Cleansing" => cursed,
-                "Designer" => {
-                    matches!(dungeon_id, "TheCity" | "TheBeyond") && self.player.gold >= 75
-                }
+                "Designer" => matches!(dungeon_id, "TheCity" | "TheBeyond") && self.player.gold >= 75,
                 "Duplicator" => matches!(dungeon_id, "TheCity" | "TheBeyond"),
                 "FaceTrader" => matches!(dungeon_id, "TheCity" | "Exordium"),
                 "Knowing Skull" => dungeon_id == "TheCity" && self.player.hp > 12,
@@ -3732,7 +3185,7 @@ impl Game {
 
     fn pick_normal_event(&mut self, rng: &mut StsRandom) -> String {
         let mut tmp = Vec::new();
-        for e in &self.dungeon.event_list {
+        for e in self.dungeon.event_list.iter() {
             match e.as_str() {
                 "Dead Adventurer" | "Mushrooms" => {
                     if self.dungeon.floor > 6 {
@@ -3781,34 +3234,20 @@ impl Game {
                 // ScrapOoze: dmg=3, A15+ dmg=5; relicObtainChance=25.
                 let dmg = if self.ascension >= 15 { 5 } else { 3 };
                 data = vec![dmg, 25];
-                vec![
-                    format!("[Reach Inside] #rLose #r{dmg} #rHP. #g25%: #gFind #ga #gRelic."),
-                    "[Leave]".into(),
-                ]
+                vec![format!("[Reach Inside] #rLose #r{dmg} #rHP. #g25%: #gFind #ga #gRelic."), "[Leave]".into()]
             }
-            "Woman in Blue" | "The Woman in Blue" => vec![
-                "[Buy 1 Potion]".into(),
-                "[Buy 2 Potions]".into(),
-                "[Buy 3 Potions]".into(),
-                "[Leave]".into(),
-            ],
+            "Woman in Blue" | "The Woman in Blue" => {
+                vec!["[Buy 1 Potion]".into(), "[Buy 2 Potions]".into(), "[Buy 3 Potions]".into(), "[Leave]".into()]
+            }
             "The Library" => vec!["[Read]".into(), "[Sleep]".into()],
-            "Ghosts" => vec![
-                "[Accept] #gReceive #g5 Apparition. #rLose #r40 #rMax #rHP.".into(),
-                "[Refuse]".into(),
-            ],
+            "Ghosts" => vec!["[Accept] #gReceive #g5 Apparition. #rLose #r40 #rMax #rHP.".into(), "[Refuse]".into()],
             "Falling" => vec!["[Continue]".into()],
             "SensoryStone" => vec!["[Interact]".into()],
             "Winding Halls" => {
-                let (hp_pct, heal_pct) = if self.ascension >= 15 {
-                    (0.18, 0.2)
-                } else {
-                    (0.125, 0.25)
-                };
+                let (hp_pct, heal_pct) = if self.ascension >= 15 { (0.18, 0.2) } else { (0.125, 0.25) };
                 let hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * hp_pct);
                 let heal = crate::rewards::gdx_round(self.player.max_hp as f32 * heal_pct);
-                let max_hp_loss =
-                    crate::rewards::gdx_round(self.player.max_hp as f32 * 0.05);
+                let max_hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * 0.05);
                 data = vec![hp_loss, heal, max_hp_loss];
                 vec!["[Continue]".into()]
             }
@@ -3820,10 +3259,7 @@ impl Game {
                     loss = self.player.gold;
                 }
                 data = vec![loss, 75, 11];
-                vec![
-                    format!("[Gather Gold] #gGain #g75 #gGold. #rTake #r11 #rDamage."),
-                    format!("[Leave] #rLose #r{loss} #rGold."),
-                ]
+                vec![format!("[Gather Gold] #gGain #g75 #gGold. #rTake #r11 #rDamage."), format!("[Leave] #rLose #r{loss} #rGold.")]
             }
             "Big Fish" => {
                 let heal = self.player.max_hp / 3;
@@ -3864,22 +3300,14 @@ impl Game {
                 data = vec![damage];
                 let mut opts = Vec::new();
                 if self.player.deck.iter().any(|c| c.can_upgrade()) {
-                    opts.push(format!(
-                        "[Enter] #gUpgrade #g2 #grandom #gcards. #rLose #r{damage} #rHP."
-                    ));
+                    opts.push(format!("[Enter] #gUpgrade #g2 #grandom #gcards. #rLose #r{damage} #rHP."));
                 }
                 opts.push("[Leave]".into());
                 opts
             }
             "WeMeetAgain" => {
                 // Constructor order: getRandomPotion, getGoldAmount, getRandomNonBasicCard.
-                let mut potion_slots: Vec<i32> = self
-                    .player
-                    .potions
-                    .iter()
-                    .filter(|p| p.id != PotionId::Slot)
-                    .map(|p| p.slot)
-                    .collect();
+                let mut potion_slots: Vec<i32> = self.player.potions.iter().filter(|p| p.id != PotionId::Slot).map(|p| p.slot).collect();
                 let potion_slot = if potion_slots.is_empty() {
                     -1
                 } else {
@@ -3912,9 +3340,7 @@ impl Game {
                     opts.push("[Give Potion] #rLose #ra #rPotion. #gObtain #ga #gRelic.".into());
                 }
                 if gold_amt != 0 {
-                    opts.push(format!(
-                        "[Give Gold] #rLose #r{gold_amt} #gGold. #gObtain #ga #gRelic."
-                    ));
+                    opts.push(format!("[Give Gold] #rLose #r{gold_amt} #gGold. #gObtain #ga #gRelic."));
                 }
                 if card_idx >= 0 {
                     opts.push("[Give Card]".into());
@@ -3931,23 +3357,14 @@ impl Game {
                 ]
             }
             "Golden Idol" => {
-                vec![
-                    "[Take] #gObtain #gGolden #gIdol.".into(),
-                    "[Leave]".into(),
-                ]
+                vec!["[Take] #gObtain #gGolden #gIdol.".into(), "[Leave]".into()]
             }
             "Mushrooms" => {
                 let heal = (self.player.max_hp as f32 * 0.25) as i32;
                 data = vec![heal];
-                vec![
-                    "[Fight]".into(),
-                    format!("[Eat] #gHeal #g{heal} #gHP. #rBecome #rCursed #r- #rParasite."),
-                ]
+                vec!["[Fight]".into(), format!("[Eat] #gHeal #g{heal} #gHP. #rBecome #rCursed #r- #rParasite.")]
             }
-            "Masked Bandits" => vec![
-                "[Pay] #rLose #rALL #rGold.".into(),
-                "[Fight] #gObtain #gRed #gMask.".into(),
-            ],
+            "Masked Bandits" => vec!["[Pay] #rLose #rALL #rGold.".into(), "[Fight] #gObtain #gRed #gMask.".into()],
             "Addict" => {
                 let can_pay = self.player.gold >= 85;
                 data = vec![i32::from(can_pay)];
@@ -3955,9 +3372,7 @@ impl Game {
                 if can_pay {
                     opts.push("[Offer Gold] #y85 #yGold: #gObtain #ga #gRelic.".into());
                 }
-                opts.push(
-                    "[Rob] #gObtain #ga #gRelic. #rBecome #rCursed #r- #rShame.".into(),
-                );
+                opts.push("[Rob] #gObtain #ga #gRelic. #rBecome #rCursed #r- #rShame.".into());
                 opts.push("[Leave]".into());
                 opts
             }
@@ -3988,9 +3403,7 @@ impl Game {
                 if self.player.has_relic(RelicId::Golden_Idol) {
                     opts.push("[Offer] #gObtain #gBloody #gIdol.".into());
                 }
-                opts.push(format!(
-                    "[Sacrifice] #gMax #gHP #g+5. #rLose #r{hp_loss} #rHP."
-                ));
+                opts.push(format!("[Sacrifice] #gMax #gHP #g+5. #rLose #r{hp_loss} #rHP."));
                 opts.push("[Desecrate] #rBecome #rCursed #r- #rDecay.".into());
                 opts
             }
@@ -4009,11 +3422,7 @@ impl Game {
                 // Designer ctor: two miscRng.randomBoolean(), then INTRO Continue.
                 let upg_one = if self.rng.misc.random_boolean() { 1 } else { 0 };
                 let rem_cards = if self.rng.misc.random_boolean() { 1 } else { 0 };
-                let (adj, clean, full, hp) = if self.ascension >= 15 {
-                    (50, 75, 110, 5)
-                } else {
-                    (40, 60, 90, 3)
-                };
+                let (adj, clean, full, hp) = if self.ascension >= 15 { (50, 75, 110, 5) } else { (40, 60, 90, 3) };
                 data = vec![adj, clean, full, hp, upg_one, rem_cards, 0];
                 vec!["[Continue]".into()]
             }
@@ -4051,27 +3460,12 @@ impl Game {
             let attack = self.pick_deck_index_of_type(crate::ids::CardType::ATTACK);
             let skill = self.pick_deck_index_of_type(crate::ids::CardType::SKILL);
             let power = self.pick_deck_index_of_type(crate::ids::CardType::POWER);
-            data = vec![
-                skill.map(|i| i as i32).unwrap_or(-1),
-                power.map(|i| i as i32).unwrap_or(-1),
-                attack.map(|i| i as i32).unwrap_or(-1),
-            ];
+            data =
+                vec![skill.map(|i| i as i32).unwrap_or(-1), power.map(|i| i as i32).unwrap_or(-1), attack.map(|i| i as i32).unwrap_or(-1)];
         }
-        let (match_cards, match_attempts) = if id == "Match and Keep!" {
-            (self.initialize_match_cards(), 5)
-        } else {
-            (Vec::new(), 0)
-        };
-        self.event = Some(EventState {
-            id,
-            screen: 0,
-            options,
-            data,
-            library_cards: Vec::new(),
-            match_cards,
-            match_chosen: None,
-            match_attempts,
-        });
+        let (match_cards, match_attempts) = if id == "Match and Keep!" { (self.initialize_match_cards(), 5) } else { (Vec::new(), 0) };
+        self.event =
+            Some(EventState { id, screen: 0, options, data, library_cards: Vec::new(), match_cards, match_chosen: None, match_attempts });
         self.screen = Screen::Event;
     }
 
@@ -4156,16 +3550,8 @@ impl Game {
         }
         ids.push(Some(self.start_card_for_event()));
         let ids: Vec<CardId> = ids.into_iter().flatten().collect();
-        let mut cards: Vec<MatchCard> = ids
-            .iter()
-            .chain(ids.iter())
-            .copied()
-            .map(|id| MatchCard {
-                id,
-                flipped: false,
-                revealed: false,
-            })
-            .collect();
+        let mut cards: Vec<MatchCard> =
+            ids.iter().chain(ids.iter()).copied().map(|id| MatchCard { id, flipped: false, revealed: false }).collect();
         let seed = self.rng.misc.random_long();
         shuffle_java(&mut cards, seed);
         cards
@@ -4192,13 +3578,8 @@ impl Game {
     /// `AbstractDungeon.returnColorlessCard(UNCOMMON)`: shuffle `colorlessCardPool` in place.
     fn return_colorless_uncommon(&mut self) -> CardId {
         let seed = self.rng.shuffle.random_long();
-        shuffle_java(&mut self.dungeon.colorless_cards, seed);
-        self.dungeon
-            .colorless_cards
-            .iter()
-            .copied()
-            .find(|id| id.def().rarity == CardRarity::UNCOMMON)
-            .unwrap_or(CardId::Swift_Strike)
+        shuffle_java(std::sync::Arc::make_mut(&mut self.dungeon.colorless_cards).as_mut_slice(), seed);
+        self.dungeon.colorless_cards.iter().copied().find(|id| id.def().rarity == CardRarity::UNCOMMON).unwrap_or(CardId::Swift_Strike)
     }
 
     fn start_card_for_event(&self) -> CardId {
@@ -4236,13 +3617,7 @@ impl Game {
     fn flip_match_card(&mut self, index: usize) {
         let mut obtain = None;
         if let Some(event) = self.event.as_mut() {
-            let flipped: Vec<usize> = event
-                .match_cards
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.flipped)
-                .map(|(i, _)| i)
-                .collect();
+            let flipped: Vec<usize> = event.match_cards.iter().enumerate().filter(|(_, c)| c.flipped).map(|(i, _)| i).collect();
             let Some(&pick) = flipped.get(index) else {
                 return;
             };
@@ -4252,11 +3627,7 @@ impl Game {
                 let matched = event.match_cards[chosen].id == event.match_cards[pick].id;
                 if matched {
                     obtain = Some(event.match_cards[chosen].id);
-                    let (lo, hi) = if chosen < pick {
-                        (chosen, pick)
-                    } else {
-                        (pick, chosen)
-                    };
+                    let (lo, hi) = if chosen < pick { (chosen, pick) } else { (pick, chosen) };
                     event.match_cards.remove(hi);
                     event.match_cards.remove(lo);
                 } else {
@@ -4285,12 +3656,7 @@ impl Game {
     fn obtain_master_deck_card(&mut self, id: CardId) {
         let mut card = Card::new(id);
         if card.card_type() == crate::ids::CardType::CURSE {
-            if let Some(oma) = self
-                .player
-                .relics
-                .iter_mut()
-                .find(|r| r.id == RelicId::Omamori)
-            {
+            if let Some(oma) = self.player.relics.iter_mut().find(|r| r.id == RelicId::Omamori) {
                 if oma.counter != 0 {
                     oma.counter -= 1;
                     if oma.counter == 0 {
@@ -4301,13 +3667,10 @@ impl Game {
             }
         }
         crate::rewards::preview_obtain(&self.player, &mut card);
-        if card.card_type() == crate::ids::CardType::CURSE
-            && self.player.has_relic(RelicId::Darkstone_Periapt)
-        {
+        if card.card_type() == crate::ids::CardType::CURSE && self.player.has_relic(RelicId::Darkstone_Periapt) {
             self.increase_max_hp(6);
         }
-        if self.player.has_relic(RelicId::CeramicFish) && !self.player.has_relic(RelicId::Ectoplasm)
-        {
+        if self.player.has_relic(RelicId::CeramicFish) && !self.player.has_relic(RelicId::Ectoplasm) {
             self.player.gold += 9;
         }
         self.player.deck.push(card);
@@ -4316,13 +3679,7 @@ impl Game {
     /// FaceTrader.getRandomFace: shuffle missing face relics with `miscRng.randomLong()`.
     fn face_trader_random_face(&mut self) -> Option<RelicId> {
         let mut ids = Vec::new();
-        for id in [
-            RelicId::CultistMask,
-            RelicId::FaceOfCleric,
-            RelicId::GremlinMask,
-            RelicId::NlothsMask,
-            RelicId::SsserpentHead,
-        ] {
+        for id in [RelicId::CultistMask, RelicId::FaceOfCleric, RelicId::GremlinMask, RelicId::NlothsMask, RelicId::SsserpentHead] {
             if !self.player.has_relic(id) {
                 ids.push(id);
             }
@@ -4344,12 +3701,7 @@ impl Game {
         let upg_one = self.event.as_ref().and_then(|e| e.data.get(4).copied()).unwrap_or(0) != 0;
         let rem_cards = self.event.as_ref().and_then(|e| e.data.get(5).copied()).unwrap_or(0) != 0;
         let upgradable = self.player.deck.iter().any(|c| c.can_upgrade());
-        let unbottled = self
-            .player
-            .deck
-            .iter()
-            .filter(|c| purgeable_card(c) && !c.in_bottle)
-            .count();
+        let unbottled = self.player.deck.iter().filter(|c| purgeable_card(c) && !c.in_bottle).count();
         let mut opts = Vec::new();
         if self.player.gold >= adj && upgradable {
             if upg_one {
@@ -4373,14 +3725,7 @@ impl Game {
     }
 
     fn pick_deck_index_of_type(&mut self, card_type: crate::ids::CardType) -> Option<usize> {
-        let idxs: Vec<usize> = self
-            .player
-            .deck
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.card_type() == card_type)
-            .map(|(i, _)| i)
-            .collect();
+        let idxs: Vec<usize> = self.player.deck.iter().enumerate().filter(|(_, c)| c.card_type() == card_type).map(|(i, _)| i).collect();
         if idxs.is_empty() {
             None
         } else {
@@ -4465,11 +3810,7 @@ impl Game {
                     }
                 }
                 2 => {
-                    let result = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(1).copied())
-                        .unwrap_or(0);
+                    let result = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(0);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 3;
                         event.options = vec!["[Leave]".into()];
@@ -4496,10 +3837,7 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            "[Take] Iron Wave.".into(),
-                            "[Leave]".into(),
-                        ];
+                        event.options = vec!["[Take] Iron Wave.".into(), "[Leave]".into()];
                     }
                 }
                 1 => {
@@ -4595,12 +3933,7 @@ impl Game {
         }
         if id == "Addict" {
             if screen == 0 {
-                let can_pay = self
-                    .event
-                    .as_ref()
-                    .and_then(|e| e.data.first().copied())
-                    .unwrap_or(0)
-                    != 0;
+                let can_pay = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0) != 0;
                 let rob = if can_pay { 1 } else { 0 };
                 let leave = if can_pay { 2 } else { 1 };
                 if can_pay && *index == 0 {
@@ -4630,44 +3963,31 @@ impl Game {
         if id == "Nest" {
             match screen {
                 0 => {
-                    let gold = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.first().copied())
-                        .unwrap_or(if self.ascension >= 15 { 50 } else { 99 });
-                    let damage = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(1).copied())
-                        .unwrap_or(6);
+                    let gold =
+                        self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(if self.ascension >= 15 { 50 } else { 99 });
+                    let damage = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(6);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
                             format!("[Smash and Grab] #gGain #g{gold} #gGold."),
-                            format!(
-                                "[Stay in Line] #rLose #r{damage} #rHP. #gObtain #gRitual #gDagger."
-                            ),
+                            format!("[Stay in Line] #rLose #r{damage} #rHP. #gObtain #gRitual #gDagger."),
                         ];
                     }
                 }
                 1 => {
                     if *index == 0 {
                         if !self.player.has_relic(RelicId::Ectoplasm) {
-                            let gold = self
-                                .event
-                                .as_ref()
-                                .and_then(|e| e.data.first().copied())
-                                .unwrap_or(if self.ascension >= 15 { 50 } else { 99 });
+                            let gold = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(if self.ascension >= 15 {
+                                50
+                            } else {
+                                99
+                            });
                             self.player.gold += gold;
                         }
                     } else {
                         // Nest uses player.damage(DamageInfo(null, 6)): owner-null
                         // damage skips attacker hooks, then Tungsten Rod applies.
-                        let damage = self
-                            .event
-                            .as_ref()
-                            .and_then(|e| e.data.get(1).copied())
-                            .unwrap_or(6);
+                        let damage = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(6);
                         let damage = combat::on_lose_hp_last(&self.player, damage);
                         self.player.hp = (self.player.hp - damage).max(0);
                         combat::red_skull_on_hp_change(&mut self.player);
@@ -4690,8 +4010,7 @@ impl Game {
                         event.options = vec![
                             "[Drink] #rLose #r6 #rHP. #gObtain #ga #gPotion.".into(),
                             "[Gold] #gGain #g90 #gGold. #rLose #r6 #rHP.".into(),
-                            "[Knowledge] #rLose #r6 #rHP. #gObtain #ga #gColorless #gCard."
-                                .into(),
+                            "[Knowledge] #rLose #r6 #rHP. #gObtain #ga #gColorless #gCard.".into(),
                             "[Leave] #rLose #r6 #rHP.".into(),
                         ];
                     }
@@ -4699,11 +4018,7 @@ impl Game {
                 1 if *index == 3 => {
                     // KnowingSkull's leave branch uses owner-null HP_LOSS, so
                     // Tungsten Rod's onLoseHpLast can reduce it.
-                    let damage = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(3).copied())
-                        .unwrap_or(6);
+                    let damage = self.event.as_ref().and_then(|e| e.data.get(3).copied()).unwrap_or(6);
                     let damage = combat::on_lose_hp_last(&self.player, damage);
                     self.player.hp = (self.player.hp - damage).max(0);
                     combat::red_skull_on_hp_change(&mut self.player);
@@ -4726,10 +4041,8 @@ impl Game {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            "[Murderer] #yBet #y50 #yGold - #g70%: #gwin #g100 #gGold."
-                                .into(),
-                            "[Owner] #yBet #y50 #yGold - #g30%: #gwin #g250 #gGold."
-                                .into(),
+                            "[Murderer] #yBet #y50 #yGold - #g70%: #gwin #g100 #gGold.".into(),
+                            "[Owner] #yBet #y50 #yGold - #g30%: #gwin #g250 #gGold.".into(),
                         ];
                     }
                 }
@@ -4750,13 +4063,13 @@ impl Game {
                     }
                 }
                 3 => {
-                    let (bet_for, owner_wins) = self
-                        .event
-                        .as_ref()
-                        .map(|e| (e.data[0] != 0, e.data[1] != 0))
-                        .unwrap_or((false, false));
+                    let (bet_for, owner_wins) = self.event.as_ref().map(|e| (e.data[0] != 0, e.data[1] != 0)).unwrap_or((false, false));
                     let payout = if bet_for == owner_wins {
-                        if owner_wins { 250 } else { 100 }
+                        if owner_wins {
+                            250
+                        } else {
+                            100
+                        }
                     } else {
                         0
                     };
@@ -4779,48 +4092,23 @@ impl Game {
         if id == "Winding Halls" {
             match screen {
                 0 => {
-                    let hp_loss = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.first().copied())
-                        .unwrap_or(0);
-                    let heal = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(1).copied())
-                        .unwrap_or(0);
-                    let max_hp_loss = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(2).copied())
-                        .unwrap_or(0);
+                    let hp_loss = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
+                    let heal = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(0);
+                    let max_hp_loss = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(0);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            format!(
-                                "[Embrace Madness] #gReceive #g2 Madness. #rLose #r{hp_loss} #rHP."
-                            ),
-                            format!(
-                                "[Focus] #rBecome #rCursed #r- #rWrithe. #gHeal #g{heal} #gHP."
-                            ),
-                            format!(
-                                "[Retrace Your Steps] #rLose #r{max_hp_loss} #rMax #rHP."
-                            ),
+                            format!("[Embrace Madness] #gReceive #g2 Madness. #rLose #r{hp_loss} #rHP."),
+                            format!("[Focus] #rBecome #rCursed #r- #rWrithe. #gHeal #g{heal} #gHP."),
+                            format!("[Retrace Your Steps] #rLose #r{max_hp_loss} #rMax #rHP."),
                         ];
                     }
                 }
                 1 => {
-                    let data = self
-                        .event
-                        .as_ref()
-                        .map(|e| e.data.clone())
-                        .unwrap_or_default();
+                    let data = self.event.as_ref().map(|e| e.data.clone()).unwrap_or_default();
                     match *index {
                         0 => {
-                            let damage = combat::on_lose_hp_last(
-                                &self.player,
-                                data.first().copied().unwrap_or(0),
-                            );
+                            let damage = combat::on_lose_hp_last(&self.player, data.first().copied().unwrap_or(0));
                             self.player.hp = (self.player.hp - damage).max(0);
                             combat::red_skull_on_hp_change(&mut self.player);
                             self.obtain_master_deck_card(CardId::Madness);
@@ -4881,10 +4169,7 @@ impl Game {
                     let dmg = dmg + 1;
                     let chance = chance + 10;
                     event.data = vec![dmg, chance];
-                    event.options = vec![
-                        format!("[Deeper] #rLose #r{dmg} #rHP. #g{chance}%: #gFind #ga #gRelic."),
-                        "[Leave]".into(),
-                    ];
+                    event.options = vec![format!("[Deeper] #rLose #r{dmg} #rHP. #g{chance}%: #gFind #ga #gRelic."), "[Leave]".into()];
                 }
             } else if let Some(event) = self.event.as_mut() {
                 event.screen = 1;
@@ -4894,12 +4179,7 @@ impl Game {
         }
         if id == "Drug Dealer" {
             if screen == 0 {
-                let chosen = self
-                    .event
-                    .as_ref()
-                    .and_then(|e| e.options.get(*index))
-                    .cloned()
-                    .unwrap_or_default();
+                let chosen = self.event.as_ref().and_then(|e| e.options.get(*index)).cloned().unwrap_or_default();
                 if chosen.contains("Ingest") || chosen.contains("J.A.X") {
                     self.obtain_master_deck_card(CardId::J_A_X_);
                 } else if chosen.contains("Study") || chosen.contains("Transform") {
@@ -4939,12 +4219,7 @@ impl Game {
                     }
                 }
                 1 => {
-                    let chosen = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
+                    let chosen = self.event.as_ref().and_then(|e| e.options.get(*index)).cloned().unwrap_or_default();
                     let adj = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(40);
                     let clean = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(60);
                     let full = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(90);
@@ -4962,14 +4237,8 @@ impl Game {
                             return;
                         }
                         let seed = self.rng.misc.random_long();
-                        let mut idxs: Vec<usize> = self
-                            .player
-                            .deck
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, c)| c.can_upgrade())
-                            .map(|(i, _)| i)
-                            .collect();
+                        let mut idxs: Vec<usize> =
+                            self.player.deck.iter().enumerate().filter(|(_, c)| c.can_upgrade()).map(|(i, _)| i).collect();
                         shuffle_java(&mut idxs, seed);
                         for &i in idxs.iter().take(2) {
                             if let Some(c) = self.player.deck.get_mut(i) {
@@ -5030,26 +4299,15 @@ impl Game {
                         if let Some(id) = RelicId::from_sts_id("Circlet") {
                             self.gain_relic(id);
                         }
-                    } else if let Some(i) = self
-                        .player
-                        .relics
-                        .iter()
-                        .position(|r| r.id == RelicId::Golden_Idol)
-                    {
-                        self.player.relics[i] = RelicInstance {
-                            id: RelicId::Bloody_Idol,
-                            counter: -1,
-                            used_up: false,
-                        };
+                    } else if let Some(i) = self.player.relics.iter().position(|r| r.id == RelicId::Golden_Idol) {
+                        self.player.relics[i] = RelicInstance { id: RelicId::Bloody_Idol, counter: -1, used_up: false };
                     }
                 } else if *index == sacrifice {
                     let hp_loss = self
                         .event
                         .as_ref()
                         .and_then(|e| e.data.first().copied())
-                        .unwrap_or_else(|| {
-                            crate::rewards::gdx_round(self.player.max_hp as f32 * 0.25)
-                        });
+                        .unwrap_or_else(|| crate::rewards::gdx_round(self.player.max_hp as f32 * 0.25));
                     self.increase_max_hp(5);
                     // DamageInfo(null, hpLoss): owner is null so Torii/powers
                     // skip; TungstenRod onLoseHpLast still applies.
@@ -5121,11 +4379,7 @@ impl Game {
                 0 => {
                     if *index == 0 {
                         self.gain_relic(RelicId::Golden_Idol);
-                        let (dmg_pct, max_pct) = if self.ascension >= 15 {
-                            (0.35, 0.1)
-                        } else {
-                            (0.25, 0.08)
-                        };
+                        let (dmg_pct, max_pct) = if self.ascension >= 15 { (0.35, 0.1) } else { (0.25, 0.08) };
                         let dmg = (self.player.max_hp as f32 * dmg_pct) as i32;
                         let mut max_loss = (self.player.max_hp as f32 * max_pct) as i32;
                         if max_loss < 1 {
@@ -5180,11 +4434,7 @@ impl Game {
                 0 => {
                     match *index {
                         0 => {
-                            let heal = self
-                                .event
-                                .as_ref()
-                                .and_then(|e| e.data.first().copied())
-                                .unwrap_or(self.player.max_hp / 3);
+                            let heal = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(self.player.max_hp / 3);
                             self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
                         }
                         1 => {
@@ -5210,12 +4460,7 @@ impl Game {
         if id == "The Cleric" {
             match screen {
                 0 => {
-                    let chosen = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
+                    let chosen = self.event.as_ref().and_then(|e| e.options.get(*index)).cloned().unwrap_or_default();
                     if chosen.contains("Heal") {
                         let heal = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
                         self.player.gold -= 35;
@@ -5244,12 +4489,7 @@ impl Game {
         if id == "Living Wall" {
             match screen {
                 0 => {
-                    let chosen = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
+                    let chosen = self.event.as_ref().and_then(|e| e.options.get(*index)).cloned().unwrap_or_default();
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec!["[Leave]".into()];
@@ -5305,22 +4545,12 @@ impl Game {
                         .and_then(|e| e.options.get(*index))
                         .is_some_and(|s| s.contains("Enter") || s.contains("Upgrade"));
                     if enter {
-                        let damage = self
-                            .event
-                            .as_ref()
-                            .and_then(|e| e.data.first().copied())
-                            .unwrap_or(0);
+                        let damage = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
                         let damage = combat::on_lose_hp_last(&self.player, damage);
                         self.player.hp = (self.player.hp - damage).max(0);
                         let seed = self.rng.misc.random_long();
-                        let mut idxs: Vec<usize> = self
-                            .player
-                            .deck
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, c)| c.can_upgrade())
-                            .map(|(i, _)| i)
-                            .collect();
+                        let mut idxs: Vec<usize> =
+                            self.player.deck.iter().enumerate().filter(|(_, c)| c.can_upgrade()).map(|(i, _)| i).collect();
                         shuffle_java(&mut idxs, seed);
                         for &i in idxs.iter().take(2) {
                             if let Some(c) = self.player.deck.get_mut(i) {
@@ -5338,15 +4568,10 @@ impl Game {
             return;
         }
         if id == "MindBloom" {
-            let war = *index == 0
-                || label.as_deref().is_some_and(|l| l.contains("War") || l.contains("Fight"));
+            let war = *index == 0 || label.as_deref().is_some_and(|l| l.contains("War") || l.contains("Fight"));
             if war {
                 let seed = self.rng.misc.random_long();
-                let mut bosses = [
-                    EncounterId::TheGuardian,
-                    EncounterId::Hexaghost,
-                    EncounterId::SlimeBoss,
-                ];
+                let mut bosses = [EncounterId::TheGuardian, EncounterId::Hexaghost, EncounterId::SlimeBoss];
                 shuffle_java(&mut bosses, seed);
                 // MindBloom.buttonEffect INTRO/0: rewards.clear, addGoldToRewards
                 // (A13+ 25 else 50), addRelicToRewards(RARE), then enterCombatFromImage.
@@ -5365,11 +4590,7 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            "[Recall] 1".into(),
-                            "[Recall] 2".into(),
-                            "[Recall] 3".into(),
-                        ];
+                        event.options = vec!["[Recall] 1".into(), "[Recall] 2".into(), "[Recall] 3".into()];
                     }
                 }
                 1 => {
@@ -5384,13 +4605,7 @@ impl Game {
                         self.player.hp = (self.player.hp - dmg).max(0);
                     }
                     self.rewards.clear();
-                    self.card_reward = crate::rewards::colorless_reward_cards(
-                        &self.dungeon,
-                        &mut self.rng,
-                        &mut self.card_blizz,
-                        3,
-                        0.3,
-                    );
+                    self.card_reward = crate::rewards::colorless_reward_cards(&self.dungeon, &mut self.rng, &mut self.card_blizz, 3, 0.3);
                     self.rewards.push(Reward::new(RewardKind::Card));
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
@@ -5408,19 +4623,11 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            "[Land]".into(),
-                            "[Channel]".into(),
-                            "[Strike]".into(),
-                        ];
+                        event.options = vec!["[Land]".into(), "[Channel]".into(), "[Strike]".into()];
                     }
                 }
                 1 => {
-                    let idx = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(*index).copied())
-                        .unwrap_or(-1);
+                    let idx = self.event.as_ref().and_then(|e| e.data.get(*index).copied()).unwrap_or(-1);
                     if idx >= 0 {
                         let idx = idx as usize;
                         if idx < self.player.deck.len() {
@@ -5557,8 +4764,7 @@ impl Game {
         }
         match id.as_str() {
             "The Library" => {
-                if *index == 1 || matches!(action, Action::Choose { label: Some(l), .. } if l.contains("Sleep"))
-                {
+                if *index == 1 || matches!(action, Action::Choose { label: Some(l), .. } if l.contains("Sleep")) {
                     let heal = (self.player.max_hp as f32 * 0.33 + 0.5).floor() as i32;
                     self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
                 } else {
@@ -5571,12 +4777,7 @@ impl Game {
                 let gold_amt = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
                 let card_idx = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(-1);
                 let potion_slot = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(-1);
-                let chosen = self
-                    .event
-                    .as_ref()
-                    .and_then(|e| e.options.get(*index))
-                    .cloned()
-                    .unwrap_or_default();
+                let chosen = self.event.as_ref().and_then(|e| e.options.get(*index)).cloned().unwrap_or_default();
                 if chosen.contains("Potion") {
                     if potion_slot >= 0 {
                         if let Some(p) = self.player.potions.iter_mut().find(|p| p.slot == potion_slot) {
@@ -5658,11 +4859,7 @@ impl Game {
     }
 
     fn begin_skill_from_deck_select(&mut self) {
-        let n = self
-            .combat
-            .as_ref()
-            .map(|c| c.skill_from_deck.len())
-            .unwrap_or(0);
+        let n = self.combat.as_ref().map(|c| c.skill_from_deck.len()).unwrap_or(0);
         if n <= 1 {
             if n == 1 {
                 let i = self.combat.as_ref().unwrap().skill_from_deck[0];
@@ -5686,12 +4883,7 @@ impl Game {
     }
 
     fn begin_draw_to_hand_select(&mut self) {
-        let needed = self
-            .combat
-            .as_ref()
-            .and_then(|c| c.pending_exhaust.as_ref())
-            .map(|c| c.base_magic.max(1) as usize)
-            .unwrap_or(1);
+        let needed = self.combat.as_ref().and_then(|c| c.pending_exhaust.as_ref()).map(|c| c.base_magic.max(1) as usize).unwrap_or(1);
         if self.player.draw.len() <= needed {
             while !self.player.draw.is_empty() && self.player.hand.len() < 10 {
                 let c = self.player.draw.pop().unwrap();
@@ -5729,10 +4921,7 @@ impl Game {
     }
 
     fn put_card_from_forethought_or_top(&mut self, mut card: crate::card::Card) {
-        let fore = self
-            .combat
-            .as_ref()
-            .is_some_and(|c| c.need_forethought);
+        let fore = self.combat.as_ref().is_some_and(|c| c.need_forethought);
         if fore {
             if card.cost > 0 {
                 card.free_to_play_once = true;
@@ -5744,23 +4933,14 @@ impl Game {
     }
 
     fn finish_exhaust_draw(&mut self) {
-        let n = self
-            .combat
-            .as_ref()
-            .map(|c| c.draw_after_exhaust)
-            .unwrap_or(0);
+        let n = self.combat.as_ref().map(|c| c.draw_after_exhaust).unwrap_or(0);
         if n <= 0 {
             return;
         }
         if let Some(combat) = self.combat.as_mut() {
             combat.draw_after_exhaust = 0;
             let drawn = crate::combat::draw_cards_rng(&mut self.player, n, Some(&mut self.rng));
-            crate::combat::apply_fire_breathing(
-                &self.player,
-                &mut combat.monsters,
-                &mut self.rng,
-                drawn,
-            );
+            crate::combat::apply_fire_breathing(&self.player, &mut combat.monsters, &mut self.rng, drawn);
         }
     }
 
@@ -5802,14 +4982,7 @@ impl Game {
     fn begin_armaments_select(&mut self) {
         self.exhaust_select = false;
         self.hand_held.clear();
-        let upgradeable: Vec<usize> = self
-            .player
-            .hand
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.can_upgrade())
-            .map(|(i, _)| i)
-            .collect();
+        let upgradeable: Vec<usize> = self.player.hand.iter().enumerate().filter(|(_, c)| c.can_upgrade()).map(|(i, _)| i).collect();
         if upgradeable.len() <= 1 {
             if let Some(&i) = upgradeable.first() {
                 self.player.hand[i].upgrade();
@@ -5831,12 +5004,9 @@ impl Game {
     fn step_hand_select(&mut self, action: &Action) {
         match action {
             Action::Choose { index, label, .. } => {
-                let by_name = label.as_ref().and_then(|name| {
-                    self.player
-                        .hand
-                        .iter()
-                        .position(|c| c.sts_id() == name.as_str() || c.id.sts_id() == name.as_str())
-                });
+                let by_name = label
+                    .as_ref()
+                    .and_then(|name| self.player.hand.iter().position(|c| c.sts_id() == name.as_str() || c.id.sts_id() == name.as_str()));
                 let idx = by_name.unwrap_or(*index);
                 if idx < self.player.hand.len() {
                     let mut card = self.player.hand.remove(idx);
@@ -5852,12 +5022,7 @@ impl Game {
                     self.player.discard.append(&mut self.pending_cards);
                     if let Some(combat) = self.combat.as_mut() {
                         let drawn = crate::combat::draw_cards_rng(&mut self.player, n, Some(&mut self.rng));
-                        crate::combat::apply_fire_breathing(
-                            &self.player,
-                            &mut combat.monsters,
-                            &mut self.rng,
-                            drawn,
-                        );
+                        crate::combat::apply_fire_breathing(&self.player, &mut combat.monsters, &mut self.rng, drawn);
                     }
                     self.gambling_select = false;
                     self.screen = Screen::Combat;
@@ -5918,14 +5083,8 @@ impl Game {
             // PotionBelt.onEquip: potionSlots += 2 and two empty PotionSlot entries.
             self.player.potion_slots += 2;
             let start = self.player.potions.len() as i32;
-            self.player.potions.push(crate::creature::PotionInstance {
-                id: crate::ids::PotionId::Slot,
-                slot: start,
-            });
-            self.player.potions.push(crate::creature::PotionInstance {
-                id: crate::ids::PotionId::Slot,
-                slot: start + 1,
-            });
+            self.player.potions.push(crate::creature::PotionInstance { id: crate::ids::PotionId::Slot, slot: start });
+            self.player.potions.push(crate::creature::PotionInstance { id: crate::ids::PotionId::Slot, slot: start + 1 });
         }
         // Fruit relics call increaseMaxHp(N, true): maxHealth += N, then heal(N).
         // Lee's Waffle also heals to full after the +7.
@@ -5998,10 +5157,7 @@ impl Game {
                 // opens CombatRewardScreen, then removes its automatic CARD.
                 self.rewards.clear();
                 for _ in 0..5 {
-                    let potion = crate::rewards::get_random_potion_for(
-                        &mut self.rng,
-                        self.character,
-                    );
+                    let potion = crate::rewards::get_random_potion_for(&mut self.rng, self.character);
                     self.rewards.push(Reward::new(RewardKind::Potion(potion)));
                 }
                 // CombatRewardScreen.open rolls its automatic CARD reward
@@ -6028,11 +5184,7 @@ impl Game {
 
     /// `AbstractCreature.heal`: Mark of the Bloom zeros the heal.
     fn heal_player(&mut self, amount: i32) {
-        let amount = if self.player.has_relic(RelicId::Mark_of_the_Bloom) {
-            0
-        } else {
-            amount
-        };
+        let amount = if self.player.has_relic(RelicId::Mark_of_the_Bloom) { 0 } else { amount };
         self.player.hp = (self.player.hp + amount).min(self.player.max_hp);
     }
 
@@ -6045,8 +5197,7 @@ impl Game {
         // Combat HealAction sits behind potion.use() overlays (Discovery,
         // Gambler's Brew, Liquid Memories).
         if self.combat.is_some()
-            && (matches!(self.screen, Screen::CardReward | Screen::HandSelect)
-                || self.memories_select && self.screen == Screen::Grid)
+            && (matches!(self.screen, Screen::CardReward | Screen::HandSelect) || self.memories_select && self.screen == Screen::Grid)
         {
             self.pending_ornithopter_heal = true;
             return;
@@ -6068,10 +5219,7 @@ impl Game {
     /// DiscoveryAction is queued before HealAction, so combat Discovery
     /// snapshots must not include the +5 yet.
     fn ornithopter_after_potion(&mut self, discovery_overlay: bool) {
-        if discovery_overlay
-            && self.combat.is_some()
-            && self.player.has_relic(RelicId::Toy_Ornithopter)
-        {
+        if discovery_overlay && self.combat.is_some() && self.player.has_relic(RelicId::Toy_Ornithopter) {
             self.pending_ornithopter_heal = true;
         } else {
             self.on_use_potion_relics();
@@ -6113,14 +5261,8 @@ impl Game {
 
     fn upgrade_random_cards(&mut self, typ: crate::ids::CardType, n: usize) {
         let seed = self.rng.misc.random_long();
-        let mut idxs: Vec<usize> = self
-            .player
-            .deck
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.card_type() == typ && c.can_upgrade())
-            .map(|(i, _)| i)
-            .collect();
+        let mut idxs: Vec<usize> =
+            self.player.deck.iter().enumerate().filter(|(_, c)| c.card_type() == typ && c.can_upgrade()).map(|(i, _)| i).collect();
         shuffle_java(&mut idxs, seed);
         for idx in idxs.into_iter().take(n) {
             if let Some(card) = self.player.deck.get_mut(idx) {
@@ -6134,8 +5276,7 @@ impl Game {
         let act = self.dungeon.act;
         let room = self.current_room;
         let player = &self.player;
-        self.dungeon
-            .next_relic(tier, &|id| crate::dungeon::relic_can_spawn(id, floor, act, room, player))
+        self.dungeon.next_relic(tier, &|id| crate::dungeon::relic_can_spawn(id, floor, act, room, player))
     }
 
     fn take_noncamp_relic(&mut self, tier: RelicTier) -> Option<RelicId> {
@@ -6159,13 +5300,7 @@ impl Game {
         };
         loop {
             let id = self.take_relic(tier)?;
-            if !matches!(
-                id,
-                RelicId::Bottled_Flame
-                    | RelicId::Bottled_Lightning
-                    | RelicId::Bottled_Tornado
-                    | RelicId::Whetstone
-            ) {
+            if !matches!(id, RelicId::Bottled_Flame | RelicId::Bottled_Lightning | RelicId::Bottled_Tornado | RelicId::Whetstone) {
                 return Some(id);
             }
         }

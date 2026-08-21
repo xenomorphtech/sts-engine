@@ -78,6 +78,33 @@ character defaults to Defect, and the unlock profile is loaded once per batch.
 Pass `--random-seeds` to generate a fresh unique cohort; the reported
 `seed_source` can be supplied later with `--seed-source N` for an exact replay.
 
+Engine optimization is gated by a compact final-state fixture. It contains one
+JSON object per seed (no turn trace), including progression, player/combat
+state, and every gameplay RNG stream. Generate or verify the fixed 10k Defect
+A0 cohort with:
+
+```sh
+cargo run --release --bin sts-htn -- --seed 0 --count 10000 --concurrent 8 --a0 --fixture-jsonl fixtures/htn/defect-a0-seeds-0-9999.jsonl
+cargo run --release --bin sts-htn -- --seed 0 --count 10000 --concurrent 8 --a0 --compare-jsonl fixtures/htn/defect-a0-seeds-0-9999.jsonl
+```
+
+The comparison exits nonzero at the first exact mismatch. Because HTN policy
+changes are allowed to alter decisions, use this exact gate for engine-only
+changes while holding the policy fixed; evaluate HTN changes by throughput and
+paired cohort win rate instead.
+
+Measured optimization results and the snapshot-oriented ECS/delta design notes
+are in [`HTN_PERFORMANCE.md`](HTN_PERFORMANCE.md).
+
+For an engine-only replay boundary, action capture is explicitly opt-in. It
+keeps `seed -> [actions]` in memory during the batch and writes one JSONL
+record per seed afterward; it never serializes transition states:
+
+```sh
+sts-htn --seed 0 --count 10000 --concurrent 8 --a0 --actions-jsonl /tmp/defect-a0-actions.jsonl
+sts-htn --character DEFECT --a0 --concurrent 8 --replay-actions-jsonl /tmp/defect-a0-actions.jsonl --compare-jsonl fixtures/htn/defect-a0-seeds-0-9999.jsonl
+```
+
 `sts-parity` lockstep-replays an ExactTextSim oracle and prints the first
 mismatch with screen, event options, rewards, card-reward list, pending cards,
 RNG counters, and the commands around the fail. Agents should use that instead

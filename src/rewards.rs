@@ -2,9 +2,7 @@ use crate::card::Card;
 use crate::creature::Player;
 use crate::dungeon::Dungeon;
 use crate::generated::relic_catalog::RELICS;
-use crate::ids::{
-    CardColor, CardId, CardRarity, CardType, Character, PotionId, PotionRarity, RelicId, RelicTier, RoomType,
-};
+use crate::ids::{CardColor, CardId, CardRarity, CardType, Character, PotionId, PotionRarity, RelicId, RelicTier, RoomType};
 use crate::rng::RngSet;
 
 #[derive(Clone, Copy)]
@@ -281,19 +279,10 @@ pub fn reward_cards(
 /// (or rare-only for the upgraded blessing). Picks use `cardRng` over the
 /// colorless pool in library insertion order (no name sort).
 pub fn neow_colorless_cards(dungeon: &Dungeon, rng: &mut RngSet, n: usize, rare_only: bool) -> Vec<Card> {
-    let rarity = if rare_only {
-        CardRarity::RARE
-    } else {
-        CardRarity::UNCOMMON
-    };
+    let rarity = if rare_only { CardRarity::RARE } else { CardRarity::UNCOMMON };
     let mut out = Vec::new();
     for _ in 0..n {
-        let mut pool: Vec<CardId> = dungeon
-            .colorless_cards
-            .iter()
-            .copied()
-            .filter(|id| id.def().rarity == rarity)
-            .collect();
+        let mut pool: Vec<CardId> = dungeon.colorless_cards.iter().copied().filter(|id| id.def().rarity == rarity).collect();
         pool.sort_by_key(|id| id.sts_id());
         if pool.is_empty() {
             continue;
@@ -309,13 +298,7 @@ pub fn neow_colorless_cards(dungeon: &Dungeon, rng: &mut RngSet, n: usize, rare_
     out
 }
 
-pub fn colorless_reward_cards(
-    dungeon: &Dungeon,
-    rng: &mut RngSet,
-    blizz: &mut i32,
-    n: usize,
-    rare_chance: f32,
-) -> Vec<Card> {
+pub fn colorless_reward_cards(dungeon: &Dungeon, rng: &mut RngSet, blizz: &mut i32, n: usize, rare_chance: f32) -> Vec<Card> {
     let mut out = Vec::new();
     for _ in 0..n {
         let rarity = if rng.card.random_boolean_chance(rare_chance) {
@@ -399,12 +382,7 @@ fn get_card_from_pool(dungeon: &Dungeon, rng: &mut RngSet, rarity: CardRarity, t
 }
 
 fn get_colorless_from_pool(dungeon: &Dungeon, rng: &mut RngSet, rarity: CardRarity) -> Option<CardId> {
-    let mut tmp: Vec<CardId> = dungeon
-        .colorless_cards
-        .iter()
-        .copied()
-        .filter(|id| id.def().rarity == rarity)
-        .collect();
+    let mut tmp: Vec<CardId> = dungeon.colorless_cards.iter().copied().filter(|id| id.def().rarity == rarity).collect();
     if tmp.is_empty() {
         return None;
     }
@@ -412,13 +390,7 @@ fn get_colorless_from_pool(dungeon: &Dungeon, rng: &mut RngSet, rarity: CardRari
     Some(tmp[rng.card.random_int(tmp.len() as i32 - 1) as usize])
 }
 
-fn shop_colored_card(
-    dungeon: &Dungeon,
-    rng: &mut RngSet,
-    card_blizz: i32,
-    typ: CardType,
-    exclude: Option<CardId>,
-) -> Card {
+fn shop_colored_card(dungeon: &Dungeon, rng: &mut RngSet, card_blizz: i32, typ: CardType, exclude: Option<CardId>) -> Card {
     loop {
         let rarity = shop_roll_rarity(rng, card_blizz);
         let Some(id) = get_card_from_pool(dungeon, rng, rarity, typ) else {
@@ -432,12 +404,7 @@ fn shop_colored_card(
 }
 
 /// AbstractDungeon.returnTrulyRandomCardInCombat / DiscoveryAction choices.
-pub fn discovery_cards(
-    dungeon: &Dungeon,
-    rng: &mut RngSet,
-    typ: Option<CardType>,
-    colorless: bool,
-) -> Vec<Card> {
+pub fn discovery_cards(dungeon: &Dungeon, rng: &mut RngSet, typ: Option<CardType>, colorless: bool) -> Vec<Card> {
     let mut out = Vec::new();
     let mut guard = 0;
     while out.len() < 3 && guard < 40 {
@@ -455,13 +422,7 @@ pub fn discovery_cards(
 
 /// ExactTextSim keeps DiscoveryAction on the queue after the card is picked;
 /// each leftover update rebuilds the 3-card list and burns cardRandomRng.
-pub fn burn_discovery_rng(
-    dungeon: &Dungeon,
-    rng: &mut RngSet,
-    typ: Option<CardType>,
-    colorless: bool,
-    rounds: usize,
-) {
+pub fn burn_discovery_rng(dungeon: &Dungeon, rng: &mut RngSet, typ: Option<CardType>, colorless: bool, rounds: usize) {
     for _ in 0..rounds {
         let _ = discovery_cards(dungeon, rng, typ, colorless);
     }
@@ -475,28 +436,19 @@ pub(crate) fn random_colorless_in_combat(dungeon: &Dungeon, rng: &mut RngSet) ->
     truly_random_combat_card(dungeon, rng, None, true)
 }
 
-pub(crate) fn random_combat_card_of_type(
-    dungeon: &Dungeon,
-    rng: &mut RngSet,
-    typ: CardType,
-) -> Option<CardId> {
+pub(crate) fn random_combat_card_of_type(dungeon: &Dungeon, rng: &mut RngSet, typ: CardType) -> Option<CardId> {
     truly_random_combat_card(dungeon, rng, Some(typ), false)
 }
 
-fn truly_random_combat_card(
-    dungeon: &Dungeon,
-    rng: &mut RngSet,
-    typ: Option<CardType>,
-    colorless: bool,
-) -> Option<CardId> {
+fn truly_random_combat_card(dungeon: &Dungeon, rng: &mut RngSet, typ: Option<CardType>, colorless: bool) -> Option<CardId> {
     // CardGroup.addToTop appends; src pools copy via addToBottom, reversing
     // each rarity. returnTrulyRandomCardInCombat concatenates the src pools.
     let mut list: Vec<CardId> = if colorless {
-        dungeon.src_colorless_cards.clone()
+        dungeon.src_colorless_cards.as_ref().clone()
     } else {
-        let mut commons = dungeon.common_cards.clone();
-        let mut uncommons = dungeon.uncommon_cards.clone();
-        let mut rares = dungeon.rare_cards.clone();
+        let mut commons = dungeon.common_cards.as_ref().clone();
+        let mut uncommons = dungeon.uncommon_cards.as_ref().clone();
+        let mut rares = dungeon.rare_cards.as_ref().clone();
         commons.reverse();
         uncommons.reverse();
         rares.reverse();
@@ -536,11 +488,7 @@ fn card_base_price(rarity: CardRarity) -> i32 {
 }
 
 fn relic_base_price(id: RelicId) -> i32 {
-    let tier = RELICS
-        .iter()
-        .find(|r| r.id == id)
-        .map(|r| r.tier)
-        .unwrap_or(RelicTier::COMMON);
+    let tier = RELICS.iter().find(|r| r.id == id).map(|r| r.tier).unwrap_or(RelicTier::COMMON);
     match tier {
         RelicTier::STARTER => 300,
         RelicTier::COMMON => 150,
@@ -557,11 +505,7 @@ fn potion_base_price(id: PotionId) -> i32 {
         PotionId::Focus => PotionRarity::COMMON,
         PotionId::PotionOfCapacity => PotionRarity::UNCOMMON,
         PotionId::EssenceOfDarkness => PotionRarity::RARE,
-        _ => POTION_POOL
-            .iter()
-            .find(|d| PotionId::from_sts_id(d.id) == Some(id))
-            .map(|d| d.rarity)
-            .unwrap_or(PotionRarity::COMMON),
+        _ => POTION_POOL.iter().find(|d| PotionId::from_sts_id(d.id) == Some(id)).map(|d| d.rarity).unwrap_or(PotionRarity::COMMON),
     };
     match rarity {
         PotionRarity::COMMON => 50,
@@ -601,21 +545,11 @@ pub fn generate_shop(
     for card in &colored {
         // ShopScreen.initCards assigns `(int)tmpPrice` (truncate), not MathUtils.round.
         let price = (card_base_price(card.rarity()) as f32 * rng.merchant.random_float_range(0.9, 1.1)) as i32;
-        cards.push(ShopOffer {
-            item: card.clone(),
-            price,
-            sold: false,
-        });
+        cards.push(ShopOffer { item: card.clone(), price, sold: false });
     }
     for card in &colorless {
-        let price = (card_base_price(card.rarity()) as f32
-            * rng.merchant.random_float_range(0.9, 1.1)
-            * 1.2) as i32;
-        cards.push(ShopOffer {
-            item: card.clone(),
-            price,
-            sold: false,
-        });
+        let price = (card_base_price(card.rarity()) as f32 * rng.merchant.random_float_range(0.9, 1.1) * 1.2) as i32;
+        cards.push(ShopOffer { item: card.clone(), price, sold: false });
     }
     if !cards.is_empty() {
         let sale = rng.merchant.random_range(0, 4) as usize;
@@ -640,15 +574,9 @@ pub fn generate_shop(
                 RelicTier::RARE
             }
         };
-        if let Some(id) = dungeon.next_relic_end(tier, &|id| {
-            crate::dungeon::relic_can_spawn(id, floor, act, room, player)
-        }) {
+        if let Some(id) = dungeon.next_relic_end(tier, &|id| crate::dungeon::relic_can_spawn(id, floor, act, room, player)) {
             let price = gdx_round(relic_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05));
-            relics.push(ShopOffer {
-                item: id,
-                price,
-                sold: false,
-            });
+            relics.push(ShopOffer { item: id, price, sold: false });
         }
     }
 
@@ -656,11 +584,7 @@ pub fn generate_shop(
     for _ in 0..3 {
         let id = return_random_potion(rng, character, false);
         let price = gdx_round(potion_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05));
-        potions.push(ShopOffer {
-            item: id,
-            price,
-            sold: false,
-        });
+        potions.push(ShopOffer { item: id, price, sold: false });
     }
 
     // ShopScreen.init: A16 applyDiscount(1.1, false), then Courier 0.8 / Membership 0.5.
@@ -674,20 +598,10 @@ pub fn generate_shop(
         apply_shop_discount(&mut cards, &mut relics, &mut potions, 0.5);
     }
 
-    ShopStock {
-        cards,
-        relics,
-        potions,
-        purge_cost: 75,
-    }
+    ShopStock { cards, relics, potions, purge_cost: 75 }
 }
 
-fn apply_shop_discount(
-    cards: &mut [ShopOffer<Card>],
-    relics: &mut [ShopOffer<RelicId>],
-    potions: &mut [ShopOffer<PotionId>],
-    mult: f32,
-) {
+fn apply_shop_discount(cards: &mut [ShopOffer<Card>], relics: &mut [ShopOffer<RelicId>], potions: &mut [ShopOffer<PotionId>], mult: f32) {
     for offer in cards.iter_mut() {
         offer.price = gdx_round(offer.price as f32 * mult);
     }

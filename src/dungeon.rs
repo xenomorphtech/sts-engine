@@ -1,15 +1,42 @@
-use crate::generated::orders::{
-    BLUE_RELIC_HASHMAP_ORDER, CARD_LIBRARY_HASHMAP_ORDER, RED_RELIC_HASHMAP_ORDER, SHARED_RELIC_HASHMAP_ORDER,
-};
+use crate::generated::orders::{BLUE_RELIC_HASHMAP_ORDER, CARD_LIBRARY_HASHMAP_ORDER, RED_RELIC_HASHMAP_ORDER, SHARED_RELIC_HASHMAP_ORDER};
 use crate::generated::relic_catalog::RELICS;
 use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, RelicId, RelicTier, RoomType};
 use crate::java_util::shuffle_java;
-use crate::map::{
-    assign_row, distribute_rooms, generate_dungeon, generate_room_types, DungeonMap, MAP_DENSITY, MAP_HEIGHT,
-    MAP_WIDTH,
-};
+use crate::map::{assign_row, distribute_rooms, generate_dungeon, generate_room_types, DungeonMap, MAP_DENSITY, MAP_HEIGHT, MAP_WIDTH};
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
+use std::sync::Arc;
+
+/// Cheaply cloned vector with ordinary mutable-`Vec` ergonomics. Mutations
+/// detach only when a search branch still shares the previous value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CowVec<T: Clone>(Arc<Vec<T>>);
+
+impl<T: Clone> Default for CowVec<T> {
+    fn default() -> Self {
+        Self(Arc::new(Vec::new()))
+    }
+}
+
+impl<T: Clone> std::ops::Deref for CowVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Clone> std::ops::DerefMut for CowVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl<T: Clone> AsRef<Vec<T>> for CowVec<T> {
+    fn as_ref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Dungeon {
@@ -18,26 +45,26 @@ pub struct Dungeon {
     pub name: &'static str,
     pub floor: i32,
     pub boss: String,
-    pub boss_list: Vec<String>,
-    pub monster_list: Vec<String>,
-    pub elite_list: Vec<String>,
-    pub event_list: Vec<String>,
-    pub shrine_list: Vec<String>,
-    pub special_one_time: Vec<String>,
-    pub common_relics: Vec<String>,
-    pub uncommon_relics: Vec<String>,
-    pub rare_relics: Vec<String>,
-    pub shop_relics: Vec<String>,
-    pub boss_relics: Vec<String>,
-    pub common_cards: Vec<CardId>,
-    pub uncommon_cards: Vec<CardId>,
-    pub rare_cards: Vec<CardId>,
-    pub colorless_cards: Vec<CardId>,
+    pub boss_list: CowVec<String>,
+    pub monster_list: CowVec<String>,
+    pub elite_list: CowVec<String>,
+    pub event_list: CowVec<String>,
+    pub shrine_list: CowVec<String>,
+    pub special_one_time: CowVec<String>,
+    pub common_relics: Arc<Vec<RelicId>>,
+    pub uncommon_relics: Arc<Vec<RelicId>>,
+    pub rare_relics: Arc<Vec<RelicId>>,
+    pub shop_relics: Arc<Vec<RelicId>>,
+    pub boss_relics: Arc<Vec<RelicId>>,
+    pub common_cards: Arc<Vec<CardId>>,
+    pub uncommon_cards: Arc<Vec<CardId>>,
+    pub rare_cards: Arc<Vec<CardId>>,
+    pub colorless_cards: Arc<Vec<CardId>>,
     /// `srcColorlessCardPool`: addToBottom copy of colorlessCardPool. Discovery
     /// reads this; `returnColorlessCard` shuffles `colorless_cards` in place.
-    pub src_colorless_cards: Vec<CardId>,
-    pub curse_cards: Vec<CardId>,
-    pub map: DungeonMap,
+    pub src_colorless_cards: Arc<Vec<CardId>>,
+    pub curse_cards: Arc<Vec<CardId>>,
+    pub map: Arc<DungeonMap>,
     pub path_x: Vec<i32>,
     pub path_y: Vec<i32>,
     pub first_room_chosen: bool,
@@ -51,24 +78,24 @@ impl Dungeon {
             name: "Exordium",
             floor: 0,
             boss: String::new(),
-            boss_list: Vec::new(),
-            monster_list: Vec::new(),
-            elite_list: Vec::new(),
-            event_list: Vec::new(),
-            shrine_list: Vec::new(),
-            special_one_time: Vec::new(),
-            common_relics: Vec::new(),
-            uncommon_relics: Vec::new(),
-            rare_relics: Vec::new(),
-            shop_relics: Vec::new(),
-            boss_relics: Vec::new(),
-            common_cards: Vec::new(),
-            uncommon_cards: Vec::new(),
-            rare_cards: Vec::new(),
-            colorless_cards: Vec::new(),
-            src_colorless_cards: Vec::new(),
-            curse_cards: Vec::new(),
-            map: DungeonMap { nodes: Vec::new() },
+            boss_list: CowVec::default(),
+            monster_list: CowVec::default(),
+            elite_list: CowVec::default(),
+            event_list: CowVec::default(),
+            shrine_list: CowVec::default(),
+            special_one_time: CowVec::default(),
+            common_relics: Arc::new(Vec::new()),
+            uncommon_relics: Arc::new(Vec::new()),
+            rare_relics: Arc::new(Vec::new()),
+            shop_relics: Arc::new(Vec::new()),
+            boss_relics: Arc::new(Vec::new()),
+            common_cards: Arc::new(Vec::new()),
+            uncommon_cards: Arc::new(Vec::new()),
+            rare_cards: Arc::new(Vec::new()),
+            colorless_cards: Arc::new(Vec::new()),
+            src_colorless_cards: Arc::new(Vec::new()),
+            curse_cards: Arc::new(Vec::new()),
+            map: Arc::new(DungeonMap { nodes: Vec::new() }),
             path_x: Vec::new(),
             path_y: Vec::new(),
             first_room_chosen: false,
@@ -109,13 +136,7 @@ impl Dungeon {
                 generate_weighted(
                     &mut rng.monster,
                     &mut self.monster_list,
-                    &[
-                        ("Spheric Guardian", 2.0),
-                        ("Chosen", 2.0),
-                        ("Shell Parasite", 2.0),
-                        ("3 Byrds", 2.0),
-                        ("2 Thieves", 2.0),
-                    ],
+                    &[("Spheric Guardian", 2.0), ("Chosen", 2.0), ("Shell Parasite", 2.0), ("3 Byrds", 2.0), ("2 Thieves", 2.0)],
                     2,
                     false,
                 );
@@ -129,9 +150,7 @@ impl Dungeon {
                     ("3 Cultists", 3.0),
                     ("Shelled Parasite and Fungi", 3.0),
                 ];
-                let exclusions = first_strong_exclusions(
-                    self.monster_list.last().map(String::as_str).unwrap_or(""),
-                );
+                let exclusions = first_strong_exclusions(self.monster_list.last().map(String::as_str).unwrap_or(""));
                 let weights = normalize(&strong);
                 loop {
                     let picked = roll(&weights, rng.monster.random_float());
@@ -144,11 +163,7 @@ impl Dungeon {
                 generate_weighted(
                     &mut rng.monster,
                     &mut self.elite_list,
-                    &[
-                        ("Gremlin Leader", 1.0),
-                        ("Slavers", 1.0),
-                        ("Book of Stabbing", 1.0),
-                    ],
+                    &[("Gremlin Leader", 1.0), ("Slavers", 1.0), ("Book of Stabbing", 1.0)],
                     10,
                     true,
                 );
@@ -159,8 +174,7 @@ impl Dungeon {
                 } else if !unlocks.boss_seen("COLLECTOR") {
                     self.boss_list.push("Collector".into());
                 } else {
-                    self.boss_list
-                        .extend(["Automaton", "Collector", "Champ"].map(str::to_string));
+                    self.boss_list.extend(["Automaton", "Collector", "Champ"].map(str::to_string));
                     shuffle_java(&mut self.boss_list, rng.monster.random_long());
                 }
                 self.event_list.extend(
@@ -219,8 +233,7 @@ impl Dungeon {
                 } else if !unlocks.boss_seen("WIZARD") {
                     self.boss_list.push("Time Eater".into());
                 } else {
-                    self.boss_list
-                        .extend(["Awakened One", "Time Eater", "Donu and Deca"].map(str::to_string));
+                    self.boss_list.extend(["Awakened One", "Time Eater", "Donu and Deca"].map(str::to_string));
                     shuffle_java(&mut self.boss_list, rng.monster.random_long());
                 }
                 self.event_list.extend(
@@ -245,14 +258,15 @@ impl Dungeon {
                 self.elite_list.push("Shield and Spear".into());
                 rng.map = StsRandom::from_seed(seed.wrapping_add(4 * 300));
                 self.boss = "The Heart".into();
-                self.map = crate::map::generate_ending_map();
+                self.map = Arc::new(crate::map::generate_ending_map());
                 let _ = rng.misc.random_int(1);
                 return;
             }
             Act::Exordium => {}
         }
         if self.boss_list.len() == 1 {
-            self.boss_list.push(self.boss_list[0].clone());
+            let duplicate = self.boss_list[0].clone();
+            self.boss_list.push(duplicate);
         }
         if let Some(boss) = self.boss_list.first() {
             self.boss = boss.clone();
@@ -268,12 +282,7 @@ impl Dungeon {
         generate_weighted(
             monster,
             &mut self.monster_list,
-            &[
-                ("Cultist", 2.0),
-                ("Jaw Worm", 2.0),
-                ("2 Louse", 2.0),
-                ("Small Slimes", 2.0),
-            ],
+            &[("Cultist", 2.0), ("Jaw Worm", 2.0), ("2 Louse", 2.0), ("Small Slimes", 2.0)],
             3,
             false,
         );
@@ -299,13 +308,7 @@ impl Dungeon {
             }
         }
         generate_weighted(monster, &mut self.monster_list, &strong, 12, false);
-        generate_weighted(
-            monster,
-            &mut self.elite_list,
-            &[("Gremlin Nob", 1.0), ("Lagavulin", 1.0), ("3 Sentries", 1.0)],
-            10,
-            true,
-        );
+        generate_weighted(monster, &mut self.elite_list, &[("Gremlin Nob", 1.0), ("Lagavulin", 1.0), ("3 Sentries", 1.0)], 10, true);
     }
 
     fn initialize_boss(&mut self, monster: &mut StsRandom, unlocks: &Unlocks) {
@@ -316,15 +319,14 @@ impl Dungeon {
         } else if !unlocks.boss_seen("SLIME") {
             self.boss_list.push("Slime Boss".into());
         } else {
-            self.boss_list
-                .extend(["The Guardian", "Hexaghost", "Slime Boss"].map(str::to_string));
+            self.boss_list.extend(["The Guardian", "Hexaghost", "Slime Boss"].map(str::to_string));
             shuffle_java(&mut self.boss_list, monster.random_long());
         }
         if self.boss_list.len() == 1 {
-            self.boss_list.push(self.boss_list[0].clone());
+            let duplicate = self.boss_list[0].clone();
+            self.boss_list.push(duplicate);
         } else if self.boss_list.is_empty() {
-            self.boss_list
-                .extend(["The Guardian", "Hexaghost", "Slime Boss"].map(str::to_string));
+            self.boss_list.extend(["The Guardian", "Hexaghost", "Slime Boss"].map(str::to_string));
             shuffle_java(&mut self.boss_list, monster.random_long());
         }
         self.boss = self.boss_list[0].clone();
@@ -374,32 +376,18 @@ impl Dungeon {
         // it second (after Match and Keep!). Same index into tmp then picks
         // a different shrine (seed 8 Act 3: Golden Shrine vs Wheel of Change).
         let shrines: &[&str] = match self.act {
-            Act::Exordium => &[
-                "Match and Keep!",
-                "Golden Shrine",
-                "Transmorgrifier",
-                "Purifier",
-                "Upgrade Shrine",
-                "Wheel of Change",
-            ],
-            _ => &[
-                "Match and Keep!",
-                "Wheel of Change",
-                "Golden Shrine",
-                "Transmorgrifier",
-                "Purifier",
-                "Upgrade Shrine",
-            ],
+            Act::Exordium => &["Match and Keep!", "Golden Shrine", "Transmorgrifier", "Purifier", "Upgrade Shrine", "Wheel of Change"],
+            _ => &["Match and Keep!", "Wheel of Change", "Golden Shrine", "Transmorgrifier", "Purifier", "Upgrade Shrine"],
         };
         self.shrine_list.extend(shrines.iter().map(|s| (*s).to_string()));
     }
 
     fn initialize_card_pools(&mut self, character: Character, unlocks: &Unlocks) {
-        self.common_cards.clear();
-        self.uncommon_cards.clear();
-        self.rare_cards.clear();
-        self.colorless_cards.clear();
-        self.curse_cards.clear();
+        Arc::make_mut(&mut self.common_cards).clear();
+        Arc::make_mut(&mut self.uncommon_cards).clear();
+        Arc::make_mut(&mut self.rare_cards).clear();
+        Arc::make_mut(&mut self.colorless_cards).clear();
+        Arc::make_mut(&mut self.curse_cards).clear();
         let wanted_color = match character {
             Character::Ironclad => crate::ids::CardColor::RED,
             Character::Silent => crate::ids::CardColor::GREEN,
@@ -416,9 +404,9 @@ impl Dungeon {
             }
             if def.color == wanted_color && def.rarity != CardRarity::BASIC {
                 match def.rarity {
-                    CardRarity::COMMON => self.common_cards.push(id),
-                    CardRarity::UNCOMMON => self.uncommon_cards.push(id),
-                    CardRarity::RARE => self.rare_cards.push(id),
+                    CardRarity::COMMON => Arc::make_mut(&mut self.common_cards).push(id),
+                    CardRarity::UNCOMMON => Arc::make_mut(&mut self.uncommon_cards).push(id),
+                    CardRarity::RARE => Arc::make_mut(&mut self.rare_cards).push(id),
                     _ => {}
                 }
             }
@@ -433,68 +421,57 @@ impl Dungeon {
                 && def.rarity != CardRarity::SPECIAL
                 && def.card_type != crate::ids::CardType::STATUS
             {
-                self.colorless_cards.push(id);
+                Arc::make_mut(&mut self.colorless_cards).push(id);
             }
         }
         // srcColorlessCardPool.addToBottom each colorlessCardPool card.
-        self.src_colorless_cards = self.colorless_cards.clone();
-        self.src_colorless_cards.reverse();
+        self.src_colorless_cards = Arc::new(self.colorless_cards.as_ref().clone());
+        Arc::make_mut(&mut self.src_colorless_cards).reverse();
         for sts_id in CARD_LIBRARY_HASHMAP_ORDER {
             let Some(id) = CardId::from_sts_id(sts_id) else {
                 continue;
             };
             if id.def().card_type == crate::ids::CardType::CURSE
-                && !matches!(
-                    *sts_id,
-                    "Necronomicurse" | "AscendersBane" | "CurseOfTheBell" | "Pride"
-                )
+                && !matches!(*sts_id, "Necronomicurse" | "AscendersBane" | "CurseOfTheBell" | "Pride")
             {
-                self.curse_cards.push(id);
+                Arc::make_mut(&mut self.curse_cards).push(id);
             }
         }
     }
 
-    fn initialize_relics(
-        &mut self,
-        character: Character,
-        unlocks: &Unlocks,
-        relic_rng: &mut StsRandom,
-        owned_relics: &[RelicId],
-    ) {
-        self.common_relics.clear();
-        self.uncommon_relics.clear();
-        self.rare_relics.clear();
-        self.shop_relics.clear();
-        self.boss_relics.clear();
-        populate_relic_pool(&mut self.common_relics, RelicTier::COMMON, character, unlocks);
-        populate_relic_pool(&mut self.uncommon_relics, RelicTier::UNCOMMON, character, unlocks);
-        populate_relic_pool(&mut self.rare_relics, RelicTier::RARE, character, unlocks);
-        populate_relic_pool(&mut self.shop_relics, RelicTier::SHOP, character, unlocks);
-        populate_relic_pool(&mut self.boss_relics, RelicTier::BOSS, character, unlocks);
-        shuffle_java(&mut self.common_relics, relic_rng.random_long());
-        shuffle_java(&mut self.uncommon_relics, relic_rng.random_long());
-        shuffle_java(&mut self.rare_relics, relic_rng.random_long());
-        shuffle_java(&mut self.shop_relics, relic_rng.random_long());
-        shuffle_java(&mut self.boss_relics, relic_rng.random_long());
+    fn initialize_relics(&mut self, character: Character, unlocks: &Unlocks, relic_rng: &mut StsRandom, owned_relics: &[RelicId]) {
+        let mut common = Vec::new();
+        let mut uncommon = Vec::new();
+        let mut rare = Vec::new();
+        let mut shop = Vec::new();
+        let mut boss = Vec::new();
+        populate_relic_pool(&mut common, RelicTier::COMMON, character, unlocks);
+        populate_relic_pool(&mut uncommon, RelicTier::UNCOMMON, character, unlocks);
+        populate_relic_pool(&mut rare, RelicTier::RARE, character, unlocks);
+        populate_relic_pool(&mut shop, RelicTier::SHOP, character, unlocks);
+        populate_relic_pool(&mut boss, RelicTier::BOSS, character, unlocks);
+        shuffle_java(&mut common, relic_rng.random_long());
+        shuffle_java(&mut uncommon, relic_rng.random_long());
+        shuffle_java(&mut rare, relic_rng.random_long());
+        shuffle_java(&mut shop, relic_rng.random_long());
+        shuffle_java(&mut boss, relic_rng.random_long());
         for owned in owned_relics {
-            let id = owned.sts_id();
-            for pool in [
-                &mut self.common_relics,
-                &mut self.uncommon_relics,
-                &mut self.rare_relics,
-                &mut self.shop_relics,
-                &mut self.boss_relics,
-            ] {
-                if let Some(i) = pool.iter().position(|r| r == id) {
+            for pool in [&mut common, &mut uncommon, &mut rare, &mut shop, &mut boss] {
+                if let Some(i) = pool.iter().position(|r| r == owned) {
                     pool.remove(i);
                     break;
                 }
             }
         }
+        self.common_relics = Arc::new(common);
+        self.uncommon_relics = Arc::new(uncommon);
+        self.rare_relics = Arc::new(rare);
+        self.shop_relics = Arc::new(shop);
+        self.boss_relics = Arc::new(boss);
     }
 
     fn generate_map(&mut self, map_rng: &mut StsRandom, ascension: i32, place_emerald: bool) {
-        self.map = generate_dungeon(MAP_HEIGHT, MAP_WIDTH, MAP_DENSITY, map_rng);
+        self.map = Arc::new(generate_dungeon(MAP_HEIGHT, MAP_WIDTH, MAP_DENSITY, map_rng));
         let mut count = 0;
         for (y, row) in self.map.nodes.iter().enumerate() {
             for node in row {
@@ -505,10 +482,11 @@ impl Dungeon {
         }
         let rooms = generate_room_types(count, 0.05, 0.12, 0.08, 0.22, ascension);
         let last = self.map.nodes.len() - 1;
-        assign_row(&mut self.map, last, RoomType::Rest);
-        assign_row(&mut self.map, 0, RoomType::Monster);
-        assign_row(&mut self.map, 8, RoomType::Treasure);
-        distribute_rooms(&mut self.map, map_rng, rooms);
+        let map = Arc::make_mut(&mut self.map);
+        assign_row(map, last, RoomType::Rest);
+        assign_row(map, 0, RoomType::Monster);
+        assign_row(map, 8, RoomType::Treasure);
+        distribute_rooms(map, map_rng, rooms);
         if place_emerald {
             self.place_emerald_elite(map_rng);
         }
@@ -528,7 +506,7 @@ impl Dungeon {
         }
         let pick = map_rng.random_range(0, elites.len() as i32 - 1) as usize;
         let (x, y) = elites[pick];
-        if let Some(node) = self.map.nodes.get_mut(y as usize).and_then(|r| r.iter_mut().find(|n| n.x == x)) {
+        if let Some(node) = Arc::make_mut(&mut self.map).nodes.get_mut(y as usize).and_then(|r| r.iter_mut().find(|n| n.x == x)) {
             node.emerald_key = true;
         }
     }
@@ -558,11 +536,7 @@ impl Dungeon {
     }
 
     /// `AbstractDungeon.returnRandomRelicKey`: pop front, `!canSpawn` retries from the end.
-    pub fn return_random_relic_key(
-        &mut self,
-        tier: RelicTier,
-        can_spawn: &dyn Fn(RelicId) -> bool,
-    ) -> Option<RelicId> {
+    pub fn return_random_relic_key(&mut self, tier: RelicTier, can_spawn: &dyn Fn(RelicId) -> bool) -> Option<RelicId> {
         let id = match tier {
             RelicTier::COMMON => {
                 if self.common_relics.is_empty() {
@@ -603,11 +577,7 @@ impl Dungeon {
     }
 
     /// `AbstractDungeon.returnEndRandomRelicKey`: pop end (boss still front).
-    pub fn return_end_random_relic_key(
-        &mut self,
-        tier: RelicTier,
-        can_spawn: &dyn Fn(RelicId) -> bool,
-    ) -> Option<RelicId> {
+    pub fn return_end_random_relic_key(&mut self, tier: RelicTier, can_spawn: &dyn Fn(RelicId) -> bool) -> Option<RelicId> {
         let id = match tier {
             RelicTier::COMMON => {
                 if self.common_relics.is_empty() {
@@ -656,11 +626,12 @@ impl Dungeon {
             RelicTier::BOSS => &mut self.boss_relics,
             _ => return None,
         };
+        let pool = Arc::make_mut(pool);
         if pool.is_empty() {
             return None;
         }
         let idx = if from_end { pool.len() - 1 } else { 0 };
-        RelicId::from_sts_id(&pool.remove(idx))
+        Some(pool.remove(idx))
     }
 }
 
@@ -669,14 +640,8 @@ pub fn relic_can_spawn(id: RelicId, floor: i32, act: Act, room: RoomType, player
     let before_act4 = floor <= 48;
     let not_in_shop = room != RoomType::Shop;
     match id {
-        RelicId::Bottled_Flame => player
-            .deck
-            .iter()
-            .any(|c| c.card_type() == CardType::ATTACK && c.rarity() != CardRarity::BASIC),
-        RelicId::Bottled_Lightning => player
-            .deck
-            .iter()
-            .any(|c| c.card_type() == CardType::SKILL && c.rarity() != CardRarity::BASIC),
+        RelicId::Bottled_Flame => player.deck.iter().any(|c| c.card_type() == CardType::ATTACK && c.rarity() != CardRarity::BASIC),
+        RelicId::Bottled_Lightning => player.deck.iter().any(|c| c.card_type() == CardType::SKILL && c.rarity() != CardRarity::BASIC),
         RelicId::Bottled_Tornado => player.deck.iter().any(|c| c.card_type() == CardType::POWER),
         RelicId::Ectoplasm => act as i32 <= 1,
         RelicId::Black_Blood => player.has_relic(RelicId::Burning_Blood),
@@ -684,18 +649,12 @@ pub fn relic_can_spawn(id: RelicId, floor: i32, act: Act, room: RoomType, player
         RelicId::Tiny_Chest => floor <= 35,
         RelicId::Matryoshka | RelicId::WingedGreaves => floor <= 40,
         RelicId::PreservedInsect => floor <= 52,
-        RelicId::The_Courier | RelicId::MawBank | RelicId::Old_Coin | RelicId::Smiling_Mask => {
-            before_act4 && not_in_shop
-        }
+        RelicId::The_Courier | RelicId::MawBank | RelicId::Old_Coin | RelicId::Smiling_Mask => before_act4 && not_in_shop,
         RelicId::Girya | RelicId::Peace_Pipe | RelicId::Shovel => {
             if floor >= 48 {
                 return false;
             }
-            let campfire = player
-                .relics
-                .iter()
-                .filter(|r| matches!(r.id, RelicId::Peace_Pipe | RelicId::Shovel | RelicId::Girya))
-                .count();
+            let campfire = player.relics.iter().filter(|r| matches!(r.id, RelicId::Peace_Pipe | RelicId::Shovel | RelicId::Girya)).count();
             campfire < 2
         }
         RelicId::Ancient_Tea_Set
@@ -718,24 +677,23 @@ pub fn relic_can_spawn(id: RelicId, floor: i32, act: Act, room: RoomType, player
     }
 }
 
-fn populate_relic_pool(pool: &mut Vec<String>, tier: RelicTier, character: Character, unlocks: &Unlocks) {
-    let id_to_tier: std::collections::HashMap<&str, RelicTier> =
-        RELICS.iter().map(|r| (r.sts_id, r.tier)).collect();
+fn populate_relic_pool(pool: &mut Vec<RelicId>, tier: RelicTier, character: Character, unlocks: &Unlocks) {
+    let id_to_tier: std::collections::HashMap<&str, RelicTier> = RELICS.iter().map(|r| (r.sts_id, r.tier)).collect();
     for id in SHARED_RELIC_HASHMAP_ORDER {
         if id_to_tier.get(id) == Some(&tier) && !unlocks.relic_locked(id) {
-            pool.push((*id).to_string());
+            pool.push(RelicId::from_sts_id(id).expect("generated shared relic id"));
         }
     }
     if character == Character::Ironclad {
         for id in RED_RELIC_HASHMAP_ORDER {
             if id_to_tier.get(id) == Some(&tier) && !unlocks.relic_locked(id) {
-                pool.push((*id).to_string());
+                pool.push(RelicId::from_sts_id(id).expect("generated red relic id"));
             }
         }
     } else if character == Character::Defect {
         for id in BLUE_RELIC_HASHMAP_ORDER {
             if id_to_tier.get(id) == Some(&tier) && !unlocks.relic_locked(id) {
-                pool.push((*id).to_string());
+                pool.push(RelicId::from_sts_id(id).expect("generated blue relic id"));
             }
         }
     }
@@ -758,10 +716,7 @@ fn normalize(items: &[(&str, f32)]) -> Vec<(String, f32)> {
     let mut sorted: Vec<(&str, f32)> = items.to_vec();
     sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     let total: f32 = sorted.iter().map(|i| i.1).sum();
-    sorted
-        .into_iter()
-        .map(|(n, w)| (n.to_string(), w / total))
-        .collect()
+    sorted.into_iter().map(|(n, w)| (n.to_string(), w / total)).collect()
 }
 
 fn roll(items: &[(String, f32)], roll: f32) -> &str {
@@ -775,13 +730,7 @@ fn roll(items: &[(String, f32)], roll: f32) -> &str {
     items.last().map(|(n, _)| n.as_str()).unwrap_or("ERROR")
 }
 
-fn generate_weighted(
-    rng: &mut StsRandom,
-    dest: &mut Vec<String>,
-    raw: &[(&str, f32)],
-    count: i32,
-    elites: bool,
-) {
+fn generate_weighted(rng: &mut StsRandom, dest: &mut Vec<String>, raw: &[(&str, f32)], count: i32, elites: bool) {
     let weights = normalize(raw);
     let mut i = 0;
     while i < count {
