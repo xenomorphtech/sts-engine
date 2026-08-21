@@ -705,6 +705,24 @@ fn collector_revives_dead_torch_head_slots() {
 }
 
 #[test]
+fn collector_death_suicides_surviving_summons() {
+    // Seed 4 kills the Collector with FTL while two revived Torch Heads live.
+    // TheCollector.die queues SuicideAction for both before boss rewards open.
+    let cfg = default_config(Character::Defect, "4", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 535,
+                "4 still fails at Collector summon cleanup last_ok={} want > 535: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

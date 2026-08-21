@@ -3867,6 +3867,7 @@ pub fn play_owned_card(
             dungeon,
             defer_ftl_damage,
         );
+        resolve_collector_death(combat);
         for _ in 0..storm {
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
@@ -4166,6 +4167,21 @@ fn resolve_darklings(combat: &mut Combat) {
                 monster.hp = 0;
             }
         }
+    }
+}
+
+fn resolve_collector_death(combat: &mut Combat) {
+    if !combat
+        .monsters
+        .iter()
+        .any(|m| m.id == MonsterId::TheCollector && m.dead)
+    {
+        return;
+    }
+    // TheCollector.die queues SuicideAction for every surviving summon.
+    for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
+        monster.hp = 0;
+        monster.dead = true;
     }
 }
 
