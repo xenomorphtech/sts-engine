@@ -864,6 +864,25 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn abacus_block_on_empty_deck_shuffle() {
+    // 443: EmptyDeckShuffleAction during turn-start draw fires Abacus
+    // GainBlock 6 after loseBlock (block 6 vs 0). draw_cards_rng shuffled
+    // without onShuffle.
+    let cfg = default_config(Character::Defect, "443", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 173,
+                "443 still fails at Abacus shuffle block last_ok={} want > 173: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn astrolabe_transforms_three_cards() {
     // 133: Astrolabe.onEquip GRID 3, transformCard(c, true, miscRng).
     // Choose 13/11/7 = Ball Lightning, Melter, Compile Driver → Gash+/White

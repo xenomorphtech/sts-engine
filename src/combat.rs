@@ -3237,10 +3237,12 @@ pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngS
             if player.discard.is_empty() {
                 break;
             }
-            player.draw.append(&mut player.discard);
+            // EmptyDeckShuffleAction ctor: relic.onShuffle (Abacus +6 after
+            // loseBlock, seed 443 block 6 vs 0) then shuffle discard into draw.
             if let Some(rng) = rng.as_mut() {
-                let seed = rng.shuffle.random_long();
-                shuffle_java(&mut player.draw, seed);
+                reshuffle_if_needed(player, rng);
+            } else {
+                player.draw.append(&mut player.discard);
             }
             continue;
         }
