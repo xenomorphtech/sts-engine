@@ -3110,6 +3110,24 @@ fn centennial_puzzle_draws_between_multi_hits() {
 }
 
 #[test]
+fn pain_loses_hp_when_another_card_is_played() {
+    // 897: Pain remains in hand when Loop is played at the start of the
+    // three-Cultist fight. triggerOnOtherCardPlayed queues LoseHPAction(1).
+    let cfg = default_config(Character::Defect, "897", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 362,
+                "897 still omits Pain's play hook last_ok={} want > 362: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

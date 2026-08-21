@@ -4071,6 +4071,26 @@ pub fn play_owned_card(
             add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
         }
         on_use_card(player, combat, &card, rng);
+        // AbstractPlayer.useCard calls hand.triggerOnOtherCardPlayed after
+        // constructing UseCardAction. Pain queues LoseHPAction addToTop, so
+        // each copy still in hand loses 1 HP before the card's queued effects.
+        let pain = player.hand.iter().filter(|c| c.id == CardId::Pain).count() as i32;
+        for _ in 0..pain {
+            let dmg = buffer_absorb(player, intangible_player(player, 1));
+            let dmg = on_lose_hp_last(player, dmg);
+            if dmg > 0 {
+                player.hp -= dmg;
+                if player.hp < 0 {
+                    player.hp = 0;
+                }
+                let _ = try_cheat_death(player);
+                red_skull_on_hp_change(player);
+                centennial_puzzle_was_hp_lost(player, rng);
+            }
+            if player.hp <= 0 {
+                return false;
+            }
+        }
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         // SharpHidePower.onUseCard queues THORNS (DAMAGE, kept after combat)
         // before Damage/Channel resolve. Snapshot while the owner is alive
