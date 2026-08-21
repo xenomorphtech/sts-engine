@@ -2500,12 +2500,7 @@ impl Monster {
                 let _ = hit_player(player, self, rng, 6, 2);
             }
             (MonsterId::ShelledParasite, 3) => {
-                let dealt = hit_player(player, self, rng, 10, 1);
-                // VampireDamageAction queues HealAction after target.damage.
-                // A lethal hit stops the room update before that heal resolves.
-                if dealt > 0 && player.hp > 0 {
-                    self.hp = (self.hp + dealt).min(self.max_hp);
-                }
+                let _ = hit_player_vampire(player, self, rng, 10);
             }
             (MonsterId::FungiBeast, 1) => {
                 let _ = hit_player(player, self, rng, 6, 1);
@@ -3134,6 +3129,21 @@ fn buffer_absorb(player: &mut Player, dmg: i32) -> i32 {
 }
 
 fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base: i32, hits: i32) -> i32 {
+    hit_player_inner(player, monster, rng, base, hits, false)
+}
+
+fn hit_player_vampire(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base: i32) -> i32 {
+    hit_player_inner(player, monster, rng, base, 1, true)
+}
+
+fn hit_player_inner(
+    player: &mut Player,
+    monster: &mut Monster,
+    rng: &mut RngSet,
+    base: i32,
+    hits: i32,
+    vampire_heal: bool,
+) -> i32 {
     let mut total = 0;
     for _ in 0..hits {
         // DamageInfo.applyPowers (monster → player): chain atDamageGive /
@@ -3187,6 +3197,12 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
             if monster.powers.iter().any(|p| p.id == PowerId::PainfulStabs) {
                 player.discard.push(Card::new(CardId::Wound));
             }
+        }
+        // VampireDamageAction adds HealAction to the top after damage(), ahead
+        // of the Thorns/Static actions queued by onAttacked. A lethal hit ends
+        // the room update before that queued heal can resolve.
+        if vampire_heal && dmg > 0 && player.hp > 0 {
+            monster.hp = (monster.hp + dmg).min(monster.max_hp);
         }
         for _ in 0..static_n {
             channel_static_lightning_mid_hit(player, monster, rng);

@@ -2658,6 +2658,24 @@ fn hex_inserts_dazed_before_multicast_evokes() {
 }
 
 #[test]
+fn life_suck_heals_before_queued_thorns() {
+    // 59: Shelled Parasite starts Life Suck at full HP. Its queued heal is a
+    // no-op before Bronze Scales deals 3, so the reflected damage must remain.
+    let cfg = default_config(Character::Defect, "59", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 297,
+                "59 still heals Life Suck after Thorns last_ok={} want > 297: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
