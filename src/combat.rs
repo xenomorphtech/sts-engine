@@ -4016,16 +4016,15 @@ pub fn play_owned_card(
         } else {
             0
         };
-        // Tempest.use queues TempestAction, then the UseCardAction constructor
-        // queues Hex's MakeTempCardInDrawPileAction. TempestAction only queues
-        // its ChannelActions when it later runs, so Hex inserts Dazed before a
-        // full slot can evoke Lightning and consume cardRandomRng (seed 75).
-        let hex_before_tempest = if card.id == CardId::Tempest {
+        // Tempest/Multi-Cast use() queue wrapper actions, then UseCardAction's
+        // constructor queues Hex. The wrappers later add their Channel/Evoke
+        // actions behind Hex, so Dazed is inserted before orb target RNG.
+        let hex_before_deferred_orbs = if matches!(card.id, CardId::Tempest | CardId::Multi_Cast) {
             player.power_amount(PowerId::Hex)
         } else {
             0
         };
-        for _ in 0..hex_before_tempest {
+        for _ in 0..hex_before_deferred_orbs {
             add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
         }
         on_use_card(player, combat, &card, rng);
@@ -4077,7 +4076,7 @@ pub fn play_owned_card(
         // UseCardAction walks player powers before relics. Hex therefore
         // inserts its Dazed before Ink Bottle's queued draw (seed 444).
         let defer_seek_reactions = card.id == CardId::Seek && combat.need_draw_to_hand;
-        if card.id != CardId::Tempest
+        if !matches!(card.id, CardId::Tempest | CardId::Multi_Cast)
             && card.card_type() != CardType::ATTACK
             && player.power_amount(PowerId::Hex) > 0
         {

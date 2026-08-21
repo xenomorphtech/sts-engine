@@ -2640,6 +2640,24 @@ fn mercury_hourglass_resolves_before_loop_lightning() {
 }
 
 #[test]
+fn hex_inserts_dazed_before_multicast_evokes() {
+    // 722: Multi-Cast's wrapper queues its evoke actions behind Hex. Inserting
+    // Dazed after those Lightning target rolls changes the hidden draw order.
+    let cfg = default_config(Character::Defect, "722", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 296,
+                "722 still resolves Multi-Cast before Hex last_ok={} want > 296: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
