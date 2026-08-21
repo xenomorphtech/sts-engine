@@ -346,6 +346,25 @@ fn plasma_grants_energy_at_turn_start() {
 }
 
 #[test]
+fn thorns_stops_later_hits_after_killing_attacker() {
+    // Seed 943 ends the Hexaghost fight with the boss at 6 HP and Thorns 3.
+    // Its two-hit Tackle queues separate DamageActions; hit two is cancelled
+    // after the first hit's Thorns damage makes Hexaghost start dying.
+    let cfg = default_config(Character::Defect, "943", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 184,
+                "943 still fails at lethal Thorns multi-hit last_ok={} want > 184: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

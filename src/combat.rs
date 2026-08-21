@@ -3084,6 +3084,12 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
                 monster.powers.retain(|p| p.id != PowerId::SporeCloud);
             }
         }
+        // Java represents multi-hit attacks as separate DamageActions. A
+        // later hit cancels when reactive damage (for example Thorns) made
+        // its source start dying during an earlier hit.
+        if monster.dead {
+            break;
+        }
     }
     if total > 0 {
         red_skull_on_hp_change(player);
