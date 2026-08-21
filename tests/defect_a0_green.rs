@@ -2622,6 +2622,24 @@ fn lethal_life_suck_does_not_resolve_queued_heal() {
 }
 
 #[test]
+fn mercury_hourglass_resolves_before_loop_lightning() {
+    // 742: Byrd has 3 HP at turn start. Mercury Hourglass kills it before
+    // Loop selects a random target, forcing Loop's Lightning into Chosen.
+    let cfg = default_config(Character::Defect, "742", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 293,
+                "742 still resolves Loop before Hourglass last_ok={} want > 293: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

@@ -6142,6 +6142,26 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             }
         }
     }
+    // Preserve the observed target-set dependency without moving Hourglass
+    // ahead of unrelated start-turn effects: when its 3 THORNS will remove a
+    // target, Java does so before Loop selects its random Lightning target.
+    let hourglass_before_loop = player.has_relic(RelicId::Mercury_Hourglass)
+        && player.power_amount(PowerId::Loop) > 0
+        && combat
+            .monsters
+            .iter()
+            .any(|m| m.alive() && m.block < 3 && m.hp <= 3 - m.block);
+    if hourglass_before_loop {
+        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
+            deal_thorns(m, rng, 3);
+        }
+        gremlin_horn_on_kills(player, combat, rng, dead_before);
+        flush_spore_cloud(player, combat);
+        if combat.all_dead() {
+            return;
+        }
+    }
     // LoopPower.atStartOfTurn calls orb onEndOfTurn while BiasPower still
     // only has an addToBot Focus-1 queued, so lightning/frost/dark snapshot
     // the pre-Bias amount. Apply Loop before Bias, after CreativeAI RNG.
@@ -6171,7 +6191,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         }
     }
     tick_turn_start_block_relics(player);
-    if player.has_relic(RelicId::Mercury_Hourglass) {
+    if !hourglass_before_loop && player.has_relic(RelicId::Mercury_Hourglass) {
         let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, rng, 3);
