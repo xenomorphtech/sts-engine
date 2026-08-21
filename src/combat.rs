@@ -5174,7 +5174,10 @@ fn apply_card_effect(
         }
         CardId::J_A_X_ => {
             // JAX.use: LoseHPAction(3) then Strength magic (2, +1 upgraded).
-            let dmg = on_lose_hp_last(player, intangible_player(player, 3));
+            // AbstractPlayer.damage still runs Buffer.onAttackedToChangeDamage
+            // for HP_LOSS, so an active Buffer charge prevents this loss.
+            let dmg = buffer_absorb(player, intangible_player(player, 3));
+            let dmg = on_lose_hp_last(player, dmg);
             if dmg > 0 {
                 player.hp -= dmg;
                 red_skull_on_hp_change(player);

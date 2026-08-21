@@ -220,6 +220,24 @@ fn slavers_encounter_includes_taskmaster_and_honors_red_mask() {
 }
 
 #[test]
+fn buffer_absorbs_jax_hp_loss() {
+    // Seed 340 plays Buffer immediately before J.A.X. in the Slavers fight.
+    // Java's Buffer hook consumes the charge and prevents J.A.X.'s 3 HP loss.
+    let cfg = default_config(Character::Defect, "340", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 308,
+                "340 still fails at Buffer/J.A.X. last_ok={} want > 308: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
