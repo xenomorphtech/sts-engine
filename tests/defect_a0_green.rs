@@ -536,6 +536,26 @@ fn player_death_wins_simultaneous_card_kill() {
 }
 
 #[test]
+fn static_discharge_evoke_can_cancel_guardian_second_hit() {
+    // Seed 572 ends Guardian's first Twin Slam hit with a full orb row.
+    // Static Discharge channels Lightning at the top of Java's action queue;
+    // Electrodynamics makes the evoked Lightning kill Guardian before its
+    // separately queued second hit, preserving 9 HP rather than 1.
+    let cfg = default_config(Character::Defect, "572", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 199,
+                "572 still fails at Static Discharge/Guardian queue order last_ok={} want > 199: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).

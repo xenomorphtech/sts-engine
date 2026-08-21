@@ -3073,7 +3073,7 @@ fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base
             }
         }
         for _ in 0..static_n {
-            channel_static_lightning_mid_hit(player);
+            channel_static_lightning_mid_hit(player, monster);
         }
         // ThornsPower.onAttacked addToTop DamageAction. If this hit is lethal,
         // ExactTextSim death snapshots before that thorns DamageAction (seed 1
@@ -6030,8 +6030,11 @@ fn decrease_max_orb_slots(player: &mut Player, amount: i32) {
 /// StaticDischargePower.onAttacked addToTop(ChannelAction(Lightning)).
 /// Frost evoke is GainBlockAction addToTop, so block must land before the
 /// next hit. Lightning/Dark evokes need Combat; stash amounts until
-/// `flush_mid_hit_evokes` after take_turn.
-fn channel_static_lightning_mid_hit(player: &mut Player) {
+/// `flush_mid_hit_evokes` after take_turn. Electrodynamics is deterministic
+/// all-enemy damage, so resolve a lethal hit on the current attacker now: in
+/// Java that DamageAllEnemiesAction runs before the next queued DamageAction
+/// and a dying source cancels its later hit (seed 572 Guardian Twin Slam).
+fn channel_static_lightning_mid_hit(player: &mut Player, attacker: &mut Monster) {
     if player.max_orbs <= 0 {
         return;
     }
@@ -6042,7 +6045,18 @@ fn channel_static_lightning_mid_hit(player: &mut Player) {
         let amt = orb_evoke_amount(orb, focus_of(player));
         match orb.kind {
             OrbKind::Frost => gain_player_block(player, amt),
-            OrbKind::Lightning => player.pending_evoke_lightning.push(amt),
+            OrbKind::Lightning => {
+                player.pending_evoke_lightning.push(amt);
+                if player.power_amount(PowerId::Electro) > 0 && attacker.alive() {
+                    let mut probe = attacker.clone();
+                    let probe_amt = apply_lock_on(&probe, amt);
+                    deal_thorns(&mut probe, probe_amt);
+                    if probe.dead {
+                        let attacker_amt = apply_lock_on(attacker, amt);
+                        deal_thorns(attacker, attacker_amt);
+                    }
+                }
+            }
             OrbKind::Dark => player.pending_evoke_dark.push(amt),
             OrbKind::Plasma => player.energy += amt,
         }
