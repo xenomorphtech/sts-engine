@@ -4162,6 +4162,11 @@ fn apply_card_effect(
         CardId::Mayhem => {
             player.add_power(PowerId::Mayhem, card.base_magic.max(1) as i32);
         }
+        CardId::Master_of_Strategy => {
+            // DrawCardAction(magic 3, 4 upgraded) then exhaust.
+            let n = draw_cards_rng(player, card.base_magic.max(3) as i32, Some(rng));
+            apply_fire_breathing(player, &mut combat.monsters, n);
+        }
         CardId::Scrape => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {

@@ -959,6 +959,12 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         },
         (CardId::Mayhem, false) => CardStats::skill(2, -1, 1),
         (CardId::Mayhem, true) => CardStats::skill(1, -1, 1),
+        (CardId::Master_of_Strategy, false) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 3, exhaust: true, ethereal: false, innate: false,
+        },
+        (CardId::Master_of_Strategy, true) => CardStats {
+            cost: 0, damage: -1, block: -1, magic: 4, exhaust: true, ethereal: false, innate: false,
+        },
         _ => {
             let def = id.def();
             CardStats {

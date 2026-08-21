@@ -864,6 +864,24 @@ fn mind_blast_damage_is_draw_pile_size() {
 }
 
 #[test]
+fn master_of_strategy_draws_and_exhausts() {
+    // 193: Master of Strategy DrawCardAction(3) + exhaust. Rust discarded
+    // it and skipped the draws (hand 4 vs 7).
+    let cfg = default_config(Character::Defect, "193", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 175,
+                "193 still fails at Master of Strategy last_ok={} want > 175: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn abacus_block_on_empty_deck_shuffle() {
     // 443: EmptyDeckShuffleAction during turn-start draw fires Abacus
     // GainBlock 6 after loseBlock (block 6 vs 0). draw_cards_rng shuffled
