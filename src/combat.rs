@@ -4071,6 +4071,7 @@ pub fn play_owned_card(
     let mut original_resolved_before_copy = false;
     let mut all_for_one_after_original = Vec::new();
     let mut gremlin_horn_after_original = 0;
+    let mut dualcast_stasis_after_use_card = false;
     // DuplicationPower.makeSameInstanceOf snapshots Claw before the original
     // card's queued GashAction raises its base damage. The limbo copy therefore
     // uses the old damage, while its own GashAction still upgrades the original
@@ -4237,7 +4238,18 @@ pub fn play_owned_card(
         }
         let mut gremlin_horn_triggers =
             gremlin_horn_trigger_count(player, combat, dead_before);
-        flush_pending_stasis(player, combat);
+        if card.id == CardId::Dualcast
+            && plays == 1
+            && !combat.pending_stasis_cards.is_empty()
+        {
+            // Stasis cards killed by Dualcast's queued evocations are added
+            // behind UseCardAction. Ink Bottle draws first, then Dualcast
+            // reaches discard, then a full hand sends Stasis to discard
+            // (seed 579: Dualcast precedes Melter in the shuffle pile).
+            dualcast_stasis_after_use_card = true;
+        } else {
+            flush_pending_stasis(player, combat);
+        }
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
             let spores = monster.power_amount(PowerId::SporeCloud);
             if spores > 0 {
@@ -4427,6 +4439,9 @@ pub fn play_owned_card(
         player.discard.push(card);
     }
     flush_dark_embrace(player, combat, rng);
+    if dualcast_stasis_after_use_card {
+        flush_pending_stasis(player, combat);
+    }
     resolve_gremlin_horn_triggers(player, combat, rng, gremlin_horn_after_original);
     return_all_for_one_cards(player, &all_for_one_after_original);
     for monster in combat.monsters.iter_mut() {
