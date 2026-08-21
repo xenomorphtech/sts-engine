@@ -2005,8 +2005,13 @@ impl Game {
                     self.player.add_power(crate::ids::PowerId::Focus, potency);
                 }
                 PotionId::PotionOfCapacity => {
-                    // PotionOfCapacity.use -> IncreaseMaxOrbAction(getPotency()=2).
-                    combat::increase_max_orb_slots(&mut self.player, 2);
+                    // PotionOfCapacity.use -> IncreaseMaxOrbAction(potency).
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        4
+                    } else {
+                        2
+                    };
+                    combat::increase_max_orb_slots(&mut self.player, potency);
                 }
                 PotionId::EssenceOfDarkness => {
                     // EssenceOfDarknessAction: channel Dark once per orb slot

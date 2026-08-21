@@ -2856,6 +2856,24 @@ fn sacred_bark_doubles_swift_potion_draw() {
 }
 
 #[test]
+fn sacred_bark_doubles_potion_of_capacity_slots() {
+    // 705: four added orb slots prevent Coolheaded from evoking Lightning
+    // into Shelled Parasite's block before the lethal enemy turn.
+    let cfg = default_config(Character::Defect, "705", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 309,
+                "705 still uses base Capacity Potion slots last_ok={} want > 309: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
