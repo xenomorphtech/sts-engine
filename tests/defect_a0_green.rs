@@ -2964,6 +2964,24 @@ fn buying_membership_card_discounts_current_shop_stock() {
 }
 
 #[test]
+fn colosseum_reopen_resets_player_and_prepares_the_deck() {
+    // 672: reopen() clears the first fight's block and powers, then
+    // preBattlePrep initializes and shuffles the master deck once.
+    let cfg = default_config(Character::Defect, "672", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 322,
+                "672 still preserves combat state on Colosseum reopen last_ok={} want > 322: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

@@ -2231,6 +2231,19 @@ impl Game {
                 self.rewards.len(),
                 self.player.has_relic(RelicId::White_Beast_Statue),
             );
+            // Colosseum.reopen calls resetPlayer() and preBattlePrep() even
+            // before the player chooses whether to take the second fight.
+            self.player.block = 0;
+            self.player.powers.clear();
+            self.player.orbs.clear();
+            self.player.max_orbs = self.player.master_max_orbs;
+            self.player.draw = self.player.deck.clone();
+            self.player.hand.clear();
+            self.player.discard.clear();
+            self.player.exhaust.clear();
+            let shuffle_seed = self.rng.shuffle.random_long();
+            shuffle_java(&mut self.player.draw, shuffle_seed);
+            self.player.energy = self.player.energy_master;
             self.rewards.clear();
             self.combat = None;
             if let Some(event) = self.event.as_mut() {
