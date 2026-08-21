@@ -5513,21 +5513,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         }
         if explode {
             for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
-                let dealt = apply_block(&mut monster.block, bomb_dmg);
-                if dealt > 0 {
-                    monster.hp -= dealt;
-                    if monster.hp <= 0 {
-                        monster.hp = 0;
-                        if monster.id == MonsterId::Darkling {
-                            monster.half_dead = true;
-                            monster.dead = false;
-                            monster.powers.clear();
-                            monster.set_move(4, Intent::Unknown, 0, 1);
-                        } else {
-                            monster.dead = true;
-                        }
-                    }
-                }
+                // DamageAllEnemiesAction uses THORNS, so every monster's
+                // damage override still fires. In particular, The Bomb can
+                // force Slime Boss / large slimes to Split before their turn.
+                deal_thorns(monster, bomb_dmg);
             }
             if combat.all_dead() {
                 return;

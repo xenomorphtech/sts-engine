@@ -460,6 +460,25 @@ fn temporary_card_costs_reset_at_end_of_turn() {
 }
 
 #[test]
+fn the_bomb_damage_triggers_slime_boss_split() {
+    // Seed 887 ends a turn with Slime Boss at 74 HP. Lightning deals 3, then
+    // The Bomb's THORNS damage deals 40; SlimeBoss.damage must replace its
+    // weakened Slam with Split before the monster phase.
+    let cfg = default_config(Character::Defect, "887", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 193,
+                "887 still fails at The Bomb/Slime Boss split last_ok={} want > 193: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
