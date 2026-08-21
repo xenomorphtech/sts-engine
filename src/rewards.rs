@@ -492,11 +492,11 @@ fn truly_random_combat_card(
     // CardGroup.addToTop appends; src pools copy via addToBottom, reversing
     // each rarity. returnTrulyRandomCardInCombat concatenates the src pools.
     let mut list: Vec<CardId> = if colorless {
-        dungeon.src_colorless_cards.clone()
+        dungeon.src_colorless_cards.as_ref().clone()
     } else {
-        let mut commons = dungeon.common_cards.clone();
-        let mut uncommons = dungeon.uncommon_cards.clone();
-        let mut rares = dungeon.rare_cards.clone();
+        let mut commons = dungeon.common_cards.as_ref().clone();
+        let mut uncommons = dungeon.uncommon_cards.as_ref().clone();
+        let mut rares = dungeon.rare_cards.as_ref().clone();
         commons.reverse();
         uncommons.reverse();
         rares.reverse();

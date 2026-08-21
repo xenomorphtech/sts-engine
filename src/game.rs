@@ -7,6 +7,7 @@ use crate::ids::{CardId, CardRarity, CardType, Character, EncounterId, PotionId,
 use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -89,7 +90,7 @@ pub struct Game {
     pub seed: i64,
     pub ascension: i32,
     pub character: Character,
-    pub unlocks: Unlocks,
+    pub unlocks: Arc<Unlocks>,
     pub rng: RngSet,
     pub player: Player,
     pub dungeon: Dungeon,
@@ -307,7 +308,7 @@ impl Game {
             seed,
             ascension,
             character,
-            unlocks,
+            unlocks: Arc::new(unlocks),
             rng,
             player: {
                 let mut p = Player::for_character(character);
@@ -454,14 +455,38 @@ impl Game {
                 }
             }
             Screen::Rest => {
-                for (i, kind) in self.campfire_options().into_iter().enumerate() {
-                    actions.push(Action::Choose {
-                        index: i,
-                        label: Some(kind.into()),
-                        x: None,
-                        y: None,
-                        room: None,
-                    });
+                if self.rest_smithing {
+                    if self.rest_smith_picked {
+                        actions.push(Action::Proceed);
+                    } else {
+                        for (i, card) in self
+                            .player
+                            .deck
+                            .iter()
+                            .filter(|card| card.can_upgrade())
+                            .enumerate()
+                        {
+                            actions.push(Action::Choose {
+                                index: i,
+                                label: Some(card.sts_id().into()),
+                                x: None,
+                                y: None,
+                                room: None,
+                            });
+                        }
+                    }
+                } else if self.rest_selected {
+                    actions.push(Action::Proceed);
+                } else {
+                    for (i, kind) in self.campfire_options().into_iter().enumerate() {
+                        actions.push(Action::Choose {
+                            index: i,
+                            label: Some(kind.into()),
+                            x: None,
+                            y: None,
+                            room: None,
+                        });
+                    }
                 }
             }
             Screen::Shop => {
@@ -1080,7 +1105,7 @@ impl Game {
             // transformCard routes colorless sources through
             // returnTrulyRandomColorlessCardFromAvailable, whose list is the
             // addToBottom copy held in srcColorlessCardPool.
-            let mut pool = self.dungeon.src_colorless_cards.clone();
+            let mut pool = self.dungeon.src_colorless_cards.as_ref().clone();
             pool.retain(|id| *id != avoid);
             if pool.is_empty() {
                 return None;
@@ -1088,10 +1113,10 @@ impl Game {
             let idx = self.rng.misc.random_int(pool.len() as i32 - 1) as usize;
             return Some(pool[idx]);
         }
-        let mut pool: Vec<CardId> = self.dungeon.common_cards.clone();
-        let mut uncommons = self.dungeon.uncommon_cards.clone();
+        let mut pool: Vec<CardId> = self.dungeon.common_cards.as_ref().clone();
+        let mut uncommons = self.dungeon.uncommon_cards.as_ref().clone();
         uncommons.reverse();
-        let mut rares = self.dungeon.rare_cards.clone();
+        let mut rares = self.dungeon.rare_cards.as_ref().clone();
         rares.reverse();
         pool.extend(uncommons);
         pool.extend(rares);
@@ -1498,10 +1523,10 @@ impl Game {
         // commonCardPool (running, addToTop=append) then srcUncommonCardPool
         // and srcRareCardPool. src pools are copied with addToBottom, which
         // reverses each rarity relative to the running pools.
-        let mut pool: Vec<CardId> = self.dungeon.common_cards.clone();
-        let mut uncommons = self.dungeon.uncommon_cards.clone();
+        let mut pool: Vec<CardId> = self.dungeon.common_cards.as_ref().clone();
+        let mut uncommons = self.dungeon.uncommon_cards.as_ref().clone();
         uncommons.reverse();
-        let mut rares = self.dungeon.rare_cards.clone();
+        let mut rares = self.dungeon.rare_cards.as_ref().clone();
         rares.reverse();
         pool.extend(uncommons);
         pool.extend(rares);
@@ -1719,7 +1744,7 @@ impl Game {
         self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
         self.maw_bank_on_enter_room();
         if y >= 0 && y < self.dungeon.map.height() as i32 && x >= 0 {
-            self.dungeon.map.node_mut(x, y).taken = true;
+            std::sync::Arc::make_mut(&mut self.dungeon.map).node_mut(x, y).taken = true;
         }
         match room {
             RoomType::Monster | RoomType::Elite | RoomType::Boss => self.start_combat_in_current_room(),
@@ -3082,6 +3107,7 @@ impl Game {
                     Some("Smith") => {
                         self.rest_smithing = true;
                         self.rest_smith_picked = false;
+                        self.rest_selected = true;
                     }
                     Some("Recall") => {
                         self.has_ruby_key = true;
@@ -3775,7 +3801,7 @@ impl Game {
                     CardId::Necronomicurse | CardId::CurseOfTheBell | CardId::AscendersBane
                 )
         });
-        for e in &self.dungeon.special_one_time {
+        for e in self.dungeon.special_one_time.iter() {
             let include = match e.as_str() {
                 "Fountain of Cleansing" => cursed,
                 "Designer" => {
@@ -3805,7 +3831,7 @@ impl Game {
 
     fn pick_normal_event(&mut self, rng: &mut StsRandom) -> String {
         let mut tmp = Vec::new();
-        for e in &self.dungeon.event_list {
+        for e in self.dungeon.event_list.iter() {
             match e.as_str() {
                 "Dead Adventurer" | "Mushrooms" => {
                     if self.dungeon.floor > 6 {
@@ -4265,7 +4291,10 @@ impl Game {
     /// `AbstractDungeon.returnColorlessCard(UNCOMMON)`: shuffle `colorlessCardPool` in place.
     fn return_colorless_uncommon(&mut self) -> CardId {
         let seed = self.rng.shuffle.random_long();
-        shuffle_java(&mut self.dungeon.colorless_cards, seed);
+        shuffle_java(
+            std::sync::Arc::make_mut(&mut self.dungeon.colorless_cards).as_mut_slice(),
+            seed,
+        );
         self.dungeon
             .colorless_cards
             .iter()

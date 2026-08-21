@@ -1,6 +1,7 @@
 use crate::action::{Action, PotionOp};
 use crate::game::{Game, Screen};
 use crate::ids::PotionId;
+use std::collections::VecDeque;
 
 use super::{strategy, turnplan};
 
@@ -8,7 +9,7 @@ use super::{strategy, turnplan};
 #[derive(Clone, Debug, Default)]
 pub struct HtnAgent {
     visited_shop_floors: Vec<i32>,
-    recent: Vec<String>,
+    recent: VecDeque<(Screen, i32, Action)>,
 }
 
 impl HtnAgent {
@@ -61,11 +62,7 @@ impl HtnAgent {
             Screen::Treasure => legal.iter().find(|a| matches!(a, Action::Choose { .. })).cloned(),
             Screen::Event | Screen::Neow => Some(strategy::event_choice(game, legal)),
             Screen::HandSelect => Some(strategy::hand_select(game, legal)),
-            Screen::Grid => legal
-                .iter()
-                .find(|a| matches!(a, Action::Proceed))
-                .cloned()
-                .or_else(|| legal.iter().find(|a| matches!(a, Action::Choose { .. })).cloned()),
+            Screen::Grid => self.grid_choice(game, legal),
             Screen::DoorUnlock | Screen::ActTransition => Some(Action::Proceed),
             Screen::Terminal => Some(Action::Quit),
         }
@@ -84,11 +81,35 @@ impl HtnAgent {
         strategy::shop_choice(game, legal)
     }
 
+    fn grid_choice(&self, game: &Game, legal: &[Action]) -> Option<Action> {
+        legal
+            .iter()
+            .find(|action| matches!(action, Action::Proceed))
+            .cloned()
+            .or_else(|| {
+                legal
+                    .iter()
+                    .filter(|action| matches!(action, Action::Choose { .. }))
+                    .min_by_key(|action| {
+                        self.recent
+                            .iter()
+                            .filter(|(screen, floor, prior)| {
+                                *screen == game.screen
+                                    && *floor == game.dungeon.floor
+                                    && prior == *action
+                            })
+                            .count()
+                    })
+                    .cloned()
+            })
+            .or_else(|| legal.first().cloned())
+    }
+
     fn anti_stall(&mut self, game: &Game, cmd: Action, legal: &[Action]) -> Action {
-        let key = format!("{:?}:{}:{:?}", game.screen, game.dungeon.floor, cmd);
-        self.recent.push(key.clone());
+        let key = (game.screen, game.dungeon.floor, cmd.clone());
+        self.recent.push_back(key.clone());
         if self.recent.len() > 12 {
-            self.recent.remove(0);
+            self.recent.pop_front();
         }
         let repeats = self.recent.iter().filter(|k| *k == &key).count();
         if repeats >= 3 && matches!(cmd, Action::Choose { .. } | Action::Skip | Action::Proceed) {
@@ -104,6 +125,38 @@ impl HtnAgent {
             }
         }
         cmd
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::Character;
+    use crate::Unlocks;
+
+    fn choose(index: usize) -> Action {
+        Action::Choose {
+            index,
+            label: Some(format!("card {index}")),
+            x: None,
+            y: None,
+            room: None,
+        }
+    }
+
+    #[test]
+    fn multi_pick_grid_rotates_away_from_prior_choice() {
+        let mut game = Game::new(642, Character::Defect, 0, Unlocks::fixture());
+        game.screen = Screen::Grid;
+        game.dungeon.floor = 12;
+        let legal = vec![choose(0), choose(1), choose(2)];
+        let mut agent = HtnAgent::new();
+
+        let first = agent.grid_choice(&game, &legal).unwrap();
+        assert_eq!(first, legal[0]);
+        agent.recent.push_back((game.screen, game.dungeon.floor, first));
+
+        assert_eq!(agent.grid_choice(&game, &legal), Some(legal[1].clone()));
     }
 }
 

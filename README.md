@@ -69,6 +69,30 @@ cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-bench
 cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-parity -- --character DEFECT --seed 338612
 ```
 
+HTN engine optimizations are gated by a compact final-state fixture. It has one
+JSON object per seed (no turn trace), including progression, player/combat
+state, and every gameplay RNG stream. Generate or verify the fixed 10,000-seed
+Defect A0 cohort with:
+
+```sh
+cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-htn -- --seed 0 --count 10000 --concurrent 8 --a0 --fixture-jsonl sts-engine/fixtures/htn/defect-a0-seeds-0-9999.jsonl
+cargo run --release --manifest-path sts-engine/Cargo.toml --bin sts-htn -- --seed 0 --count 10000 --concurrent 8 --a0 --compare-jsonl sts-engine/fixtures/htn/defect-a0-seeds-0-9999.jsonl
+```
+
+The comparison exits nonzero at the first exact mismatch. Policy changes may
+legitimately alter the fixture, so use this gate for engine/representation
+changes while holding HTN decisions fixed. Measured results and the snapshot
+design notes are in [`HTN_PERFORMANCE.md`](HTN_PERFORMANCE.md). The checked-in
+cohort has no 5,000-step caps; any newly capped seed is a loop regression.
+
+Action capture is opt-in and buffered per seed. It can isolate engine stepping
+from HTN search:
+
+```sh
+sts-htn --seed 0 --count 10000 --concurrent 8 --a0 --actions-jsonl /tmp/defect-a0-actions.jsonl
+sts-htn --character DEFECT --a0 --concurrent 8 --replay-actions-jsonl /tmp/defect-a0-actions.jsonl --compare-jsonl sts-engine/fixtures/htn/defect-a0-seeds-0-9999.jsonl
+```
+
 `sts-parity` lockstep-replays an ExactTextSim oracle and prints the first
 mismatch with screen, event options, rewards, card-reward list, pending cards,
 RNG counters, and the commands around the fail. Agents should use that instead
@@ -119,4 +143,3 @@ transcripts, not “Defect is done” and not a claim that HTN wins Act 4.
 - `Unlocks::fixture()` — captured ExactTextSim profile
 - `Unlocks::all()` — research default; every card and relic is in the pool so
   a seed alone determines the run
-

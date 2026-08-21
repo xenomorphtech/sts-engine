@@ -56,6 +56,41 @@ fn ending_rest_heals_thirty_percent() {
     });
     assert_eq!(game.player.hp, 74); // 50 + floor(80 * 0.3)
     assert_eq!(game.screen, Screen::Rest);
+    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
+    game.step(&Action::Proceed);
+    assert_eq!(game.screen, Screen::Map);
+}
+
+#[test]
+fn ending_smith_exposes_upgrade_then_completes_campfire() {
+    let mut game = ending_game();
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("map node".into()),
+        x: Some(3),
+        y: Some(0),
+        room: Some("RestRoom".into()),
+    });
+
+    let smith = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Smith"))
+        .expect("starter deck should offer Smith");
+    game.step(&smith);
+
+    let upgrades = game.legal_actions();
+    assert!(!upgrades.is_empty());
+    assert!(upgrades.iter().all(|action| matches!(action, Action::Choose { .. })));
+    game.step(&upgrades[0]);
+    assert_eq!(game.player.deck.iter().filter(|card| card.upgraded).count(), 1);
+    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
+
+    // The first Proceed confirms the upgrade grid; the second leaves the
+    // completed RestRoom, matching CampfireSmithEffect's two stable states.
+    game.step(&Action::Proceed);
+    assert_eq!(game.screen, Screen::Rest);
+    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
     game.step(&Action::Proceed);
     assert_eq!(game.screen, Screen::Map);
 }

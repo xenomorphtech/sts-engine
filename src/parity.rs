@@ -96,26 +96,44 @@ pub fn compare_generation(game: &Game, java: &JavaEnvelope) -> ParityReport {
     check(
         &mut report,
         "monster_list",
-        &game.dungeon.monster_list,
+        game.dungeon.monster_list.as_ref(),
         &java.state.dungeon.monster_list,
     );
     check(
         &mut report,
         "elite_list",
-        &game.dungeon.elite_list,
+        game.dungeon.elite_list.as_ref(),
         &java.state.dungeon.elite_monster_list,
     );
     check(
         &mut report,
         "common_relics",
-        &game.dungeon.common_relics,
-        &java.state.dungeon.common_relic_pool,
+        game.dungeon
+            .common_relics
+            .iter()
+            .map(|id| id.sts_id())
+            .collect::<Vec<_>>(),
+        java.state
+            .dungeon
+            .common_relic_pool
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
     );
     check(
         &mut report,
         "uncommon_relics",
-        &game.dungeon.uncommon_relics,
-        &java.state.dungeon.uncommon_relic_pool,
+        game.dungeon
+            .uncommon_relics
+            .iter()
+            .map(|id| id.sts_id())
+            .collect::<Vec<_>>(),
+        java.state
+            .dungeon
+            .uncommon_relic_pool
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
     );
     check_rng(&mut report, "monster", game.rng.monster.snapshot(), &java.state.rng.monster);
     check_rng(&mut report, "map", game.rng.map.snapshot(), &java.state.rng.map);
