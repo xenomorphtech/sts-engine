@@ -1118,6 +1118,29 @@ pub fn encounter_monsters_rng(id: EncounterId, mut rng: Option<&mut crate::rng::
                 ]
             }
         }
+        EncounterId::SphereAndTwoShapes => {
+            // MonsterHelper.getEncounter constructs two independently rolled
+            // ancient shapes, then the Spheric Guardian. Duplicate shapes are
+            // therefore possible here, unlike the 3/4 Shapes encounters.
+            let ancient_shape = |roll| match roll {
+                0 => MonsterId::Spiker,
+                1 => MonsterId::Repulsor,
+                _ => MonsterId::Exploder,
+            };
+            if let Some(rng) = rng.as_mut() {
+                vec![
+                    ancient_shape(rng.misc.random_int(2)),
+                    ancient_shape(rng.misc.random_int(2)),
+                    MonsterId::SphericGuardian,
+                ]
+            } else {
+                vec![
+                    MonsterId::Spiker,
+                    MonsterId::Spiker,
+                    MonsterId::SphericGuardian,
+                ]
+            }
+        }
         EncounterId::ThreeShapes => spawn_shapes(rng, true),
         EncounterId::FourShapes => spawn_shapes(rng, false),
         other => encounter_monsters_fixed(other).to_vec(),
@@ -1209,6 +1232,11 @@ fn encounter_monsters_fixed(id: EncounterId) -> &'static [MonsterId] {
         EncounterId::ShieldAndSpear => &[MonsterId::SpireShield, MonsterId::SpireSpear],
         EncounterId::CorruptHeart => &[MonsterId::CorruptHeart],
         EncounterId::SphericGuardian => &[MonsterId::SphericGuardian],
+        EncounterId::SphereAndTwoShapes => &[
+            MonsterId::Spiker,
+            MonsterId::Spiker,
+            MonsterId::SphericGuardian,
+        ],
         EncounterId::Chosen => &[MonsterId::Chosen],
         EncounterId::CenturionAndHealer => &[MonsterId::Centurion, MonsterId::Healer],
         EncounterId::SnakePlant => &[MonsterId::SnakePlant],

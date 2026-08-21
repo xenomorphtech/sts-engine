@@ -2017,6 +2017,24 @@ fn incense_burner_applies_intangible_every_six_turns() {
 }
 
 #[test]
+fn sphere_and_two_shapes_uses_independent_ancient_shape_rolls() {
+    // 4: Act 3 strong hallway "Sphere and 2 Shapes" rolls Spiker then
+    // Repulsor independently via miscRng before constructing the Guardian.
+    let cfg = default_config(Character::Defect, "4", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 661,
+                "4 still fails at Sphere and 2 Shapes last_ok={} want > 661: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
