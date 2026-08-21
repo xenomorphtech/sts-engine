@@ -2201,6 +2201,25 @@ fn hex_inserts_dazed_before_ink_bottle_draws() {
 }
 
 #[test]
+fn fusion_hammer_increases_master_energy_on_equip() {
+    // 178: Fusion Hammer supplies the fourth energy in Act 2. After Biased
+    // Cognition and Ball Lightning, Tempest still channels twice and evokes
+    // both nine-block Frost orbs.
+    let cfg = default_config(Character::Defect, "178", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 212,
+                "178 still fails at Fusion Hammer energy last_ok={} want > 212: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
