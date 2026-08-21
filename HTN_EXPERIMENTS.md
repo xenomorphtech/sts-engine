@@ -83,3 +83,9 @@ single-acquisition cohorts below and are not numerically comparable to the old
 | Bounded turn beam search (width 8, depth 6) | fixed source `1787315208666760241` | 6.40% (32/500) | 28.81 | 7.60% (38/500) | 30.39 | 0 | advanced after improving wins and depth |
 | Bounded turn beam search (width 8, depth 6) | replay source `1787318856394675018` | 4.60% (23/500) | 28.46 | 7.80% (39/500) | 30.04 | 0 | advanced after independent confirmation |
 | Bounded turn beam search (width 8, depth 6) | fresh source `1787320322822582653` | 5.80% (29/500) | 29.52 | 7.60% (38/500) | 30.79 | 0 | accepted; paired fresh validation, with runtime increasing from 9s to 41s per 500 seeds |
+| Delay Champ's half-HP transition until a deep burst | fixed source `1787315208666760241` | 7.60% (38/500) | 30.39 | 7.60% (38/500) | 30.46 | 0 | advanced after Champ deaths fell 74→71 and three diagnosed Champ losses became wins |
+| Delay Champ's half-HP transition until a deep burst | replay source `1787318856394675018` | 7.80% (39/500) | 30.04 | 8.00% (40/500) | 30.19 | 0 | advanced after a small independent gain |
+| Delay Champ's half-HP transition until a deep burst | fresh source `1787320907338841119` | 6.20% (31/500) | 30.58 | 6.00% (30/500) | 30.57 | 0 | rejected: one fewer win and slightly lower mean floor |
+| Spend long-duration potions at the start of boss fights | fixed source `1787315208666760241` | 7.60% (38/500) | 30.39 | 8.60% (43/500) | 30.58 | 0 | advanced after improving wins and depth |
+| Spend long-duration potions at the start of boss fights | replay source `1787318856394675018` | 7.80% (39/500) | 30.04 | 9.00% (45/500) | 30.36 | 0 | advanced after independent confirmation |
+| Spend long-duration potions at the start of boss fights | fresh source `1787321283377521703` | 5.60% (28/500) | 29.24 | 6.20% (31/500) | 29.28 | 0 | accepted; improved all three paired cohorts |

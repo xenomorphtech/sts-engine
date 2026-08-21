@@ -467,6 +467,39 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
         }
     }
 
+    let opening_boss = matches!(fight_kind(game), FightKind::Boss)
+        && game.combat.as_ref().is_some_and(|combat| combat.turn <= 1);
+    if opening_boss {
+        if hp < max_hp {
+            if let Some(regen) = find(&[PotionId::Regen]) {
+                return Some(regen);
+            }
+        }
+        if let Some(setup) = find(&[
+            PotionId::Focus,
+            PotionId::Cultist,
+            PotionId::Strength,
+            PotionId::Dexterity,
+            PotionId::EssenceOfSteel,
+            PotionId::LiquidBronze,
+            PotionId::PotionOfCapacity,
+            PotionId::EssenceOfDarkness,
+            PotionId::Power,
+            PotionId::Attack,
+            PotionId::Skill,
+            PotionId::Colorless,
+            PotionId::Energy,
+            PotionId::Swift,
+            PotionId::BlessingOfTheForge,
+            PotionId::DistilledChaos,
+        ]) {
+            return Some(setup);
+        }
+        if let Some(boss_debuff) = find(&[PotionId::Fear, PotionId::Weak]) {
+            return Some(boss_debuff);
+        }
+    }
+
     const DEFENSE: &[PotionId] = &[
         PotionId::Block,
         PotionId::EssenceOfSteel,
@@ -627,6 +660,35 @@ mod tests {
                 hand_index: 1,
                 target_index: None,
             }
+        );
+    }
+
+    #[test]
+    fn boss_opening_spends_long_duration_potions() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.potions[0].id = PotionId::Focus;
+        let legal = game.legal_actions();
+
+        assert_eq!(
+            potion_policy(&game, &legal),
+            Some(Action::Potion {
+                action: crate::action::PotionOp::Use,
+                slot: 0,
+                target_index: None,
+            })
         );
     }
 
