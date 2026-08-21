@@ -116,3 +116,4 @@ single-acquisition cohorts below and are not numerically comparable to the old
 | Hold Biased Cognition for Champ's second phase | fixed source `1787315208666760241` | 10.40% (52/500) | 31.11 | 11.00% (55/500) | 31.38 | 0 | advanced after three more wins and higher depth |
 | Hold Biased Cognition for Champ's second phase | replay source `1787318856394675018` | 9.60% (48/500) | 30.89 | 10.00% (50/500) | 31.05 | 0 | advanced after independent confirmation |
 | Hold Biased Cognition for Champ's second phase | fresh source `1787324441138756002` | 9.00% (45/500) | 30.74 | 10.20% (51/500) | 31.07 | 0 | accepted; improved all three paired cohorts |
+| Hold Biased Cognition through Automaton's first two turns | fixed source `1787315208666760241` | 11.00% (55/500) | 31.38 | 11.00% (55/500) | 31.38 | 0 | rejected before fresh testing; aggregate results were identical and only nine steps changed |
