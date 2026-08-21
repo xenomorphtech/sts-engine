@@ -4007,14 +4007,15 @@ pub fn play_owned_card(
         } else {
             Vec::new()
         };
-        flush_ink_bottle(player, combat, rng);
-        // HexPower.onUseCard: Java checks card.type != ATTACK.
+        // UseCardAction walks player powers before relics. Hex therefore
+        // inserts its Dazed before Ink Bottle's queued draw (seed 444).
         if card.card_type() != CardType::ATTACK && player.power_amount(PowerId::Hex) > 0 {
             let n = player.power_amount(PowerId::Hex);
             for _ in 0..n {
                 add_to_random_spot(&mut player.draw, Card::new(CardId::Dazed), rng);
             }
         }
+        flush_ink_bottle(player, combat, rng);
         let mut gremlin_horn_triggers =
             gremlin_horn_trigger_count(player, combat, dead_before);
         for monster in combat.monsters.iter_mut().filter(|m| m.dead) {

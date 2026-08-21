@@ -2183,6 +2183,24 @@ fn lethal_sweeping_beam_drops_draw_and_stays_in_limbo_on_player_death() {
 }
 
 #[test]
+fn hex_inserts_dazed_before_ink_bottle_draws() {
+    // 444: Coolheaded triggers both Hex and Ink Bottle. Player powers run
+    // before relics, so Dazed enters the six-card draw pile before Ink draws.
+    let cfg = default_config(Character::Defect, "444", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 211,
+                "444 still fails at Hex/Ink Bottle order last_ok={} want > 211: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
