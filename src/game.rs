@@ -1995,7 +1995,24 @@ impl Game {
                             } else {
                                 20
                             };
+                            let block_before = m.block;
                             combat::deal_thorns(m, &mut self.rng, damage);
+                            // AbstractCreature.decrementBlock calls brokeBlock
+                            // for THORNS damage too. HandDrill.onBlockBroken
+                            // queues Vulnerable behind FirePotion's DamageAction,
+                            // before the next player command (seed 477).
+                            if block_before > 0
+                                && m.block == 0
+                                && self.player.has_relic(RelicId::HandDrill)
+                            {
+                                combat::apply_player_power_to_monster(
+                                    &self.player,
+                                    m,
+                                    &mut self.rng,
+                                    crate::ids::PowerId::Vulnerable,
+                                    2,
+                                );
+                            }
                         }
                         // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
                         // addToBot Draw+Energy if combat is not over (seed 773).
