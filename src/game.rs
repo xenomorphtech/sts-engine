@@ -1754,7 +1754,13 @@ impl Game {
                         combat::apply_fire_breathing(&mut self.player, &mut combat.monsters, statuses);
                     }
                 }
-                PotionId::Block => self.player.block += 12,
+                PotionId::Block => {
+                    self.player.block += if self.player.has_relic(RelicId::SacredBark) {
+                        24
+                    } else {
+                        12
+                    };
+                }
                 PotionId::Ancient => {
                     // AncientPotion.use: ArtifactPower(getPotency()=1) in combat only.
                     if self.combat.is_some() {

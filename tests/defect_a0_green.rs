@@ -2346,6 +2346,23 @@ fn ectoplasm_increases_master_energy_on_equip() {
 }
 
 #[test]
+fn sacred_bark_doubles_block_potion() {
+    // 781: Sacred Bark doubles Block Potion from 12 to 24 block.
+    let cfg = default_config(Character::Defect, "781", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 245,
+                "781 still misses doubled Block Potion last_ok={} want > 245: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
