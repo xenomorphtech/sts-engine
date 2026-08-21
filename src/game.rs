@@ -1724,14 +1724,26 @@ impl Game {
             match id {
                 PotionId::Strength => {
                     if self.combat.is_some() {
-                        self.player.add_power(crate::ids::PowerId::Strength, 2);
+                        let potency = if self.player.has_relic(RelicId::SacredBark) {
+                            4
+                        } else {
+                            2
+                        };
+                        self.player
+                            .add_power(crate::ids::PowerId::Strength, potency);
                     } else {
                         return;
                     }
                 }
                 PotionId::Dexterity => {
                     if self.combat.is_some() {
-                        self.player.add_power(crate::ids::PowerId::Dexterity, 2);
+                        let potency = if self.player.has_relic(RelicId::SacredBark) {
+                            4
+                        } else {
+                            2
+                        };
+                        self.player
+                            .add_power(crate::ids::PowerId::Dexterity, potency);
                     } else {
                         return;
                     }

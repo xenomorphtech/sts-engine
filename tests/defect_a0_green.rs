@@ -2458,6 +2458,24 @@ fn sacred_bark_doubles_focus_flex_and_explosive_potions() {
 }
 
 #[test]
+fn sacred_bark_doubles_strength_and_dexterity_potions() {
+    // 280 later drinks Strength and Dexterity potions before the Slavers.
+    // AbstractPotion.getPotency doubles both from 2 to 4 with Sacred Bark.
+    let cfg = default_config(Character::Defect, "280", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 319,
+                "280 still misses Sacred Bark stat potion potency last_ok={} want > 319: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
