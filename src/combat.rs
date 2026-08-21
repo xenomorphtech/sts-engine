@@ -245,6 +245,7 @@ impl Combat {
                 channeled.push(kind);
             }
         }
+        gain_start_of_turn_plasma_energy(player);
         tick_inserter(player);
         if player.has_relic(RelicId::DataDisk) {
             player.add_power(PowerId::Focus, 1);
@@ -5735,6 +5736,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         player.add_power(PowerId::Focus, -bias);
     }
     player.energy = player.energy_master;
+    gain_start_of_turn_plasma_energy(player);
     let energized = player.power_amount(PowerId::Energized);
     if energized > 0 {
         player.energy += energized;
@@ -5827,6 +5829,18 @@ fn tick_inserter(player: &mut Player) {
     if increase {
         increase_max_orb_slots(player, 1);
     }
+}
+
+/// Plasma.onStartOfTurn grants one energy per Plasma orb. Gold-Plated Cables
+/// calls the front orb's start hook a second time.
+fn gain_start_of_turn_plasma_energy(player: &mut Player) {
+    let mut energy = player.orbs.iter().filter(|orb| orb.kind == OrbKind::Plasma).count() as i32;
+    if player.has_relic(RelicId::Cables)
+        && player.orbs.first().is_some_and(|orb| orb.kind == OrbKind::Plasma)
+    {
+        energy += 1;
+    }
+    player.energy += energy;
 }
 
 fn tick_turn_start_block_relics(player: &mut Player) {

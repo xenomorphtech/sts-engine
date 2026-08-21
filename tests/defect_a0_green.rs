@@ -328,6 +328,24 @@ fn amplify_queues_the_next_power_twice() {
 }
 
 #[test]
+fn plasma_grants_energy_at_turn_start() {
+    // Seed 786 starts Act 2 with Nuclear Battery. Plasma's +1 energy lets an
+    // unupgraded Tempest channel a fourth Lightning and evoke for 8 damage.
+    let cfg = default_config(Character::Defect, "786", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 183,
+                "786 still fails at Plasma/Tempest last_ok={} want > 183: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
