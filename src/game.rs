@@ -1886,10 +1886,16 @@ impl Game {
                     }
                 }
                 PotionId::Cultist => {
-                    // CultistPotion: RitualPower(player, 1, playerControlled=true).
-                    // Player ritual ticks atEndOfTurn with no skipFirst.
+                    // CultistPotion: RitualPower(player, potency, playerControlled=true).
+                    // AbstractPotion.getPotency doubles its base 1 with Sacred
+                    // Bark. Player ritual ticks atEndOfTurn with no skipFirst.
                     if self.combat.is_some() {
-                        self.player.add_power(crate::ids::PowerId::Ritual, 1);
+                        let potency = if self.player.has_relic(RelicId::SacredBark) {
+                            2
+                        } else {
+                            1
+                        };
+                        self.player.add_power(crate::ids::PowerId::Ritual, potency);
                         if let Some(p) = self
                             .player
                             .powers

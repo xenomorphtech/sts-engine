@@ -3018,6 +3018,24 @@ fn sacred_bark_doubles_regen_potion() {
 }
 
 #[test]
+fn sacred_bark_doubles_cultist_potion() {
+    // 489: Cultist Potion applies Ritual 2 with Sacred Bark, so the first
+    // end-of-turn tick grants 2 Strength before the next attack.
+    let cfg = default_config(Character::Defect, "489", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 328,
+                "489 still uses base Cultist Potion potency last_ok={} want > 328: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
