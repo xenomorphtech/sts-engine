@@ -1823,7 +1823,13 @@ impl Game {
                     }
                 }
                 PotionId::Swift => {
-                    let statuses = combat::draw_cards_rng(&mut self.player, 3, Some(&mut self.rng));
+                    let potency = if self.player.has_relic(RelicId::SacredBark) {
+                        6
+                    } else {
+                        3
+                    };
+                    let statuses =
+                        combat::draw_cards_rng(&mut self.player, potency, Some(&mut self.rng));
                     if let Some(combat) = self.combat.as_mut() {
                         combat::apply_fire_breathing(
                             &mut self.player,

@@ -2838,6 +2838,24 @@ fn sacred_bark_doubles_liquid_memories_selection() {
 }
 
 #[test]
+fn sacred_bark_doubles_swift_potion_draw() {
+    // 696: Swift Potion with Sacred Bark draws six cards, filling the hand
+    // from five to ten rather than stopping after the base three cards.
+    let cfg = default_config(Character::Defect, "696", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 309,
+                "696 still uses base Swift Potion draw last_ok={} want > 309: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);
