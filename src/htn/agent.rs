@@ -62,7 +62,7 @@ impl HtnAgent {
             Screen::Treasure => legal.iter().find(|a| matches!(a, Action::Choose { .. })).cloned(),
             Screen::Event | Screen::Neow => Some(strategy::event_choice(game, legal)),
             Screen::HandSelect => Some(strategy::hand_select(game, legal)),
-            Screen::Grid => self.grid_choice(game, legal),
+            Screen::Grid => Some(strategy::grid_choice(game, legal)),
             Screen::DoorUnlock | Screen::ActTransition => Some(Action::Proceed),
             Screen::Terminal => Some(Action::Quit),
         }

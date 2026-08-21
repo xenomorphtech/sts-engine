@@ -37,6 +37,7 @@ pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
     for first in &plays {
         let mut clone = game.clone();
         clone.step(first);
+        resolve_grid_selects(&mut clone);
         if non_progressing_status_play(game, &clone, first) {
             continue;
         }
@@ -105,6 +106,7 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
             {
                 let mut after = node.game.clone();
                 after.step(play);
+                resolve_grid_selects(&mut after);
                 if non_progressing_status_play(&node.game, &after, play) {
                     continue;
                 }
@@ -137,6 +139,23 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
         })
         .expect("turn search always has an end or continuation");
     (best.game, best.strategic_value)
+}
+
+/// Step through in-combat grid selections (Hologram, Seek, Secret Technique)
+/// with the same policy the agent uses, so the turn search values those plays
+/// by their resolved outcome instead of treating the grid screen as terminal.
+fn resolve_grid_selects(game: &mut Game) {
+    for _ in 0..8 {
+        if game.screen != Screen::Grid {
+            return;
+        }
+        let legal = game.legal_actions();
+        if legal.is_empty() {
+            return;
+        }
+        let choice = crate::htn::strategy::grid_choice(game, &legal);
+        game.step(&choice);
+    }
 }
 
 fn non_progressing_status_play(before: &Game, after: &Game, action: &Action) -> bool {

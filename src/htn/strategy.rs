@@ -1,6 +1,6 @@
 use crate::action::Action;
 use crate::card::Card;
-use crate::game::{Game, Screen};
+use crate::game::{Game, GridKind, Screen};
 use crate::ids::{CardId, CardType, Character, PotionId, RelicId, RoomType};
 
 use super::deckplan;
@@ -596,6 +596,97 @@ fn choice_containing(choices: &[(&Action, String)], words: &[&str]) -> Option<Ac
         }
     }
     None
+}
+
+/// Kind-aware grid selection: purge/transform the worst card, upgrade the
+/// best engine piece, retrieve the most useful combat card, and obtain the
+/// highest-scored library card instead of whichever index comes first.
+pub fn grid_choice(game: &Game, legal: &[Action]) -> Action {
+    let fallback = || {
+        legal
+            .iter()
+            .find(|a| matches!(a, Action::Proceed))
+            .cloned()
+            .or_else(|| {
+                legal
+                    .iter()
+                    .find(|a| matches!(a, Action::Choose { .. }))
+                    .cloned()
+            })
+            .unwrap_or_else(|| legal[0].clone())
+    };
+    let Some((kind, cards)) = game.grid_view() else {
+        return fallback();
+    };
+    if cards.is_empty() {
+        // Confirm stage: Proceed applies the hovered card this policy chose.
+        return fallback();
+    }
+    let mut best: Option<(usize, i32)> = None;
+    for (index, card) in &cards {
+        let value = match kind {
+            GridKind::Purge | GridKind::Transform => removal_score(card),
+            GridKind::Upgrade => upgrade_score(card.id) - i32::from(card.upgraded) * 500,
+            GridKind::Library | GridKind::Bottle(_) => score_card(game, card),
+            GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
+                retrieve_score(game, card)
+            }
+        };
+        if best.is_none_or(|(_, b)| value > b) {
+            best = Some((*index, value));
+        }
+    }
+    let Some((want, _)) = best else {
+        return fallback();
+    };
+    legal
+        .iter()
+        .find(|a| matches!(a, Action::Choose { index, .. } if *index == want))
+        .cloned()
+        .unwrap_or_else(fallback)
+}
+
+/// How much the deck improves when this card leaves it.
+fn removal_score(card: &Card) -> i32 {
+    match card.card_type() {
+        CardType::CURSE => 900,
+        CardType::STATUS => 800,
+        _ => match card.id {
+            CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P => 300,
+            CardId::Defend_R | CardId::Defend_G | CardId::Defend_B | CardId::Defend_P => 160,
+            id => 100 - defect_pick(id) - i32::from(card.upgraded) * 25,
+        },
+    }
+}
+
+/// Value of moving this card from a pile into the hand mid-combat
+/// (Hologram, Seek, Secret Technique).
+fn retrieve_score(game: &Game, card: &Card) -> i32 {
+    let mut s = defect_pick(card.id) + i32::from(card.upgraded) * 25;
+    let incoming: i32 = game
+        .combat
+        .as_ref()
+        .map(|c| {
+            c.monsters
+                .iter()
+                .filter(|m| m.alive())
+                .map(|m| m.intent_damage.max(0) * m.intent_hits.max(1))
+                .sum()
+        })
+        .unwrap_or(0);
+    let unblocked = (incoming - game.player.block).max(0);
+    if unblocked > 0 {
+        s += i32::from(card.base_block.max(0)) * 6;
+    }
+    if matches!(card.card_type(), CardType::STATUS | CardType::CURSE) {
+        s -= 400;
+    }
+    // A card that is still playable with the energy left this turn is worth
+    // more than one that will sit in hand.
+    if card.cost >= 0 && i32::from(card.cost) <= game.player.energy {
+        s += 20;
+    }
+    s
 }
 
 pub fn hand_select(game: &Game, legal: &[Action]) -> Action {

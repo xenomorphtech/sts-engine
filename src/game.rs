@@ -264,7 +264,7 @@ pub enum NeowKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GridKind {
+pub enum GridKind {
     Purge,
     Upgrade,
     Transform,
@@ -1252,6 +1252,33 @@ impl Game {
             out.push(Card::new(chosen));
         }
         out
+    }
+
+    /// Read-only HTN view of a pending grid selection: the kind plus the card
+    /// behind each legal `Choose` index (already-picked entries excluded). An
+    /// empty card list means the grid is at its confirm stage.
+    pub fn grid_view(&self) -> Option<(GridKind, Vec<(usize, &Card)>)> {
+        let grid = self.grid.as_ref()?;
+        if grid.confirm {
+            return Some((grid.kind, Vec::new()));
+        }
+        let indices = self.grid_card_indices(grid.kind);
+        let mut cards = Vec::new();
+        for (i, &pile_i) in indices.iter().enumerate() {
+            if grid.picked.contains(&pile_i) {
+                continue;
+            }
+            let card = match grid.kind {
+                GridKind::DiscardToHand => self.player.discard.get(pile_i),
+                GridKind::DrawPileToHand | GridKind::SkillFromDeck => self.player.draw.get(pile_i),
+                GridKind::Library => self.event.as_ref().and_then(|e| e.library_cards.get(pile_i)),
+                _ => self.player.deck.get(pile_i),
+            };
+            if let Some(card) = card {
+                cards.push((i, card));
+            }
+        }
+        Some((grid.kind, cards))
     }
 
     fn grid_card_indices(&self, kind: GridKind) -> Vec<usize> {

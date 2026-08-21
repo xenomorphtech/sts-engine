@@ -6,7 +6,7 @@
 
 mod agent;
 mod deckplan;
-mod strategy;
+pub(crate) mod strategy;
 mod turnplan;
 
 pub use agent::HtnAgent;
