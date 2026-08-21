@@ -2446,6 +2446,11 @@ impl Monster {
             (MonsterId::BronzeAutomaton, 4) => {
                 let mut left = spawn_monster(MonsterId::BronzeOrb, rng, ascension);
                 let mut right = spawn_monster(MonsterId::BronzeOrb, rng, ascension);
+                // BronzeAutomaton.takeTurn constructs the left orb at -300 X
+                // and the right orb at +200 X. SpawnMonsterAction then inserts
+                // each by drawX, leaving the boss between them.
+                left.offset_x = -300;
+                right.offset_x = 200;
                 left.roll_move(rng);
                 right.roll_move(rng);
                 return Some(vec![left, right]);

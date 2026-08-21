@@ -238,6 +238,24 @@ fn buffer_absorbs_jax_hp_loss() {
 }
 
 #[test]
+fn bronze_automaton_spawns_orbs_around_boss() {
+    // Seed 340 reaches Bronze Automaton. Java's SpawnMonsterAction sorts the
+    // -300 X and +200 X orbs around the boss instead of prepending both.
+    let cfg = default_config(Character::Defect, "340", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 351,
+                "340 still fails at Bronze Automaton formation last_ok={} want > 351: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn artifact_absorbs_lagavulin_siphon_dexterity() {
     // 213: Ancient Potion Artifact 1 eats Dexterity -1; Strength -1 still lands.
     // Defend then stays 5 block (rust had Dexterity -1 → 4, 9 vs Java 10).
