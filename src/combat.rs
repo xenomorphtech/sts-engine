@@ -4377,6 +4377,13 @@ pub fn play_owned_card(
     let duplicate_claw_base_damage = card.base_damage;
     for play_i in 0..plays {
         if play_i > 0 {
+            // A duplicated card stays in cardQueue while the original card's
+            // actions resolve. Once that original ends combat, the queue is
+            // no longer advanced, even for cards without an enemy target
+            // (seed 384: Dualcast must not evoke the following Frost orb).
+            if combat.all_dead() {
+                break;
+            }
             // GameActionManager rejects a queued duplicate whose ENEMY target
             // died while the original card's actions were resolving. The copy
             // never reaches use(), so on-hit effects such as Cold Snap's Frost
