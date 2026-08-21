@@ -378,6 +378,22 @@ impl Game {
         game
     }
 
+    pub fn has_ruby_key(&self) -> bool {
+        self.has_ruby_key
+    }
+
+    pub fn has_emerald_key(&self) -> bool {
+        self.has_emerald_key
+    }
+
+    pub fn has_sapphire_key(&self) -> bool {
+        self.has_sapphire_key
+    }
+
+    pub fn final_act_available(&self) -> bool {
+        self.final_act_available
+    }
+
     pub fn legal_actions(&self) -> Vec<Action> {
         let mut actions = Vec::new();
         match self.screen {
@@ -387,7 +403,9 @@ impl Game {
                         r.id == RelicId::Velvet_Choker && r.counter >= 6
                     });
                     for (i, card) in self.player.hand.iter().enumerate() {
-                        if velvet_choker_full {
+                        if velvet_choker_full
+                            || crate::combat::status_or_curse_unplayable(card, &self.player)
+                        {
                             continue;
                         }
                         if card.cost_for_turn > self.player.energy as i16 && card.cost_for_turn >= 0 {
@@ -468,11 +486,14 @@ impl Game {
                         {
                             actions.push(Action::Choose {
                                 index: i,
-                                label: Some(card.sts_id().into()),
+                                label: Some(card.sts_id().to_string()),
                                 x: None,
                                 y: None,
                                 room: None,
                             });
+                        }
+                        if actions.is_empty() {
+                            actions.push(Action::Proceed);
                         }
                     }
                 } else if self.rest_selected {
@@ -565,6 +586,9 @@ impl Game {
                     } else {
                         let cards = self.grid_card_indices(grid.kind);
                         for (i, &pile_i) in cards.iter().enumerate() {
+                            if grid.picked.contains(&pile_i) {
+                                continue;
+                            }
                             let label = match grid.kind {
                                 GridKind::DiscardToHand => {
                                     self.player.discard.get(pile_i).map(|c| c.sts_id().to_string())
@@ -3105,6 +3129,7 @@ impl Game {
                         }
                     }
                     Some("Smith") => {
+                        self.rest_selected = true;
                         self.rest_smithing = true;
                         self.rest_smith_picked = false;
                         self.rest_selected = true;

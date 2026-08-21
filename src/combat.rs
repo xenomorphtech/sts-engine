@@ -4506,7 +4506,7 @@ fn velvet_choker_on_play(player: &mut Player) {
 /// Java `AbstractCard.canUse` for STATUS/CURSE with cost -2 (Dazed, Wound, Burn).
 /// PlayTopCard still queues them; GameActionManager then skips onUseCard/Hex/InkBottle
 /// and UseCardAction discards (ethereal does not exhaust on this path).
-fn status_or_curse_unplayable(card: &Card, player: &Player) -> bool {
+pub fn status_or_curse_unplayable(card: &Card, player: &Player) -> bool {
     if card.card_type() == CardType::STATUS && card.cost_for_turn < -1 {
         !player.has_relic(RelicId::Medical_Kit)
     } else if card.card_type() == CardType::CURSE && card.cost_for_turn < -1 {

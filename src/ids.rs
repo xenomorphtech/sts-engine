@@ -215,6 +215,7 @@ pub enum PowerId {
     Unawakened,
     Focus,
     Bias,
+    Rebound,
     Energized,
     Electro,
     Loop,

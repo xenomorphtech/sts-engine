@@ -4,7 +4,7 @@ use sts_engine::action::Action;
 use sts_engine::combat::Combat;
 use sts_engine::game::{Game, Screen};
 use sts_engine::htn::HtnAgent;
-use sts_engine::ids::{Act, Character, EncounterId, MonsterId, RoomType};
+use sts_engine::ids::{Act, Character, EncounterId, MonsterId, RelicId, RoomType};
 use sts_engine::rng::RngSet;
 use sts_engine::Unlocks;
 
@@ -96,6 +96,69 @@ fn ending_smith_exposes_upgrade_then_completes_campfire() {
 }
 
 #[test]
+fn smith_exposes_upgrade_cards_then_returns_to_map() {
+    let mut game = ending_game();
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("map node".into()),
+        x: Some(3),
+        y: Some(0),
+        room: Some("RestRoom".into()),
+    });
+
+    game.step(&Action::Choose {
+        index: 1,
+        label: Some("Smith".into()),
+        x: None,
+        y: None,
+        room: None,
+    });
+    let upgrade = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| matches!(action, Action::Choose { .. }))
+        .expect("an upgradeable starter card");
+    game.step(&upgrade);
+
+    assert!(matches!(game.legal_actions().as_slice(), [Action::Proceed]));
+    game.step(&Action::Proceed);
+    assert_eq!(game.screen, Screen::Rest);
+    assert!(matches!(game.legal_actions().as_slice(), [Action::Proceed]));
+    game.step(&Action::Proceed);
+    assert_eq!(game.screen, Screen::Map);
+}
+
+#[test]
+fn multi_card_grid_does_not_offer_already_picked_cards() {
+    let mut game = ending_game();
+    game.screen = Screen::BossRelic;
+    game.boss_relics = vec![RelicId::Astrolabe];
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("Astrolabe".into()),
+        x: None,
+        y: None,
+        room: None,
+    });
+    assert_eq!(game.screen, Screen::Grid);
+
+    let mut picked_indices = Vec::new();
+    for _ in 0..3 {
+        let action = game
+            .legal_actions()
+            .into_iter()
+            .find(|action| matches!(action, Action::Choose { .. }))
+            .expect("another Astrolabe selection");
+        if let Action::Choose { index, .. } = action {
+            assert!(!picked_indices.contains(&index));
+            picked_indices.push(index);
+        }
+        game.step(&action);
+    }
+    assert_eq!(game.screen, Screen::BossRelic);
+}
+
+#[test]
 fn ending_shop_can_leave() {
     let mut game = ending_game();
     game.dungeon.first_room_chosen = true;
@@ -164,7 +227,14 @@ fn ending_shop_exposes_purchases_to_htn() {
 #[test]
 fn shield_and_spear_spawn() {
     let mut rng = RngSet::generate_seeds(2);
-    let combat = Combat::start(EncounterId::ShieldAndSpear, &mut sts_engine::creature::Player::ironclad(), &mut rng, 52, 2, 0);
+    let combat = Combat::start(
+        EncounterId::ShieldAndSpear,
+        &mut sts_engine::creature::Player::ironclad(),
+        &mut rng,
+        52,
+        2,
+        0,
+    );
     assert_eq!(combat.monsters.len(), 2);
     assert_eq!(combat.monsters[0].id, MonsterId::SpireShield);
     assert_eq!(combat.monsters[1].id, MonsterId::SpireSpear);
