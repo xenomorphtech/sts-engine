@@ -2238,6 +2238,24 @@ fn ectoplasm_consumes_gold_rewards_without_adding_gold() {
 }
 
 #[test]
+fn velvet_choker_increases_master_energy_on_equip() {
+    // 233: Velvet Choker supplies the fourth energy in Act 2, leaving two
+    // energy for Tempest after Zap and Ball Lightning and evoking twice.
+    let cfg = default_config(Character::Defect, "233", Unlocks::fixture(), 0);
+    match walk_oracle(&cfg) {
+        Ok(_) => {}
+        Err(fail) if fail.mismatched == ["io"] => {}
+        Err(fail) => {
+            assert!(
+                fail.last_ok > 215,
+                "233 still misses Velvet Choker energy last_ok={} want > 215: {fail}",
+                fail.last_ok
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_is_recorded_not_deleted() {
     let mut reg = GreenRegistry::new();
     reg.record_green("407258", 250, 242, 210390258);

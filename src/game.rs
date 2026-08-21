@@ -5495,6 +5495,7 @@ impl Game {
             || id == RelicId::Coffee_Dripper
             || id == RelicId::Fusion_Hammer
             || id == RelicId::Philosophers_Stone
+            || id == RelicId::Velvet_Choker
         {
             self.player.energy_master += 1;
         }
