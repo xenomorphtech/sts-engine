@@ -65,15 +65,15 @@ struct TurnSearchNode {
 }
 
 fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
-    const WIDTH: usize = 8;
-    const DEPTH: usize = 6;
+    let width = params().search_width.round().max(1.0) as usize;
+    let depth = params().search_depth.round().max(1.0) as usize;
 
     let mut frontier = vec![TurnSearchNode {
         game: start,
         strategic_value: 0.0,
     }];
     let mut finals = Vec::new();
-    for _ in 0..DEPTH {
+    for _ in 0..depth {
         let mut next = Vec::new();
         let current = std::mem::take(&mut frontier);
         for node in current {
@@ -123,7 +123,7 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
             let b_score = score_state(origin, &b.game) + b.strategic_value;
             b_score.total_cmp(&a_score)
         });
-        next.truncate(WIDTH);
+        next.truncate(width);
         frontier = next;
     }
     finals.extend(frontier);
@@ -564,12 +564,12 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
         PotionId::Energy,
     ];
 
-    if unblocked >= hp || hp <= max_hp / 8 {
+    if unblocked >= hp || hp <= (max_hp as f32 / params().potion_desperate_hp_div) as i32 {
         return find(DEFENSE)
             .or_else(|| find(HEAL))
             .or_else(|| find(OFFENSE));
     }
-    if hp <= max_hp / 3 && unblocked > 0 {
+    if hp <= (max_hp as f32 / params().potion_defense_hp_div) as i32 && unblocked > 0 {
         let total_hp: i32 = game
             .combat
             .as_ref()
@@ -585,12 +585,12 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
         }
     }
     if matches!(fight_kind(game), FightKind::Elite | FightKind::Boss) {
-        if hp < max_hp / 2 {
+        if hp < (max_hp as f32 * params().potion_heal_hp_frac) as i32 {
             if let Some(heal) = find(HEAL) {
                 return Some(heal);
             }
         }
-        if unblocked >= 12.max(hp / 4) {
+        if unblocked >= (params().potion_block_min as i32).max((hp as f32 / params().potion_block_hp_div) as i32) {
             if let Some(defense) = find(DEFENSE) {
                 return Some(defense);
             }

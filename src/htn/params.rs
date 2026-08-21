@@ -85,6 +85,15 @@ pub struct Params {
     pub fl_a4_normal: f32,
     pub fl_a4_elite: f32,
     pub fl_a4_boss: f32,
+    // Turn search shape.
+    pub search_width: f32,
+    pub search_depth: f32,
+    // Potion policy thresholds.
+    pub potion_desperate_hp_div: f32,
+    pub potion_defense_hp_div: f32,
+    pub potion_heal_hp_frac: f32,
+    pub potion_block_min: f32,
+    pub potion_block_hp_div: f32,
     /// Absolute per-card pick-score overrides keyed by sts id.
     pub pick: std::collections::HashMap<String, f32>,
     /// Absolute per-card upgrade-score overrides keyed by sts id.
@@ -164,6 +173,13 @@ impl Default for Params {
             fl_a4_normal: 5.0,
             fl_a4_elite: 6.0,
             fl_a4_boss: 12.0,
+            search_width: 8.0,
+            search_depth: 6.0,
+            potion_desperate_hp_div: 8.0,
+            potion_defense_hp_div: 3.0,
+            potion_heal_hp_frac: 0.5,
+            potion_block_min: 12.0,
+            potion_block_hp_div: 4.0,
             pick: std::collections::HashMap::new(),
             upgrade: std::collections::HashMap::new(),
             boss_relic: std::collections::HashMap::new(),

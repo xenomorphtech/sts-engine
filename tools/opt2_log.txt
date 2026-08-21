@@ -1,1 +1,26 @@
 start gen 0 fit=404.6 wins500=164 floor=38.30
+gen 1 top=418.2 mean=402.2 kept=False sigma=0.78
+gen 2 top=417.3 mean=396.5 kept=False sigma=0.68
+gen 3 top=439.4 mean=404.3 kept=False sigma=0.59
+gen 4 top=423.4 mean=385.9 kept=False sigma=0.52
+gen 5 top=410.9 mean=405.8 kept=True sigma=0.58
+  validate search1k=330/38.22 holdout1k=329/38.51
+gen 6 top=430.8 mean=409.2 kept=True sigma=0.65
+gen 7 top=444.1 mean=424.9 kept=True sigma=0.72
+gen 8 top=447.6 mean=430.3 kept=True sigma=0.81
+gen 9 top=480.6 mean=433.6 kept=True sigma=0.91
+gen 10 top=464.7 mean=429.4 kept=False sigma=0.79
+  validate search1k=358/39.15 holdout1k=390/39.39
+gen 11 top=466.3 mean=461.8 kept=True sigma=0.89
+gen 12 top=477.1 mean=448.9 kept=False sigma=0.77
+gen 13 top=468.6 mean=458.9 kept=False sigma=0.67
+gen 14 top=454.4 mean=432.0 kept=False sigma=0.58
+gen 15 top=472.5 mean=491.6 kept=True sigma=0.65
+  validate search1k=402/39.91 holdout1k=401/39.71
+gen 16 top=486.8 mean=489.2 kept=False sigma=0.57
+gen 17 top=470.4 mean=474.8 kept=False sigma=0.49
+gen 18 top=475.1 mean=448.7 kept=False sigma=0.43
+gen 19 top=503.9 mean=472.7 kept=False sigma=0.37
+gen 20 top=503.6 mean=475.3 kept=False sigma=0.33
+  validate search1k=402/39.91 holdout1k=401/39.71
+gen 21 top=493.6 mean=482.8 kept=False sigma=0.28
