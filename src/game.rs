@@ -2735,7 +2735,11 @@ impl Game {
         // Map node click always enters. Fruit Juice is usable on the map as a
         // Potion action before this choose; deferring entry left rust on Map
         // while Java was already in the first hallway (191892).
-        let normal_connection = !self.dungeon.first_room_chosen
+        // The boss icon is selected outside MapRoomNode.update/
+        // selectForSimulation, so the mandatory row-14 -> boss transition
+        // never consumes Winged Greaves even though it has no MapEdge.
+        let normal_connection = my >= 15
+            || !self.dungeon.first_room_chosen
             || self.current_y < 0
             || self
                 .dungeon
@@ -4134,7 +4138,12 @@ impl Game {
                             self.player.discard.push(card);
                         }
                     } else if self.discovery_combat {
-                        card.cost_for_turn = 0;
+                        // AbstractCard.setCostForTurn is a no-op for X-cost
+                        // and unplayable cards. In particular, a Tempest from
+                        // Skill Potion remains costForTurn -1 (rank 39).
+                        if card.cost_for_turn >= 0 {
+                            card.cost_for_turn = 0;
+                        }
                         for _ in 0..self.discovery_copies.max(1) {
                             if self.player.hand.len() < 10 {
                                 self.player.hand.push(card.clone());

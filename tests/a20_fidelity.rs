@@ -98,6 +98,43 @@ fn smoke_bomb_suppresses_rewards_when_a_card_kills_before_escape() {
 }
 
 #[test]
+fn skill_potion_does_not_replace_tempests_x_cost_with_zero() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.player.potions[0].id = PotionId::Skill;
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        1,
+        game.seed,
+        20,
+    ));
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 0,
+        target_index: None,
+    });
+    game.card_reward = vec![Card::new(CardId::Tempest)];
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("Tempest".into()),
+        x: None,
+        y: None,
+        room: None,
+    });
+
+    let tempest = game
+        .player
+        .hand
+        .iter()
+        .find(|card| card.id == CardId::Tempest)
+        .expect("generated Tempest in hand");
+    assert_eq!(tempest.cost_for_turn, -1);
+}
+
+#[test]
 fn normality_disables_every_card_after_three_cards_are_played() {
     let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
     game.combat = Some(Combat::start(
@@ -986,6 +1023,42 @@ fn winged_greaves_exposes_the_next_row_and_spends_only_on_a_jump() {
 
     assert_eq!(
         game.player
+            .relics
+            .iter()
+            .find(|relic| relic.id == RelicId::WingedGreaves)
+            .map(|relic| relic.counter),
+        Some(2)
+    );
+
+    let mut boss_game =
+        Game::new(2877855328497827070, Character::Defect, 20, Unlocks::fixture());
+    boss_game.dungeon.first_room_chosen = true;
+    boss_game.current_x = 0;
+    boss_game.current_y = 14;
+    boss_game.screen = Screen::Map;
+    boss_game.player.relics.push(RelicInstance {
+        id: RelicId::WingedGreaves,
+        counter: 2,
+        used_up: false,
+    });
+    let boss = boss_game
+        .legal_actions()
+        .into_iter()
+        .find(|action| {
+            matches!(
+                action,
+                Action::Choose {
+                    x: Some(-1),
+                    y: Some(15),
+                    ..
+                }
+            )
+        })
+        .expect("boss map action");
+    boss_game.step(&boss);
+    assert_eq!(
+        boss_game
+            .player
             .relics
             .iter()
             .find(|relic| relic.id == RelicId::WingedGreaves)
