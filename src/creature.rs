@@ -1,6 +1,6 @@
 use crate::ids::{MonsterId, PowerId};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Power {
     pub id: PowerId,
     pub amount: i32,
@@ -9,20 +9,20 @@ pub struct Power {
     pub misc: i32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RelicInstance {
     pub id: crate::ids::RelicId,
     pub counter: i32,
     pub used_up: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PotionInstance {
     pub id: crate::ids::PotionId,
     pub slot: i32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OrbKind {
     Lightning,
     Frost,
@@ -30,14 +30,14 @@ pub enum OrbKind {
     Plasma,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Orb {
     pub kind: OrbKind,
     /// Dark orbs accumulate evoke damage; other orbs ignore this.
     pub evoke: i32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Player {
     pub hp: i32,
     pub max_hp: i32,
@@ -200,6 +200,12 @@ impl Player {
             // Observed ExactTextSim master_deck lists AscendersBane first.
             self.deck.insert(0, crate::card::Card::new(crate::ids::CardId::AscendersBane));
         }
+        if ascension >= 11 {
+            // Ascension 11 reduces the base potion capacity from three slots
+            // to two. Potion Belt and other later capacity gains build on it.
+            self.potion_slots = 2;
+            self.potions.truncate(self.potion_slots as usize);
+        }
     }
 
     pub fn power_amount(&self, id: PowerId) -> i32 {
@@ -243,6 +249,7 @@ pub fn power_is_debuff(id: PowerId, amount: i32) -> bool {
         | PowerId::Poison
         | PowerId::Constricted
         | PowerId::Entangled
+        | PowerId::DrawReduction
         | PowerId::Hex
         | PowerId::NoDraw
         | PowerId::LockOn
@@ -354,7 +361,7 @@ pub fn end_of_turn(powers: &mut Vec<Power>) {
     powers.retain(|p| (p.id != PowerId::Strength && p.id != PowerId::Dexterity) || p.amount != 0);
 }
 
-pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {
+pub fn end_of_round(powers: &mut Vec<Power>, is_player: bool) -> i32 {
     let mut ritual_str = 0;
     for p in powers.iter_mut() {
         match p.id {
@@ -365,19 +372,19 @@ pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {
                     ritual_str += p.amount;
                 }
             }
-            PowerId::Vulnerable | PowerId::Weak | PowerId::Frail => {
+            PowerId::Vulnerable | PowerId::Weak | PowerId::Frail | PowerId::DrawReduction => {
                 if p.just_applied {
                     p.just_applied = false;
                 } else {
                     p.amount -= 1;
                 }
             }
-            // Nemesis uses IntangiblePower.atEndOfTurn, whose constructor's
-            // justApplied flag keeps the first stack through this pass.
-            // Player Intangible uses IntangiblePlayerPower and leaves the
-            // flag false, so it still reduces every round.
+            // Players use IntangiblePlayerPower and always reduce at end of
+            // round. Nemesis uses IntangiblePower.atEndOfTurn: a newly
+            // applied stack first clears justApplied, then expires after the
+            // following enemy turn.
             PowerId::Intangible => {
-                if p.just_applied {
+                if !is_player && p.just_applied {
                     p.just_applied = false;
                 } else {
                     p.amount -= 1;
@@ -412,7 +419,7 @@ pub fn end_of_round(powers: &mut Vec<Power>) -> i32 {
     ritual_str
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Intent {
     Attack,
     AttackBuff,
@@ -431,7 +438,7 @@ pub enum Intent {
     Debug,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Monster {
     pub id: MonsterId,
     pub hp: i32,
@@ -478,5 +485,24 @@ impl Monster {
 
     pub fn add_power(&mut self, id: PowerId, amount: i32) {
         absorb_or_add_power(&mut self.powers, id, amount, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::Character;
+
+    #[test]
+    fn ascension_eleven_reduces_base_potion_slots() {
+        let mut a10 = Player::defect();
+        a10.apply_ascension(Character::Defect, 10);
+        assert_eq!(a10.potion_slots, 3);
+        assert_eq!(a10.potions.len(), 3);
+
+        let mut a11 = Player::defect();
+        a11.apply_ascension(Character::Defect, 11);
+        assert_eq!(a11.potion_slots, 2);
+        assert_eq!(a11.potions.len(), 2);
     }
 }

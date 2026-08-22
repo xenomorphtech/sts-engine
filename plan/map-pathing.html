@@ -32,11 +32,11 @@ value  = elite_relic_value·elite_decay^elites_fought + gold + matchup − expec
 <tr><th>Elite</th><th>Extension</th></tr>
 <tr><td>Gremlin Nob</td><td>Penalize by skill share: A18 = +3 Str per skill. <code>−nob_skill_pen × (block_cards + frost_src)</code>. Frost Defect should almost never take Nob first.</td></tr>
 <tr><td>Lagavulin</td><td>A18 Siphon −2/−2 hits the focus engine; bonus for burst-by-turn-3, small penalty to focus decks without Artifact.</td></tr>
-<tr><td>Book of Stabbing</td><td>Count <code>frost_src×2</code> toward the block requirement — frost <em>is</em> Defect's block.</td></tr>
-<tr><td>Slavers <span class="tag warn">missing arm</span></td><td>aoe≥1 → +10 else −20.</td></tr>
-<tr><td>Giant Head <span class="tag warn">missing arm</span></td><td>Deadline fight: requires <code>scaling≥2 or big_attacks≥2</code> else −50. Pure frost stall <em>loses</em> — the anti-turtle elite.</td></tr>
-<tr><td>Nemesis <span class="tag warn">missing arm</span></td><td>Intangible caps hits at 1: favor few-big-hits, penalize Claw/multi-hit decks.</td></tr>
-<tr><td>Reptomancer</td><td>A18 spawns 2 daggers: raise the requirement to aoe≥2 or Electrodynamics.</td></tr>
+<tr><td>✅ Book of Stabbing</td><td>Counts <code>frost_src×2</code> toward the block requirement — frost <em>is</em> Defect's block.</td></tr>
+<tr><td>✅ Slavers</td><td>aoe≥1 → +10 else −20.</td></tr>
+<tr><td>✅ Giant Head</td><td>Deadline fight requires <code>scaling≥2 or big_attacks≥2</code>; otherwise −50.</td></tr>
+<tr><td>✅ Nemesis</td><td>Requires two big attacks for the positive matchup branch; otherwise −25.</td></tr>
+<tr><td>✅ Reptomancer</td><td>A18 two-dagger fight now requires aoe≥2 for the positive matchup branch.</td></tr>
 <tr><td>Burning elite</td><td>Flat <code>burning_elite_extra_loss</code> ×1.35 on expected loss.</td></tr>
 </table></div>
 
@@ -60,7 +60,7 @@ return first edge of argmax path</code></pre>
 <ul>
 <li><strong>Rest:</strong> correct threshold is path-conditional: <code>rest iff hp &lt; planned_loss_to_next_rest + reserve</code> — the DP computes it natively. Until then: <code>rest_hp_preboss3</code> ≈ 0.9 for the double boss; first Act-2 campfire rests only if an elite is planned within <code>rest_lookahead_floors</code>; both global threshold shifts already failed at A0 — conditioning on the path is the whole point.</li>
 <li><strong>Shops (A16):</strong> removal ≈ 82+ rising, so raise routing gate <code>shop_route_gold_min</code> 120→140; add need-conditional routing bonus (no AoE by Act 2, zero focus sources, Bane still in deck, empty potion slots). Purchase logic is deck-aware; <em>routing</em> is deck-blind today — the bot buys well but arrives poor.</li>
-<li><strong>Keys:</strong> emerald preferably in Act 2 (an elite you wanted anyway); ruby = spend the lowest-value campfire (DP: recall branch where opportunity cost is minimal); sapphire at the least-valued treasure. <span class="tag warn">All of this is moot until Act 4 entry is fixed — see the A20 mechanics doc.</span></li>
+<li><strong>Keys:</strong> ✅ key-chasing is gated while Act 4 is unreachable. Once Act 4 entry is fixed: emerald preferably in Act 2 (an elite you wanted anyway); ruby = spend the lowest-value campfire; sapphire at the least-valued treasure.</li>
 <li><strong>Act 4:</strong> fixed 3-node map; rest unless hp ≥ <code>act4_rest_hp</code> (0.85); Act-3 terminal reserves HP when keys complete.</li>
 </ul>
 

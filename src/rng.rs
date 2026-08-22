@@ -18,7 +18,7 @@ const fn murmur_hash3(mut x: u64) -> u64 {
 }
 
 /// libGDX `RandomXS128` xorshift128+ used by the desktop 2016 game JAR.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RandomXs128 {
     pub seed0: i64,
     pub seed1: i64,
@@ -79,7 +79,7 @@ impl RandomXs128 {
 }
 
 /// STS named-stream wrapper. `random(range)` calls `nextInt(range + 1)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StsRandom {
     pub random: RandomXs128,
     pub counter: i32,
@@ -153,7 +153,7 @@ impl StsRandom {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RngSnapshot {
     pub counter: i32,
     pub state0: i64,
@@ -161,7 +161,7 @@ pub struct RngSnapshot {
 }
 
 /// The 13 named STS gameplay streams.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RngSet {
     pub monster: StsRandom,
     pub map: StsRandom,

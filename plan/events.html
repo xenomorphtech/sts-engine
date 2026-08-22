@@ -18,15 +18,15 @@
 <h2>Highest-impact fixes (ranked)</h2>
 <div class="tablewrap"><table>
 <tr><th>#</th><th>Event</th><th>Today</th><th>Fix</th></tr>
-<tr><td>1</td><td><strong>Golden Idol</strong></td><td><span class="tag warn">BUG</span> SAFE matches [Leave] — skips a top-tier relic every Act 1</td><td>Take → Outrun (Injury; frost decks barely attack, curse removable) or Hide at low maxHP risk; never Smash below ~40% HP</td></tr>
-<tr><td>2</td><td><strong>Drug Dealer</strong></td><td><span class="tag warn">BUG</span> policy's <code>pick("leave")</code> matches nothing (options: Ingest/Study/Inject) → falls to choices[0] = <strong>ingests J.A.X.</strong></td><td>Study (transform 2 worst — free value; grid already picks worst)</td></tr>
-<tr><td>3</td><td><strong>The Woman in Blue</strong></td><td><span class="tag warn">BUG</span> leaves — pays 5% maxHP (A15+) and forfeits potions</td><td>Buy <code>min(empty_slots, gold/20)</code> potions, ≥1 if gold ≥ 20</td></tr>
-<tr><td>4</td><td><strong>World of Goop</strong></td><td><span class="tag warn">BUG</span> leaves — pays 35–75g to avoid 11 HP</td><td>Gather (+75g, −11 HP) unless <code>hp ≤ 14</code>; ~130g swing per occurrence</td></tr>
-<tr><td>5</td><td><strong>Falling</strong> (Act 3)</td><td><span class="tag warn">BUG</span> choices[0] = always deletes a random <em>skill</em> (can be Glacier/Seek)</td><td>Read the 3 candidate cards from <code>event.data</code>; surrender max <code>removal_score</code> (usually the attack); never a scaling power</td></tr>
-<tr><td>6</td><td><strong>Scrap Ooze</strong></td><td><span class="tag warn">BUG</span> never digs</td><td>Dig while <code>hp &gt; ~60%</code>; expected ~16 HP for a guaranteed relic</td></tr>
-<tr><td>7</td><td><strong>Match and Keep!</strong></td><td><span class="tag warn">BUG</span> random flips; can match curse pairs <em>into the deck</em></td><td>Memory-aware matcher (<code>match_cards[i].revealed</code> is exposed); prioritize rare/uncommon; never complete curse pairs</td></tr>
-<tr><td>8</td><td>Big Fish / Bonfire</td><td>partial</td><td>Donut at high HP; Bonfire: offer a redundant <em>uncommon</em> for full heal when HP low (worst-card offer otherwise correct — removal is the prize)</td></tr>
-<tr><td>9</td><td>Designer</td><td>choices[0] = Adjust</td><td>Prefer removal: Full Service (gold ≥ 110) &gt; Clean Up &gt; Adjust</td></tr>
+<tr><td>1</td><td><strong>Golden Idol</strong></td><td>❌ tested in the seven-event bundle</td><td>The HP/curse gamble bundle sharply regressed; the conservative leave remains active pending isolated evidence.</td></tr>
+<tr><td>2</td><td><strong>✅ Drug Dealer</strong></td><td>Study, falling back to Inject</td><td>Accepted with Falling + Match-and-Keep: fresh wins 2→5 and mean floor +0.17.</td></tr>
+<tr><td>3</td><td><strong>The Woman in Blue</strong></td><td>❌ tested in the seven-event bundle</td><td>Buying to empty capacity was part of the strongly regressing HP/gold bundle; conservative behavior retained.</td></tr>
+<tr><td>4</td><td><strong>World of Goop</strong></td><td>❌ tested in the seven-event bundle</td><td>The 11-HP-for-gold rule did not survive campaign measurement; conservative behavior retained.</td></tr>
+<tr><td>5</td><td><strong>✅ Falling</strong> (Act 3)</td><td>Reads all three deck indices from <code>event.data</code></td><td>Surrenders the candidate with maximum <code>removal_score</code>; accepted in the safe event subset.</td></tr>
+<tr><td>6</td><td><strong>Scrap Ooze</strong></td><td>❌ tested in the seven-event bundle</td><td>The 60%-HP digging rule was not safe at the current A20 survival level; never-dig remains active.</td></tr>
+<tr><td>7</td><td><strong>✅ Match and Keep!</strong></td><td>Memory-aware matcher; revealed state is exposed compactly</td><td>Completes known valuable pairs, explores hidden cards, and deliberately avoids completing curse pairs; accepted in the safe event subset.</td></tr>
+<tr><td>8</td><td>Big Fish / Bonfire</td><td>❌ Donut rule; Bonfire unchanged</td><td>Donut at ≥70% HP caused no win flips and lowered mean floor on both cohorts; rejected.</td></tr>
+<tr><td>9</td><td>❌ Designer</td><td>Removal-first ordering tested in isolation</td><td>Rejected: one win gained and one lost across two cohorts, with slightly negative floor on both.</td></tr>
 <tr><td>10</td><td>MindBloom / SensoryStone / Knowing Skull</td><td>right by fallback ordering</td><td>Pin explicitly (War / Recall 1 / Leave) — the alternatives are engine no-ops that would loop</td></tr>
 </table></div>
 

@@ -47,11 +47,23 @@ for name, v in BAKED.items():
 
 add("search_width", 8.0, 0.8, 5.0, 14.0)
 add("search_depth", 6.0, 0.6, 4.0, 9.0)
+add("next_exposure_weight", BAKED.get("next_exposure_weight", 0.0), 0.01, 0.0, 0.25)
+add("next_block_tax", BAKED.get("next_block_tax", 0.0), 0.05, 0.0, 2.0)
+add("spike_danger", BAKED.get("spike_danger", 0.0), 2.0, 0.0, 40.0)
+add("spike_horizon", BAKED.get("spike_horizon", 2.0), 0.25, 1.0, 3.0)
+add("status_gain_penalty", BAKED.get("status_gain_penalty", 0.0), 2.0, 0.0, 40.0)
+add("laga_wake_penalty", BAKED.get("laga_wake_penalty", 0.0), 25.0, 0.0, 500.0)
+add("laga_wake_kill_ratio", BAKED.get("laga_wake_kill_ratio", 3.0), 0.4, 1.5, 6.0)
+add("hex_rest_effective_gain_min", BAKED.get("hex_rest_effective_gain_min", 12.0), 2.0, 0.0, 30.0)
 add("potion_desperate_hp_div", 8.0, 0.8, 3.0, 16.0)
 add("potion_defense_hp_div", 3.0, 0.3, 1.5, 8.0)
 add("potion_heal_hp_frac", 0.5, 0.05, 0.15, 0.9)
 add("potion_block_min", 12.0, 1.5, 3.0, 30.0)
 add("potion_block_hp_div", 4.0, 0.4, 1.5, 10.0)
+add("potion_swap_margin", BAKED.get("potion_swap_margin", 30.0), 5.0, 0.0, 100.0)
+add("potion_boss_dump_turn", BAKED.get("potion_boss_dump_turn", 3.0), 0.5, 1.0, 8.0)
+add("potion_boss_dump_hp", BAKED.get("potion_boss_dump_hp", 120.0), 15.0, 40.0, 300.0)
+add("entropic_min_empty", BAKED.get("entropic_min_empty", 2.0), 0.25, 1.0, 4.0)
 
 NAMES = list(SPEC)
 SUMMARY = re.compile(r"wins=(\d+).*win_rate=([\d.]+)%.*mean_floor_achieved=([\d.]+)")
@@ -99,6 +111,10 @@ def main():
     mu = 4
     if os.path.exists(STATE):
         st = json.load(open(STATE))
+        if len(st["mean"]) < len(NAMES):
+            st["mean"].extend(SPEC[name][0] for name in NAMES[len(st["mean"]):])
+        elif len(st["mean"]) > len(NAMES):
+            raise RuntimeError(f"optimizer state has {len(st['mean'])} dims, spec has {len(NAMES)}")
     else:
         st = {"mean": [SPEC[n][0] for n in NAMES], "sigma_mult": 0.6,
               "gen": 0, "history": [], "best": None}

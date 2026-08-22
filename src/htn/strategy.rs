@@ -1,12 +1,17 @@
-use crate::action::Action;
+use crate::action::{Action, PotionOp};
 use crate::card::Card;
-use crate::game::{Game, GridKind, Screen};
+use crate::game::{Game, GridKind, RewardKind, Screen};
 use crate::ids::{CardId, CardType, Character, PotionId, RelicId, RoomType};
 
 use super::deckplan;
 use super::params::params;
 
-const PICK_THRESHOLD: i32 = 85;
+/// The current run objective terminates after The Beyond; `begin_next_act`
+/// does not enter The Ending even with all three keys. Keep all key costs out
+/// of policy decisions until that engine transition is enabled.
+fn keys_advance_win_condition(_game: &Game) -> bool {
+    false
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct DeckMetrics {
@@ -29,7 +34,8 @@ pub fn map_choice(game: &Game, actions: &[Action]) -> Action {
     let strength = metrics.scaling * 2
         + game.player.deck.iter().filter(|c| c.upgraded).count() as i32
         + metrics.big_attacks;
-    let need_emerald = game.final_act_available() && !game.has_emerald_key();
+    let need_emerald =
+        keys_advance_win_condition(game) && game.final_act_available() && !game.has_emerald_key();
 
     let mut best = &actions[0];
     let mut best_v = f32::MIN;
@@ -179,7 +185,11 @@ fn room_value(
             if y >= 14 {
                 v = p.rest_preboss_value;
             }
-            if game.final_act_available() && !game.has_ruby_key() && act >= 3 {
+            if keys_advance_win_condition(game)
+                && game.final_act_available()
+                && !game.has_ruby_key()
+                && act >= 3
+            {
                 v += 25.0;
             }
             v
@@ -238,7 +248,7 @@ fn elite_matchup(next_elite: Option<&str>, metrics: DeckMetrics, strength: i32) 
             }
         }
         Some("Book of Stabbing") => {
-            if metrics.block_cards >= 6 {
+            if metrics.block_cards + metrics.frost_src * 2 >= 6 {
                 15
             } else {
                 -35
@@ -252,7 +262,28 @@ fn elite_matchup(next_elite: Option<&str>, metrics: DeckMetrics, strength: i32) 
             }
         }
         Some("Reptomancer") => {
+            if metrics.aoe >= 2 {
+                10
+            } else {
+                -25
+            }
+        }
+        Some("Slavers") => {
             if metrics.aoe >= 1 {
+                10
+            } else {
+                -20
+            }
+        }
+        Some("Giant Head") => {
+            if metrics.scaling >= 2 || metrics.big_attacks >= 2 {
+                10
+            } else {
+                -50
+            }
+        }
+        Some("Nemesis") => {
+            if metrics.big_attacks >= 2 {
                 10
             } else {
                 -25
@@ -272,18 +303,37 @@ pub fn combat_reward(game: &Game, legal: &[Action]) -> Action {
     for a in legal {
         if let Action::Choose { label: Some(l), .. } = a {
             let lab = l.to_ascii_uppercase();
-            if lab == "EMERALD_KEY" || lab == "GOLD" || lab == "STOLEN_GOLD" {
+            if lab == "EMERALD_KEY" {
+                if keys_advance_win_condition(game) && !game.has_emerald_key() {
+                    return a.clone();
+                }
+                continue;
+            }
+            if lab == "GOLD" || lab == "STOLEN_GOLD" {
                 return a.clone();
             }
             if lab == "SAPPHIRE_KEY"
+                && keys_advance_win_condition(game)
                 && game.final_act_available()
                 && !game.has_sapphire_key()
                 && game.dungeon.act as i32 >= 2
             {
                 return a.clone();
             }
-            if lab == "POTION" && empty_pots > 0 {
-                return a.clone();
+            if lab == "POTION" {
+                if empty_pots > 0 {
+                    return a.clone();
+                }
+                if let Action::Choose { index, .. } = a {
+                    if let Some(slot) =
+                        reward_potion_id(game, *index).and_then(|id| potion_swap_slot(game, id))
+                    {
+                        if let Some(discard) = potion_discard_action(legal, slot) {
+                            return discard;
+                        }
+                    }
+                }
+                continue;
             }
             if lab == "RELIC" {
                 return a.clone();
@@ -367,7 +417,7 @@ pub fn boss_relic(game: &Game, legal: &[Action]) -> Action {
 
 pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
     let empty_potions = game.player.potions.iter().any(|p| p.id == PotionId::Slot);
-    let mut best: Option<(&Action, i32)> = None;
+    let mut best: Option<(&Action, i32, Option<usize>)> = None;
     for action in legal {
         let Action::Choose {
             label: Some(label), ..
@@ -375,32 +425,89 @@ pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
         else {
             continue;
         };
-        let value = if label == "purge" {
-            deckplan::shop_purge_value(game)
+        let (value, swap_slot) = if label == "purge" {
+            (deckplan::shop_purge_value(game), None)
         } else if let Some(id) = CardId::from_sts_id(label) {
-            score_card(game, &Card::new(id)) - 10
+            (score_card(game, &Card::new(id)) - 10, None)
         } else if let Some(id) = RelicId::from_sts_id(label) {
-            deckplan::shop_relic_value(game, id)
+            (deckplan::shop_relic_value(game, id), None)
         } else if let Some(id) = PotionId::from_sts_id(label) {
             if empty_potions {
-                shop_potion_value(id)
+                (shop_potion_value(id), None)
+            } else if let Some(slot) = potion_swap_slot(game, id) {
+                (shop_potion_value(id), Some(slot))
             } else {
-                0
+                (0, None)
             }
         } else {
-            0
+            (0, None)
         };
-        if value > 45 && best.is_none_or(|(_, best_value)| value > best_value) {
-            best = Some((action, value));
+        if value > 45 && best.is_none_or(|(_, best_value, _)| value > best_value) {
+            best = Some((action, value, swap_slot));
         }
     }
-    best.map(|(action, _)| action.clone()).unwrap_or_else(|| {
-        legal
-            .iter()
-            .find(|a| matches!(a, Action::Proceed | Action::Skip))
-            .cloned()
-            .unwrap_or_else(|| legal[0].clone())
-    })
+    if let Some((action, _, swap_slot)) = best {
+        if let Some(slot) = swap_slot {
+            if let Some(discard) = potion_discard_action(legal, slot) {
+                return discard;
+            }
+        } else {
+            return action.clone();
+        }
+    }
+    legal
+        .iter()
+        .find(|a| matches!(a, Action::Proceed | Action::Skip))
+        .cloned()
+        .unwrap_or_else(|| legal[0].clone())
+}
+
+fn potion_discard_action(legal: &[Action], slot: usize) -> Option<Action> {
+    legal
+        .iter()
+        .find(|action| {
+            matches!(
+                action,
+                Action::Potion {
+                    action: PotionOp::Discard,
+                    slot: action_slot,
+                    ..
+                } if *action_slot == slot
+            )
+        })
+        .cloned()
+}
+
+fn reward_potion_id(game: &Game, compact_index: usize) -> Option<PotionId> {
+    game.rewards
+        .iter()
+        .filter(|reward| !reward.taken)
+        .nth(compact_index)
+        .and_then(|reward| match reward.kind {
+            RewardKind::Potion(id) => Some(id),
+            _ => None,
+        })
+}
+
+fn potion_swap_slot(game: &Game, incoming: PotionId) -> Option<usize> {
+    if game.player.potions.iter().any(|p| p.id == PotionId::Slot) {
+        return None;
+    }
+    let (slot, held) = game
+        .player
+        .potions
+        .iter()
+        .enumerate()
+        .filter(|(_, potion)| {
+            !matches!(
+                potion.id,
+                PotionId::Slot | PotionId::Fairy | PotionId::EntropicBrew
+            )
+        })
+        .min_by_key(|(_, potion)| shop_potion_value(potion.id))?;
+    ((shop_potion_value(incoming) - shop_potion_value(held.id)) as f32
+        > params().potion_swap_margin)
+        .then_some(slot)
 }
 
 fn shop_potion_value(id: PotionId) -> i32 {
@@ -431,7 +538,7 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
     let act = game.dungeon.act as i32;
     let near_boss = game.current_y >= 13;
 
-    if game.final_act_available() && !game.has_ruby_key() {
+    if keys_advance_win_condition(game) && game.final_act_available() && !game.has_ruby_key() {
         let must_recall = act >= 3 && near_boss;
         let comfortable =
             (act >= 3 && hp_frac >= 0.6) || (act == 2 && hp_frac >= 0.9 && !near_boss);
@@ -488,6 +595,14 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
     if near_boss && hp_frac < params().rest_hp_preboss {
         want = "rest";
     }
+    if want == "rest"
+        && act == 1
+        && near_boss
+        && game.dungeon.boss == "Hexaghost"
+        && hexaghost_smith_is_safer_value(game)
+    {
+        want = "smith";
+    }
     for a in legal {
         if let Action::Choose { label: Some(l), .. } = a {
             if l.eq_ignore_ascii_case(want) {
@@ -500,6 +615,18 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
         .find(|a| matches!(a, Action::Choose { .. }))
         .cloned()
         .unwrap_or_else(|| legal[0].clone())
+}
+
+fn hexaghost_smith_is_safer_value(game: &Game) -> bool {
+    let hp = game.player.hp.max(0);
+    let max_hp = game.player.max_hp.max(1);
+    let rest_heal = max_hp * 3 / 10;
+    let rested_hp = (hp + rest_heal).min(max_hp);
+    let after_divider = |entry_hp: i32| entry_hp - 6 * (entry_hp / 12 + 1);
+    let current_survival = after_divider(hp);
+    let rested_survival = after_divider(rested_hp);
+    current_survival as f32 >= max_hp as f32 * 0.25
+        && ((rested_survival - current_survival) as f32) < params().hex_rest_effective_gain_min
 }
 
 /// Rank Neow's blessings instead of defaulting to the first option: deck
@@ -572,11 +699,11 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
         choices = survivable;
     }
 
-    let event = game
-        .event
-        .as_ref()
+    let event_state = game.event.as_ref();
+    let event = event_state
         .map(|event| normalize_event_id(&event.id))
         .unwrap_or_default();
+    let event_screen = event_state.map(|event| event.screen).unwrap_or(0);
     let hp = game.player.hp;
     let max_hp = game.player.max_hp.max(1);
     let hp_frac = hp as f32 / max_hp as f32;
@@ -584,6 +711,15 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
     let pick = |words: &[&str]| choice_containing(&choices, words);
 
     let selected = match event.as_str() {
+        "drugdealer" => pick(&["study", "inject"]),
+        "falling" => {
+            if event_screen == 1 {
+                falling_event_choice(game, &choices)
+            } else {
+                pick(&["continue"])
+            }
+        }
+        "matchandkeep" => match_and_keep_choice(game, &choices),
         "forgottenaltar" => pick(&["offer"]).or_else(|| {
             if hp > 30.max(max_hp / 3) {
                 pick(&["sacrifice"])
@@ -634,7 +770,6 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
                 None
             }
         }
-        "drugdealer" => pick(&["leave"]),
         "maskedbandits" => pick(&["fight"]),
         _ => None,
     };
@@ -649,6 +784,91 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
         return action;
     }
     choices[0].0.clone()
+}
+
+fn action_at_choice_index(choices: &[(&Action, String)], wanted: usize) -> Option<Action> {
+    choices.iter().find_map(|(action, _)| match action {
+        Action::Choose { index, .. } if *index == wanted => Some((*action).clone()),
+        _ => None,
+    })
+}
+
+fn falling_event_choice(game: &Game, choices: &[(&Action, String)]) -> Option<Action> {
+    let event = game.event.as_ref()?;
+    event
+        .data
+        .iter()
+        .enumerate()
+        .filter_map(|(choice_index, deck_index)| {
+            let deck_index = usize::try_from(*deck_index).ok()?;
+            let card = game.player.deck.get(deck_index)?;
+            Some((choice_index, removal_score(card)))
+        })
+        .max_by_key(|(_, score)| *score)
+        .and_then(|(choice_index, _)| action_at_choice_index(choices, choice_index))
+}
+
+fn match_and_keep_choice(game: &Game, choices: &[(&Action, String)]) -> Option<Action> {
+    let (chosen, visible) = game.match_game_choices()?;
+    match_and_keep_choice_from_state(game, choices, chosen, &visible)
+}
+
+fn match_and_keep_choice_from_state(
+    game: &Game,
+    choices: &[(&Action, String)],
+    chosen: Option<CardId>,
+    visible: &[Option<CardId>],
+) -> Option<Action> {
+    let is_curse = |id: CardId| Card::new(id).card_type() == CardType::CURSE;
+
+    if let Some(chosen) = chosen {
+        if !is_curse(chosen) {
+            if let Some(index) = visible.iter().position(|id| *id == Some(chosen)) {
+                return action_at_choice_index(choices, index);
+            }
+        }
+        if let Some(index) = visible.iter().position(Option::is_none) {
+            return action_at_choice_index(choices, index);
+        }
+        let index = visible
+            .iter()
+            .position(|id| id.is_some_and(|id| id != chosen))?;
+        return action_at_choice_index(choices, index);
+    }
+
+    let mut best_pair: Option<(usize, i32)> = None;
+    for (index, id) in visible.iter().enumerate() {
+        let Some(id) = *id else {
+            continue;
+        };
+        if is_curse(id)
+            || visible
+                .iter()
+                .skip(index + 1)
+                .all(|other| *other != Some(id))
+        {
+            continue;
+        }
+        let value = score_card(game, &Card::new(id));
+        if best_pair.is_none_or(|(_, best)| value > best) {
+            best_pair = Some((index, value));
+        }
+    }
+    if let Some((index, _)) = best_pair {
+        return action_at_choice_index(choices, index);
+    }
+    visible
+        .iter()
+        .position(Option::is_none)
+        .and_then(|index| action_at_choice_index(choices, index))
+        .or_else(|| {
+            visible
+                .iter()
+                .enumerate()
+                .filter_map(|(index, id)| id.filter(|id| !is_curse(*id)).map(|id| (index, id)))
+                .max_by_key(|(_, id)| score_card(game, &Card::new(*id)))
+                .and_then(|(index, _)| action_at_choice_index(choices, index))
+        })
 }
 
 fn normalize_event_id(id: &str) -> String {
@@ -738,7 +958,7 @@ pub fn grid_choice(game: &Game, legal: &[Action]) -> Action {
         let value = match kind {
             GridKind::Purge | GridKind::Transform => removal_score(card),
             GridKind::Upgrade => upgrade_score(card.id) - i32::from(card.upgraded) * 500,
-            GridKind::Library | GridKind::Bottle(_) => score_card(game, card),
+            GridKind::Library | GridKind::Bottle(_) | GridKind::Copy => score_card(game, card),
             GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
                 retrieve_score(game, card)
             }
@@ -835,7 +1055,15 @@ fn junk_score(card: &Card) -> i32 {
 
 fn deck_metrics(game: &Game) -> DeckMetrics {
     let mut metrics = DeckMetrics {
-        size: game.player.deck.len() as i32,
+        // Deck-shape thresholds describe actionable cards. Ascender's Bane
+        // and other cost -2 curse/status cards should not make the deck look
+        // one pick larger before they can ever be played.
+        size: game
+            .player
+            .deck
+            .iter()
+            .filter(|card| !crate::combat::status_or_curse_unplayable(card, &game.player))
+            .count() as i32,
         ..DeckMetrics::default()
     };
     for card in &game.player.deck {
@@ -1282,17 +1510,18 @@ mod tests {
         assert_eq!(elite_matchup(Some("Gremlin Nob"), prepared, 6), 15);
         assert_eq!(elite_matchup(Some("3 Sentries"), prepared, 6), 20);
         assert_eq!(elite_matchup(Some("Book of Stabbing"), prepared, 6), 15);
+        assert_eq!(elite_matchup(Some("Slavers"), prepared, 6), 10);
+        assert_eq!(elite_matchup(Some("Giant Head"), weak, 0), -50);
+        assert_eq!(elite_matchup(Some("Nemesis"), prepared, 6), 10);
     }
 
     #[test]
     fn defect_engine_and_claw_are_draftable() {
         let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
         assert!(score_card(&game, &Card::new(CardId::Defragment)) > 300);
+        let claw_without_payoff = score_card(&game, &Card::new(CardId::Gash));
         game.player.deck.push(Card::new(CardId::All_For_One));
-        game.player.deck.push(Card::new(CardId::Gash));
-        game.player.deck.push(Card::new(CardId::Gash));
-        assert!(score_card(&game, &Card::new(CardId::Gash)) >= PICK_THRESHOLD);
-        assert!(score_card(&game, &Card::new(CardId::Rebound)) >= PICK_THRESHOLD);
+        assert!(score_card(&game, &Card::new(CardId::Gash)) > claw_without_payoff);
     }
 
     #[test]
@@ -1303,5 +1532,225 @@ mod tests {
             strip_event_markup("[Retrace Your Steps] #rLose #r4 #rMax #rHP.").to_ascii_lowercase();
         assert_eq!(event_hp_loss(&sacrifice, 75), 19);
         assert_eq!(event_hp_loss(&retrace, 75), 0);
+    }
+
+    #[test]
+    fn unreachable_act_four_keys_are_not_taken() {
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.dungeon.act = crate::ids::Act::Beyond;
+        game.current_y = 14;
+
+        let emerald = Action::Choose {
+            index: 0,
+            label: Some("EMERALD_KEY".into()),
+            x: None,
+            y: None,
+            room: None,
+        };
+        let gold = Action::Choose {
+            index: 1,
+            label: Some("GOLD".into()),
+            x: None,
+            y: None,
+            room: None,
+        };
+        assert_eq!(combat_reward(&game, &[emerald, gold.clone()]), gold);
+
+        let recall = Action::Choose {
+            index: 0,
+            label: Some("Recall".into()),
+            x: None,
+            y: None,
+            room: None,
+        };
+        let smith = Action::Choose {
+            index: 1,
+            label: Some("Smith".into()),
+            x: None,
+            y: None,
+            room: None,
+        };
+        game.player.hp = game.player.max_hp;
+        assert_eq!(rest_choice(&game, &[recall, smith.clone()]), smith);
+    }
+
+    #[test]
+    fn hexaghost_rest_choice_accounts_for_divider_breakpoints() {
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.current_y = 14;
+        game.dungeon.boss = "Hexaghost".into();
+        let rest = Action::Choose {
+            index: 0,
+            label: Some("Rest".into()),
+            x: None,
+            y: None,
+            room: None,
+        };
+        let smith = Action::Choose {
+            index: 1,
+            label: Some("Smith".into()),
+            x: None,
+            y: None,
+            room: None,
+        };
+
+        game.player.hp = 55;
+        assert_eq!(rest_choice(&game, &[rest.clone(), smith.clone()]), smith);
+        game.player.hp = 35;
+        assert_eq!(rest_choice(&game, &[rest.clone(), smith]), rest);
+    }
+
+    #[test]
+    fn deck_size_excludes_ascenders_bane() {
+        let a0 = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        let a20 = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        assert_eq!(a0.player.deck.len(), 10);
+        assert_eq!(a20.player.deck.len(), 11);
+        assert_eq!(deck_metrics(&a0).size, 10);
+        assert_eq!(deck_metrics(&a20).size, 10);
+    }
+
+    #[test]
+    fn potion_reward_replaces_the_weakest_unprotected_slot() {
+        use crate::game::Reward;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.screen = Screen::CombatReward;
+        game.player.potions[0].id = PotionId::Weak;
+        game.player.potions[1].id = PotionId::Fairy;
+        game.rewards = vec![Reward::new(RewardKind::Potion(PotionId::Focus))];
+
+        let legal = game.legal_actions();
+        let discard = Action::Potion {
+            action: PotionOp::Discard,
+            slot: 0,
+            target_index: None,
+        };
+        assert!(legal.contains(&discard));
+        assert_eq!(combat_reward(&game, &legal), discard.clone());
+
+        game.step(&discard);
+        let legal = game.legal_actions();
+        let claim = combat_reward(&game, &legal);
+        assert!(matches!(
+            claim,
+            Action::Choose {
+                label: Some(ref label),
+                ..
+            } if label == "POTION"
+        ));
+        game.step(&claim);
+        assert_eq!(game.player.potions[0].id, PotionId::Focus);
+        assert_eq!(game.player.potions[1].id, PotionId::Fairy);
+    }
+
+    #[test]
+    fn shop_swap_discards_before_buying_and_protects_premium_potions() {
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.player.potions[0].id = PotionId::Weak;
+        game.player.potions[1].id = PotionId::Fairy;
+        let focus = Action::Choose {
+            index: 0,
+            label: Some(PotionId::Focus.sts_id().into()),
+            x: None,
+            y: None,
+            room: None,
+        };
+        let discard = Action::Potion {
+            action: PotionOp::Discard,
+            slot: 0,
+            target_index: None,
+        };
+        let legal = vec![focus.clone(), discard.clone(), Action::Proceed];
+        assert_eq!(shop_choice(&game, &legal), discard);
+
+        game.player.potions[0].id = PotionId::Slot;
+        assert_eq!(shop_choice(&game, &legal), focus);
+
+        game.player.potions[0].id = PotionId::EntropicBrew;
+        assert_eq!(potion_swap_slot(&game, PotionId::Focus), None);
+    }
+
+    #[test]
+    fn event_policy_handles_safe_value_and_memory_choices() {
+        use crate::game::EventState;
+
+        let set_event =
+            |game: &mut Game, id: &str, screen: i32, options: &[&str], data: Vec<i32>| {
+                game.screen = Screen::Event;
+                game.event = Some(EventState::policy_fixture(
+                    id,
+                    screen,
+                    options.iter().map(|option| (*option).into()).collect(),
+                    data,
+                ));
+            };
+        let chosen_label = |game: &Game| match event_choice(game, &game.legal_actions()) {
+            Action::Choose {
+                label: Some(label), ..
+            } => label,
+            action => panic!("expected event choice, got {action:?}"),
+        };
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        set_event(
+            &mut game,
+            "Drug Dealer",
+            0,
+            &["[Ingest]", "[Study]", "[Inject]"],
+            vec![],
+        );
+        assert!(chosen_label(&game).contains("Study"));
+
+        let strike = game
+            .player
+            .deck
+            .iter()
+            .position(|card| card.id == CardId::Strike_B)
+            .unwrap() as i32;
+        let defend = game
+            .player
+            .deck
+            .iter()
+            .position(|card| card.id == CardId::Defend_B)
+            .unwrap() as i32;
+        set_event(
+            &mut game,
+            "Falling",
+            1,
+            &["[Land]", "[Channel]", "[Strike]"],
+            vec![defend, -1, strike],
+        );
+        assert!(chosen_label(&game).contains("Strike"));
+
+        let actions = [
+            Action::Choose {
+                index: 0,
+                label: Some("known curse".into()),
+                x: None,
+                y: None,
+                room: None,
+            },
+            Action::Choose {
+                index: 1,
+                label: Some("hidden card".into()),
+                x: None,
+                y: None,
+                room: None,
+            },
+        ];
+        let choices: Vec<_> = actions
+            .iter()
+            .map(|action| (action, String::new()))
+            .collect();
+        assert_eq!(
+            match_and_keep_choice_from_state(
+                &game,
+                &choices,
+                Some(CardId::AscendersBane),
+                &[Some(CardId::AscendersBane), None],
+            ),
+            Some(actions[1].clone())
+        );
     }
 }

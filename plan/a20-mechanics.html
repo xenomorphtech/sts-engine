@@ -9,47 +9,47 @@
 <body>
 <nav class="crumb"><a href="index.html">&larr; A20 improvement plan</a></nav>
 <h1>A20 mechanics delta &amp; engine support status</h1>
-<p class="sub">Measured with the current baked policy on the same 500-seed cohort: <strong>A0 = 64.2%</strong> (floor 42.96) vs <strong>A20 = 11.0%</strong> (floor 24.57). A20 death mass: <strong>floor 15 (Act 1 boss) = 32% of all runs</strong> (Hexaghost 76, Slime Boss 68, Guardian 18), floor 31 = 21% (Collector 44, Champ 38, Automaton 24), Act 1–2 hallways/elites ≈ 27%.</p>
+<p class="sub">The original 500-seed profile was <strong>A0 = 64.2%</strong> (floor 42.96) vs pre-audit <strong>A20 = 11.0%</strong> (floor 24.57), with 32% of all runs dying at the Act-1 boss. The audited fidelity baseline was 0.1% / floor 21.77; after final fidelity corrections, the accepted policy sequence reaches <strong>0.2% / 22.28</strong> on source <code>20260822</code> and <strong>0.4% / 22.46</strong> on fresh source <code>20260823</code>.</p>
 
 <h2>Ascension modifier inventory (engine support)</h2>
 <div class="tablewrap"><table>
 <tr><th>Asc</th><th>Modifier</th><th>Engine status</th></tr>
 <tr><td>1</td><td>More elites on the map</td><td>✅ <code>map.rs:483</code></td></tr>
-<tr><td>2/3/4</td><td>Normals / elites / bosses deal more damage</td><td>⚠️ ~169 per-monster branches exist, but <strong>Bronze Automaton has no A4 branch</strong> (Flail 7×2 / beam 45 flat; real A4 = 8×2 / 50)</td></tr>
+<tr><td>2/3/4</td><td>Normals / elites / bosses deal more damage</td><td>✅ audited listed gaps, including Automaton 8×2 Flail / 50 HYPER BEAM and the late-monster bundle</td></tr>
 <tr><td>5</td><td>Post-boss heal only 75%</td><td>✅ <code>game.rs:2904</code></td></tr>
 <tr><td>6</td><td>Start at 90% HP</td><td>✅</td></tr>
-<tr><td>7</td><td>Normals more HP</td><td>⚠️ Act 1 complete; <strong>flat for Chosen, Snake Plant, Shelled Parasite, Centurion, Healer, Darkling, Spiker, Repulsor</strong></td></tr>
-<tr><td>8</td><td>Elites more HP</td><td>⚠️ <strong>Book of Stabbing and Giant Head flat</strong></td></tr>
-<tr><td>9</td><td>Bosses more HP</td><td>⚠️ <strong>missing Awakened One (300→320), Automaton (300→320), Heart (750→800)</strong></td></tr>
+<tr><td>7</td><td>Normals more HP</td><td>✅ audited Chosen, Snake Plant, Shelled Parasite, Centurion, Healer, Darkling, Spiker, and Repulsor ranges</td></tr>
+<tr><td>8</td><td>Elites more HP</td><td>✅ Book of Stabbing 168–172 and Giant Head 520</td></tr>
+<tr><td>9</td><td>Bosses more HP</td><td>✅ Awakened One 320×2, Automaton 320, Corrupt Heart 800</td></tr>
 <tr><td>10</td><td>Ascender's Bane</td><td>✅ correctly unremovable</td></tr>
-<tr><td>11</td><td><strong>Lose 1 potion slot (3→2)</strong></td><td>❌ <strong>NOT IMPLEMENTED</strong> — <code>potion_slots: 3</code> hardcoded</td></tr>
+<tr><td>11</td><td><strong>Lose 1 potion slot (3→2)</strong></td><td>✅ implemented in <code>Player::apply_ascension</code>; base slots and empty slot instances both become 2</td></tr>
 <tr><td>12</td><td>Upgraded rewards half as often</td><td>✅</td></tr>
 <tr><td>13</td><td>Bosses drop 25% less gold</td><td>✅</td></tr>
 <tr><td>14</td><td>Lower starting max HP (Defect 75→71)</td><td>✅ (with A6 ⇒ start 64/71)</td></tr>
 <tr><td>15</td><td>Unfavorable events</td><td>✅ (~20 branches)</td></tr>
 <tr><td>16</td><td>Shop prices +10%</td><td>✅</td></tr>
-<tr><td>17/18</td><td>Harder normal/elite movesets</td><td>✅ for implemented monsters</td></tr>
-<tr><td>19</td><td>Harder boss movesets</td><td>⚠️ most ✅; <strong>Awakened One Curiosity 1 (real: 2); Automaton no A19</strong></td></tr>
-<tr><td>20</td><td><strong>Two Act 3 bosses back-to-back, no heal</strong></td><td>❌ <strong>NOT IMPLEMENTED</strong> — <code>boss_list</code> holds 2 entries but only <code>[0]</code> is ever fought</td></tr>
+<tr><td>17/18</td><td>Harder normal/elite movesets</td><td>✅ audited listed gaps and formerly missing Act-3 encounters</td></tr>
+<tr><td>19</td><td>Harder boss movesets</td><td>✅ Automaton post-beam Boost; Awakened One Regen 15 and Curiosity 2 with exact two-form lifecycle</td></tr>
+<tr><td>20</td><td><strong>Two Act 3 bosses back-to-back, no heal</strong></td><td>✅ implemented with the decompiled <code>bossList</code> lifecycle: boss entry consumes its head; A20 Beyond re-enters a boss room while two entries remain, advancing the floor/RNG streams without healing</td></tr>
 </table></div>
 
 <div class="card">
 <h3><span class="tag warn">Critical content gaps</span></h3>
 <ul>
-<li><strong>Missing Act 3 encounters:</strong> no Time Eater, Nemesis, Reptomancer, Spire Growth, Writhing Mass. Fallbacks silently substitute Hexaghost / Gremlin Nob / Cultist. Confirmed: zero floor-47 "Time Eater" losses in 500 A20 runs. ~1/3 of Act 3 boss rolls and ~2/3 of Act 3 elite rolls are fought against trivial stand-ins.</li>
-<li><strong>Act 4 is unreachable:</strong> <code>begin_next_act</code> sets <code>done = true</code> on the Beyond→Ending transition unconditionally. "Win" = completing Act 3. Therefore <strong>all key-chasing (ruby recall stealing the pre-boss rest, sapphire over a chest relic, emerald +70 elite bias) is live dead weight at every ascension.</strong></li>
-<li>The measured 11.0% "A20" is an <em>overestimate</em> of true A20; an ES run today partially optimizes against phantom encounters.</li>
+<li>✅ <strong>Formerly missing Act 3 encounters are implemented:</strong> Time Eater, Spire Growth, Nemesis, Reptomancer, and Writhing Mass now use their decompiled HP, moves, powers, and summon/debuff lifecycles instead of Gremlin Nob / Cultist stand-ins.</li>
+<li><strong>Act 4 is unreachable:</strong> <code>begin_next_act</code> sets <code>done = true</code> on the Beyond→Ending transition unconditionally. "Win" = completing Act 3. The HTN now gates key-chasing while that remains true, so it no longer spends a campfire, chest relic, or elite-routing premium on dead keys.</li>
+<li>The audited Act-3 campaign is now a viable A20 policy target. Act 4 is still a separate fidelity project and is deliberately excluded from this win condition.</li>
 </ul>
 </div>
 
 <h2>Deterministic additions (ranked)</h2>
 <ol>
-<li><span class="tag eng">ENGINE</span> <strong>Implement the A20 double boss</strong> — in the boss-victory Proceed branch: if A20 &amp;&amp; Beyond &amp;&amp; first boss, set <code>boss = boss_list[1]</code> and re-enter combat (no heal), then BossTreasure. This <em>is</em> A20.</li>
-<li><span class="tag eng">ENGINE</span> <strong>Implement A11</strong>: <code>potion_slots = 2</code> at A11+. One-line-scale; changes the whole potion economy.</li>
-<li><span class="tag eng">ENGINE</span> <strong>Implement missing Act 3 encounters + finish the HP/moveset ascension audit</strong> (Time Eater, Nemesis, Reptomancer, Spire Growth, Writhing Mass; A7/8/9 HP tiers; Automaton A4/A9/A19; Awakened A9/A19). Prerequisite for any real A20 tuning; parity-check against decompile per project methodology.</li>
+<li>✅ <span class="tag eng">ENGINE</span> <strong>A20 double boss implemented</strong> — verified against <code>ProceedButton.goToDoubleBoss</code>, <code>MonsterRoomBoss.onPlayerEntry</code>, and the room-transition floor/RNG reset. On random source <code>20260822</code>, honest wins moved 96→61/1000 as 35 runs that beat one Act-3 boss failed the real two-boss requirement.</li>
+<li>✅ <span class="tag eng">ENGINE</span> <strong>A11 implemented</strong>: <code>potion_slots = 2</code> at A11+, with Potion Belt still adding two afterward.</li>
+<li>✅ <span class="tag eng">ENGINE</span> <strong>HP/moveset ascension audit completed</strong>: Time Eater, Spire Growth, Nemesis, Reptomancer, Writhing Mass, Bronze Automaton, Awakened One, remaining A7/A8/A9 HP ranges, and the listed late-monster move tiers. On source <code>20260822</code>, the full fidelity sequence re-baselined 21→21→21→16→11→4→3→1→1 wins/1000 and mean floor 24.30→24.24→24.22→24.12→24.07→23.28→23.26→23.26→21.77.</li>
 <li><span class="tag det">DET</span> <strong>Act 1 boss survival package</strong> (32% of A20 deaths): ascension-conditional <code>boss_card_value</code>; Hexaghost Divider tech — Divider = 6×(hp/12+1) off <em>current</em> HP, so resting to full before a known Hexaghost <em>increases</em> it (prefer smith just under an hp/12 breakpoint); Guardian A19 threshold-crossing guard using exposed <code>monster.extra</code>.</li>
-<li><span class="tag det">DET</span> <strong>Delete/gate key-chasing</strong> until Act 4 exists (or fix Act 4 entry): it costs a rest + a relic + elite bias per run for zero return.</li>
-<li><span class="tag det">DET</span> <strong>Curse-aware deck metrics</strong>: exclude unplayable cards from <code>size</code> so A10's Bane doesn't trigger deck-size penalties one pick early.</li>
+<li>✅ <span class="tag det">DET</span> <strong>Key-chasing gated</strong> until Act 4 exists: fixed source <code>20260822</code> improved 11→19 wins/1000 and mean floor 23.86→24.05; fresh source <code>20260823</code> improved 12→13 wins and mean floor 24.27→24.68.</li>
+<li>✅ <span class="tag det">DET</span> <strong>Curse-aware deck metrics</strong>: unplayable cost −2 curse/status cards are excluded from actionable <code>size</code>, so A10's Bane no longer triggers deck-size thresholds one pick early. It was win-neutral on both 1,000-seed cohorts; mean floor was +0.17 fixed / −0.01 fresh.</li>
 <li><span class="tag det">DET</span> 2-slot potion economy adjustments (after #2); A15-aware event gold gates (engine already charges A15 prices, policy uses A0 constants); Act 3 counter-drafting + double-boss resource reserve (after #1/#3).</li>
 </ol>
 
@@ -67,10 +67,10 @@
 
 <h2>Biggest risks / unknowns</h2>
 <ul>
-<li><strong>Fidelity gap dominates.</strong> Every A20 number today is inflated; re-run the ES after each engine fix.</li>
+<li><strong>Act-3 fidelity corrections sharply lowered the baseline.</strong> Preserve this audited engine while policy work proceeds; treat any future engine correction as a re-baseline event.</li>
 <li><strong>Act 4 semantics need a deliberate decision</strong> before A20 tuning (key logic interacts with double-boss prep).</li>
-<li><strong>ES signal sparsity at ~11% wins</strong>: use heavier floor weight early (the floor-15 wall is where floor signal is dense), possibly 1000-seed cohorts.</li>
-<li>Verify from decompile before coding: Awakened A19 Curiosity 2 / A9 320 HP, Automaton A19 pattern, exact double-boss reward/no-heal sequence.</li>
+<li><strong>Win signal remains sparse at 0.2–0.5%</strong>: use 1,000-seed paired cohorts and heavier floor weight until policy recovery makes win deltas measurable.</li>
+<li>The Awakened A19/A9, Automaton A19/A9/A4, and exact double-boss reward/no-heal sequences are verified and implemented.</li>
 <li>A20 leans harder on the frost wall than the A0 damage-forward tuning; if scalars can't express it, a "build a block wall" DeckTask is a hand-written addition the ES cannot invent.</li>
 </ul>
 </body>

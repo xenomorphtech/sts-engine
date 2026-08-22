@@ -8,23 +8,23 @@
 </head>
 <body>
 <h1>HTN Defect — A20 improvement plan</h1>
-<p class="sub">Condensed from 8 parallel deep-analysis reports (2026-08-22). Current state: A0 honest 61.6% (baked) / ~63.4% in-training; <strong>A20 with the same policy: 11.0%</strong> — and that number is inflated by engine fidelity gaps. Legend: <span class="tag det">DET</span> deterministic strategy &nbsp;<span class="tag rl">ES/RL</span> optimizer dimension &nbsp;<span class="tag eng">ENGINE</span> engine work.</p>
+<p class="sub">Condensed from 8 parallel deep-analysis reports (2026-08-22). Historical pre-audit state: A0 honest 61.6% (baked) / ~63.4% in-training and A20 11.0%. After the fidelity audit, final engine corrections, and accepted policy sequence, source <code>20260822</code> is <strong>0.2% / mean floor 22.28</strong> and fresh source <code>20260823</code> is <strong>0.4% / 22.46</strong>. Legend: <span class="tag det">DET</span> deterministic strategy &nbsp;<span class="tag rl">ES/RL</span> optimizer dimension &nbsp;<span class="tag eng">ENGINE</span> engine work.</p>
 
 <h2>The documents</h2>
 <div class="grid">
 <div class="card"><a href="a20-mechanics.html"><strong>A20 mechanics delta</strong></a><br>Ascension modifier inventory vs engine support; measured A20 death profile; the double-boss / A11 / Act-4 gaps.</div>
 <div class="card"><a href="combat-search.html"><strong>Combat turn-planning</strong></a><br>Frost-aware pruning, frontier dedup, exact lethal, next-turn exposure, the correct multi-turn formulation.</div>
-<div class="card"><a href="boss-playbooks.html"><strong>Boss &amp; elite playbooks</strong></a><br>Per-fight rules with code hooks; the scripted-spike table that covers 6 loss buckets; missing-monster inventory.</div>
+<div class="card"><a href="boss-playbooks.html"><strong>Boss &amp; elite playbooks</strong></a><br>Per-fight rules with code hooks; the scripted-spike table that covers 6 loss buckets; completed Act-3 encounter inventory.</div>
 <div class="card"><a href="archetypes.html"><strong>Archetype deck-building</strong></a><br>Six overlay archetypes, continuous commitment, need-decay and off-plan penalties; 34 ES dims.</div>
 <div class="card"><a href="map-pathing.html"><strong>Map pathing &amp; risk</strong></a><br>Deck-power-conditional elite affordance; forward DP over (node, HP, gold, keys); rest/shop/key policies.</div>
 <div class="card"><a href="potions-relics.html"><strong>Potion &amp; relic economy</strong></a><br>A11 slots, discard-swap slot management, boss-relic downside pricing, defensive shop relics.</div>
-<div class="card"><a href="events.html"><strong>Event playbook</strong></a><br>Complete per-event table; 7 live bugs (Drug Dealer ingests J.A.X.!); 17 engine stubs; ES thresholds.</div>
+<div class="card"><a href="events.html"><strong>Event playbook</strong></a><br>Drug Dealer, Falling, and Match&amp;Keep fixes accepted; HP/gold gambles and Designer/Big Fish rejected by paired samples.</div>
 <div class="card"><a href="rl-roadmap.html"><strong>RL &amp; optimization roadmap</strong></a><br>ES v4 (SNES sigmas, rank utilities), staged vector growth, boss-gauntlet curriculum, neural go/no-go, eval hygiene.</div>
 </div>
 
 <h2>Cross-cutting findings</h2>
 <ul>
-<li><span class="tag warn">Fidelity</span> <strong>The engine does not yet play real A20.</strong> Missing: A20 double boss, A11 two potion slots, Time Eater / Nemesis / Reptomancer / Spire Growth / Writhing Mass (silently replaced by Hexaghost / Gremlin Nob / Cultist), several A4/A7/A8/A9/A19 HP-and-moveset tiers. <strong>Act 4 is unreachable</strong> (win = Act 3), so all key-chasing is live dead weight.</li>
+<li><span class="tag warn">Fidelity</span> <strong>The Act-3 A20 audit is complete.</strong> The double boss, A11 two-slot rule, formerly missing Act-3 fights, listed A4/A7/A8/A9/A17/A18/A19/A20 HP and move tiers, Automaton, and Awakened One are implemented from the decompile. <strong>Act 4 remains unreachable</strong> (win = Act 3), so key-chasing is gated in the HTN.</li>
 <li><strong>A20 death profile (500 seeds):</strong> Act 1 boss 32% of runs (Hexaghost 15%!), Act 2 boss 21%, hallways/elites ~27%. The A0-tuned policy under-blocks scripted spikes and enters bosses too poor.</li>
 <li><strong>Two shared mechanisms cover most combat losses:</strong> the <em>scripted-spike table</em> (Hexaghost Divider, Automaton beam, Heart cycle, Giant Head, Collector debuff, Awakened echo) and the <em>status-gain penalty</em> (Wounds/Dazed/Burns invisible today).</li>
 <li><strong>Structure by hand, magnitudes by ES.</strong> Every report converged on the same doctrine, backed by the ledger: hand-set values regress, hard gates fail, but hand-written <em>structure</em> (affinities, spike schedules, DP shape) with near-neutral defaults + ES-tuned scales wins. All additions must be default-preserving.</li>
@@ -35,10 +35,10 @@
 <div class="tablewrap"><table>
 <tr><th>Phase</th><th>Work</th><th>Type</th><th>Why now</th></tr>
 <tr><td><strong>0. Eval + ES v4</strong></td><td>Tail-average bake, fresh validation sources, McNemar pairing, 10k honest; SNES per-dim sigmas, full-λ utilities, λ=20×300 CRN</td><td><span class="tag rl">ES/RL</span></td><td>0.5–1 day; +3–6pp at A0 and every later phase measures honestly</td></tr>
-<tr><td><strong>1. A20 fidelity</strong></td><td>Double boss; A11 potion slots; Act-4 entry decision (or gate key-chasing); missing Act 3 monsters; ascension HP/moveset audit</td><td><span class="tag eng">ENGINE</span></td><td>Prerequisite — tuning against phantom encounters is wasted compute</td></tr>
-<tr><td><strong>2. Combat structure</strong></td><td>Frost-aware mid-turn block (D1) + frontier dedup (D2) → next-turn exposure (E1) → exact lethal (D3) → spike table + status penalty + dynamic targeting + Lagavulin wake guard</td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Attacks the measured A20 walls (Act 1/2 bosses); each lands default-preserving, paired-validated</td></tr>
+<tr><td><strong>1. A20 fidelity</strong></td><td>✅ Double boss; ✅ A11 potion slots; ✅ gate dead keys; ✅ missing Act-3 monsters; ✅ listed ascension HP/moveset audit; Act 4 remains out of scope</td><td><span class="tag eng">ENGINE</span></td><td>Completed prerequisite for Act-3 A20 policy tuning</td></tr>
+<tr><td><strong>2. Combat structure</strong></td><td>✅ D1/D2/E1/D3; ✅ status penalty; ✅ Lagavulin wake guard; spike infrastructure neutral; dynamic targeting and blanket Artifact guard rejected</td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Every active term was paired on fixed and fresh 1k cohorts</td></tr>
 <tr><td><strong>3. Vector growth</strong></td><td>Deckplan task coefficients (batch A) → archetype commitment block → per-boss overrides + event/Neow thresholds (B+C) → potion/relic dims</td><td><span class="tag rl">ES/RL</span></td><td>Staged behind ES v4; keep live dims &lt; 300</td></tr>
-<tr><td><strong>4. Event &amp; economy fixes</strong></td><td>7 event bugs (Golden Idol, Drug Dealer, Woman in Blue, Goop, Falling, Scrap Ooze, Match&amp;Keep); potion discard-swap; boss-relic interaction params; shop routing</td><td><span class="tag det">DET</span></td><td>Cheap, immediate, independently testable</td></tr>
+<tr><td><strong>4. Event &amp; economy fixes</strong></td><td>✅ Drug Dealer/Falling/Match&amp;Keep; ✅ potion discard-swap and late-boss dump; ✅ missing elite matchup arms; remaining event gambles rejected</td><td><span class="tag det">DET</span></td><td>Safe event subset raised fresh wins 2→5 and mean floor +0.17</td></tr>
 <tr><td><strong>5. A20 campaign</strong></td><td>Warm-start ES from A0 mean (<code>params_a20.json</code>), sigma 1.0, high floor weight; boss-weighted cohorts; then boss-gauntlet EM loop; map DP + elite affordance opened to the ES</td><td><span class="tag rl">ES/RL</span></td><td>A20 evals are <em>cheaper</em> than A0 (runs die earlier); expect rest/elite/danger dims to move far</td></tr>
 <tr><td><strong>6. Later</strong></td><td>Multi-machine fan-out (multiplies everything); value-net probe; PPO/AZ-lite only if the probe shows headroom</td><td>—</td><td>Neural path strictly dominated on pp/day until ES flattens</td></tr>
 </table></div>

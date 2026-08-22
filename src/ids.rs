@@ -196,6 +196,7 @@ pub enum PowerId {
     FrailPlayer,
     Entangled,
     DrawCard,
+    DrawReduction,
     NoDraw,
     Hex,
     Barricade,

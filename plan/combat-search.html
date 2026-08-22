@@ -37,8 +37,8 @@
 <h3><span class="rank">D2</span> Frontier deduplication <span class="tag det">DET</span></h3>
 <p>Hash (energy, block, hp, hand, orbs, monster hp/block, powers) after sorting, <code>retain</code> first occurrence before <code>truncate(width)</code>. Effectively doubles width for free in big-hand turns.</p>
 
-<h3><span class="rank">D3</span> Exact-lethal DFS with admissible pruning <span class="tag det">DET</span></h3>
-<p>Before the beam: if <code>optimistic_damage(game) ≥ Σ(hp+block)</code> over living monsters, run a DFS over attack plays with a ~20k-step budget (≈7 ms at measured engine speed); return the first proven kill line's first action. The optimistic gate makes it a no-op almost always.</p>
+<h3><span class="rank">D3</span> ✅ Exact-lethal attack search <span class="tag det">DET</span></h3>
+<p>Implemented before the beam as a breadth-first search over legal Attack plays, with a 20k-node hard budget and an upper-biased damage gate. It accepts only engine-proven kills before the combat turn advances, so Time Warp cannot turn a nominal lethal line into a hidden enemy turn. Fixed source <code>20260822</code>: 19→21 wins and floor 24.22→24.30. Fresh source <code>20260823</code>: 13→17 wins and floor 24.67→24.61 (6 loss→win, 2 win→loss). Retained: the win gain repeated with essentially unchanged throughput.</p>
 
 <h3><span class="rank">D4</span> Turn-plan caching <span class="tag det">DET</span></h3>
 <p>Store the best final's action prefix; next decision, if the observed state hash matches the predicted hash, pop the next action without re-searching. Cuts per-turn planning cost ~L-fold; pays for D3 and the rollout below.</p>

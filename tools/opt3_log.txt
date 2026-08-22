@@ -186,3 +186,17 @@ gen 158 top=744.3 median=706.4 sigma=0.60
 gen 159 top=732.1 median=701.7 sigma=0.60
 gen 160 top=742.9 median=715.9 sigma=0.60
 done
+gen 161 top=746.9 median=724.4 sigma=0.60
+gen 162 top=748.5 median=732.3 sigma=0.60
+  validate [[628, 43.06], [640, 42.89]]
+gen 163 top=753.4 median=736.8 sigma=0.60
+Traceback (most recent call last):
+  File "/home/sdancer/slay_the_spire/sts-engine2/tools/opt_params3.py", line 148, in <module>
+    main()
+    ~~~~^^
+  File "/home/sdancer/slay_the_spire/sts-engine2/tools/opt_params3.py", line 116, in main
+    fit, w, f = evaluate(theta, 500, gen_source, "c")
+                ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sdancer/slay_the_spire/sts-engine2/tools/opt_params3.py", line 86, in evaluate
+    raise RuntimeError(f"no summary: {out[:400]}")
+RuntimeError: no summary:

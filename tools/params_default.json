@@ -147,6 +147,7 @@
  "rest_hp_act1": 0.5490030776352413,
  "rest_hp_later": 0.7762048800911667,
  "rest_hp_preboss": 0.8394586827556354,
+ "hex_rest_effective_gain_min": 12.0,
  "pick_threshold": 46.55234005412789,
  "upgraded_pick_bonus": 48.15042617732396,
  "copies_full_penalty": 209.94188163618574,
@@ -184,5 +185,16 @@
  "potion_defense_hp_div": 3.3908571363165168,
  "potion_heal_hp_frac": 0.8190354373361476,
  "potion_block_min": 13.259555937590372,
- "potion_block_hp_div": 6.821454943398306
+ "potion_block_hp_div": 6.821454943398306,
+ "potion_swap_margin": 30.0,
+ "potion_boss_dump_turn": 3.0,
+ "potion_boss_dump_hp": 120.0,
+ "entropic_min_empty": 2.0,
+ "next_exposure_weight": 0.05,
+ "next_block_tax": 0.0,
+ "spike_danger": 0.0,
+ "spike_horizon": 2.0,
+ "status_gain_penalty": 12.0,
+ "laga_wake_penalty": 150.0,
+ "laga_wake_kill_ratio": 3.0
 }

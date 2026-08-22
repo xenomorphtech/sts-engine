@@ -26,6 +26,13 @@ pub struct Params {
     pub focus_weight: f32,
     pub enemy_strength_penalty: f32,
     pub bias_decay_weight: f32,
+    pub next_exposure_weight: f32,
+    pub next_block_tax: f32,
+    pub spike_danger: f32,
+    pub spike_horizon: f32,
+    pub status_gain_penalty: f32,
+    pub laga_wake_penalty: f32,
+    pub laga_wake_kill_ratio: f32,
     // Orb heuristics.
     pub orb_horizon: f32,
     pub orb_lightning_mult: f32,
@@ -52,6 +59,7 @@ pub struct Params {
     pub rest_hp_act1: f32,
     pub rest_hp_later: f32,
     pub rest_hp_preboss: f32,
+    pub hex_rest_effective_gain_min: f32,
     // Drafting.
     pub pick_threshold: f32,
     pub upgraded_pick_bonus: f32,
@@ -94,6 +102,10 @@ pub struct Params {
     pub potion_heal_hp_frac: f32,
     pub potion_block_min: f32,
     pub potion_block_hp_div: f32,
+    pub potion_swap_margin: f32,
+    pub potion_boss_dump_turn: f32,
+    pub potion_boss_dump_hp: f32,
+    pub entropic_min_empty: f32,
     /// Absolute per-card pick-score overrides keyed by sts id.
     pub pick: std::collections::HashMap<String, f32>,
     /// Absolute per-card upgrade-score overrides keyed by sts id.
@@ -119,6 +131,13 @@ impl Default for Params {
             focus_weight: 4.1195,
             enemy_strength_penalty: 19.1909,
             bias_decay_weight: 4.2088,
+            next_exposure_weight: 0.0,
+            next_block_tax: 0.0,
+            spike_danger: 0.0,
+            spike_horizon: 2.0,
+            status_gain_penalty: 0.0,
+            laga_wake_penalty: 0.0,
+            laga_wake_kill_ratio: 3.0,
             orb_horizon: 4.7244,
             orb_lightning_mult: 0.9009,
             orb_frost_mult: 0.4423,
@@ -142,6 +161,7 @@ impl Default for Params {
             rest_hp_act1: 0.5618,
             rest_hp_later: 0.6959,
             rest_hp_preboss: 0.7681,
+            hex_rest_effective_gain_min: 12.0,
             pick_threshold: 65.0226,
             upgraded_pick_bonus: 25.0,
             copies_full_penalty: 250.0,
@@ -180,6 +200,10 @@ impl Default for Params {
             potion_heal_hp_frac: 0.5,
             potion_block_min: 12.0,
             potion_block_hp_div: 4.0,
+            potion_swap_margin: 30.0,
+            potion_boss_dump_turn: 3.0,
+            potion_boss_dump_hp: 120.0,
+            entropic_min_empty: 2.0,
             pick: std::collections::HashMap::new(),
             upgrade: std::collections::HashMap::new(),
             boss_relic: std::collections::HashMap::new(),
@@ -192,18 +216,61 @@ impl Default for Params {
 /// defaults and the file is the single source of truth for tuned values.
 const BAKED_JSON: &str = include_str!("../../tools/params_default.json");
 
+fn merge_json(base: &mut serde_json::Value, overrides: serde_json::Value) {
+    match (base, overrides) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(overrides)) => {
+            for (key, value) in overrides {
+                match base.get_mut(&key) {
+                    Some(base_value) => merge_json(base_value, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, value) => *base = value,
+    }
+}
+
 static PARAMS: LazyLock<Params> = LazyLock::new(|| {
     let Some(path) = std::env::var_os("STS_HTN_PARAMS") else {
         return serde_json::from_str(BAKED_JSON).expect("tools/params_default.json");
     };
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("STS_HTN_PARAMS {}: {e}", path.to_string_lossy()));
-    serde_json::from_str(&text)
+    let mut baked: serde_json::Value =
+        serde_json::from_str(BAKED_JSON).expect("tools/params_default.json");
+    let overrides = serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("STS_HTN_PARAMS {}: {e}", path.to_string_lossy()));
+    merge_json(&mut baked, overrides);
+    serde_json::from_value(baked)
         .unwrap_or_else(|e| panic!("STS_HTN_PARAMS {}: {e}", path.to_string_lossy()))
-}
-
-);
+});
 
 pub fn params() -> &'static Params {
     &PARAMS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parameter_overrides_merge_nested_objects() {
+        let mut base = serde_json::json!({
+            "danger_base": 10.0,
+            "pick": {"Glacier": 100.0, "Defragment": 90.0}
+        });
+        merge_json(
+            &mut base,
+            serde_json::json!({
+                "danger_base": 12.0,
+                "pick": {"Glacier": 120.0}
+            }),
+        );
+
+        assert_eq!(base["danger_base"], 12.0);
+        assert_eq!(base["pick"]["Glacier"], 120.0);
+        assert_eq!(base["pick"]["Defragment"], 90.0);
+    }
 }

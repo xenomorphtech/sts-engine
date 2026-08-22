@@ -9,18 +9,18 @@
 <body>
 <nav class="crumb"><a href="index.html">&larr; A20 improvement plan</a></nav>
 <h1>Potion &amp; relic economy</h1>
-<p class="sub">Engine ground truth verified first: the A11+ 2-slot rule is <strong>not implemented</strong> (3 slots hardcoded); Fairy in a Bottle <em>is</em> fully implemented as passive death insurance (correctly never drunk); <strong>no potion-discard policy exists anywhere</strong> — Elixir/Gambler's/Snecko Oil/etc. appear in no drink list and permanently clog slots once picked up.</p>
+<p class="sub">Engine ground truth verified first: the A11+ 2-slot rule is now <strong>implemented</strong>; Fairy in a Bottle <em>is</em> fully implemented as passive death insurance (correctly never drunk); <strong>no potion-discard policy exists anywhere</strong> — Elixir/Gambler's/Snecko Oil/etc. appear in no drink list and permanently clog slots once picked up.</p>
 
 <h2>Potion policy (ranked)</h2>
 <div class="tablewrap"><table>
 <tr><th>#</th><th>Proposal</th><th>Type</th><th>Detail</th></tr>
-<tr><td>P1</td><td><strong>Implement A11 2-slot rule</strong></td><td><span class="tag eng">ENGINE</span></td><td><code>apply_ascension</code>: <code>potion_slots = 2</code> at A11+. Without it every A20 potion conclusion is measured on the wrong budget.</td></tr>
-<tr><td>P2</td><td><strong>Slot management via discard-swap</strong></td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Static <code>potion_value(id)</code> table (reuse <code>shop_potion_value</code>; never-drunk ids ≈ 0–40). On POTION reward with full slots: discard the min-valued held potion iff <code>reward &gt; held_min + potion_swap_margin</code> (30, 0–120). Never discard Fairy/Entropic. Kills the dead-slot clog — fatal at 2 slots. Same swap logic at shops (buy Fairy/Brew on full slots).</td></tr>
-<tr><td>P3</td><td>Normal-fight offense leak</td><td><span class="tag det">DET</span></td><td>Desperate tier on Normal fights: DEFENSE→HEAL only; offense only if lethal this turn.</td></tr>
-<tr><td>P4</td><td><strong>Boss late-fight dump</strong></td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>"Died holding 3 potions" is the classic A20 loss. In Boss fights after turn <code>potion_boss_dump_turn</code> (3, 1–8), allow OFFENSE when enemy HP ≤ <code>potion_boss_dump_hp</code> (120, 40–300). Vs Corrupt Heart: every turn ≥ 2 is desperate — nothing is saved past the Heart.</td></tr>
-<tr><td>P5</td><td>Weak/Fear timing</td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Hold until <code>intent_damage×hits ≥ potion_weak_min_incoming</code> (20, 8–50) instead of turn-1 into a non-attack intent.</td></tr>
-<tr><td>P6</td><td>Entropic Brew</td><td><span class="tag rl">ES</span></td><td><code>entropic_min_empty</code> (2, 1–4); pre-boss normal fights (y≥13): drink at 1 empty (refills before the boss).</td></tr>
-<tr><td>P7</td><td>Fairy</td><td><span class="tag det">DET</span></td><td>Engine auto-revives; exempt from P2 discard; swap-buy at shops (currently blocked by the empty-slot gate — throwing away the highest-EV shop item).</td></tr>
+<tr><td>P1</td><td><strong>A11 2-slot rule</strong></td><td>✅ <span class="tag eng">ENGINE</span></td><td>Implemented in <code>apply_ascension</code>: <code>potion_slots = 2</code> at A11+, including the backing slot list.</td></tr>
+<tr><td>P2</td><td><strong>✅ Slot management via discard-swap</strong></td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Accepted at margin 30. Full reward/shop slots expose legal discard actions; the policy replaces only the weakest held potion and protects Fairy/Entropic. Across sources 20260822/23: +1 net win and approximately neutral aggregate floor.</td></tr>
+<tr><td>P3</td><td>❌ Normal-fight offense leak</td><td><span class="tag det">DET</span></td><td>Rejected: even with potion + exact-Attack lethal proof, restricting the desperate offense fallback produced 1 floor gain / 4 regressions and −0.02 mean floor.</td></tr>
+<tr><td>P4</td><td><strong>✅ Boss late-fight dump</strong></td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Accepted at turn 3 / 120 total enemy HP, plus Heart desperation from turn 2. Both 1k cohorts were win-neutral and slightly floor-positive.</td></tr>
+<tr><td>P5</td><td>❌ Weak/Fear timing</td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Rejected: the shared incoming-20 gate lost early Fear/Vulnerable value (4 floor gains / 12 regressions, −0.05 mean).</td></tr>
+<tr><td>P6</td><td>❌ Entropic Brew pre-boss exception</td><td><span class="tag rl">ES</span></td><td>Rejected: two changed seeds, both worse. The behavior-preserving <code>entropic_min_empty=2</code> is exposed for future ES.</td></tr>
+<tr><td>P7</td><td>✅ Fairy</td><td><span class="tag det">DET</span></td><td>Engine auto-revive already existed; P2 now protects Fairy from discard and permits a full-slot shop swap into Fairy.</td></tr>
 <tr><td>P8</td><td>Re-tune the 5 existing thresholds at A20</td><td><span class="tag rl">ES</span></td><td>They're A0-fit (e.g. <code>potion_block_min</code> 13.3 is low vs A20 swings). Rerun, don't hand-set.</td></tr>
 </table></div>
 
@@ -44,7 +44,7 @@
 
 <h2>Ranked by expected A20 impact</h2>
 <ol>
-<li>A11 2-slot engine rule (P1) — prerequisite for measuring anything real.</li>
+<li>✅ A11 2-slot engine rule (P1) — complete; measurements now use the real base capacity.</li>
 <li>Slot management / discard-swap incl. Fairy &amp; shop buys (P2, P7) — largest structural gap.</li>
 <li>A20 rerun of the boss-relic map + Dripper/Hammer/Cursed-Key interaction params — energy-relic choice is the single most win-correlated decision (99% vs 76%).</li>
 <li>Boss late-fight dump + Heart desperation (P4).</li>

@@ -3,7 +3,7 @@ use crate::card::Card;
 use crate::combat::{self, after_combat_relics, Combat};
 use crate::creature::{Player, PotionInstance, RelicInstance};
 use crate::dungeon::Dungeon;
-use crate::ids::{CardId, CardRarity, CardType, Character, EncounterId, PotionId, RelicId, RelicTier, RoomType};
+use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, PotionId, RelicId, RelicTier, RoomType};
 use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
@@ -40,7 +40,7 @@ pub struct Reward {
 }
 
 impl Reward {
-    fn new(kind: RewardKind) -> Self {
+    pub(crate) fn new(kind: RewardKind) -> Self {
         Self {
             kind,
             taken: false,
@@ -74,6 +74,22 @@ pub struct EventState {
     match_cards: Vec<MatchCard>,
     match_chosen: Option<usize>,
     match_attempts: i32,
+}
+
+#[cfg(test)]
+impl EventState {
+    pub(crate) fn policy_fixture(id: &str, screen: i32, options: Vec<String>, data: Vec<i32>) -> Self {
+        Self {
+            id: id.into(),
+            screen,
+            options,
+            data,
+            library_cards: Vec::new(),
+            match_cards: Vec::new(),
+            match_chosen: None,
+            match_attempts: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -548,6 +564,7 @@ impl Game {
                         });
                     }
                 }
+                self.add_potion_discard_actions(&mut actions);
                 actions.push(Action::Proceed);
             }
             Screen::Neow | Screen::Event | Screen::Treasure | Screen::BossRelic => {
@@ -629,6 +646,7 @@ impl Game {
                         compact += 1;
                     }
                 }
+                self.add_potion_discard_actions(&mut actions);
                 actions.push(Action::Proceed);
             }
             Screen::CardReward => {
@@ -662,6 +680,35 @@ impl Game {
             }
         }
         actions
+    }
+
+    /// Compact Match-and-Keep state in the same order as the current legal
+    /// Choose actions. `None` entries are still-hidden cards.
+    pub fn match_game_choices(&self) -> Option<(Option<CardId>, Vec<Option<CardId>>)> {
+        let event = self.event.as_ref()?;
+        if event.id != "Match and Keep!" || event.screen != 2 {
+            return None;
+        }
+        let chosen = event.match_chosen.map(|index| event.match_cards[index].id);
+        let choices = event
+            .match_cards
+            .iter()
+            .filter(|card| card.flipped)
+            .map(|card| card.revealed.then_some(card.id))
+            .collect();
+        Some((chosen, choices))
+    }
+
+    fn add_potion_discard_actions(&self, actions: &mut Vec<Action>) {
+        for (slot, potion) in self.player.potions.iter().enumerate() {
+            if potion.id != PotionId::Slot {
+                actions.push(Action::Potion {
+                    action: PotionOp::Discard,
+                    slot,
+                    target_index: None,
+                });
+            }
+        }
     }
 
     pub fn step(&mut self, action: &Action) {
@@ -757,6 +804,7 @@ impl Game {
             }
             Screen::Terminal => self.done = true,
         }
+        self.resolve_forced_end_turn();
         if matches!(action, Action::Quit) {
             self.done = true;
             self.screen = Screen::Terminal;
@@ -1917,6 +1965,29 @@ impl Game {
         }
     }
 
+    fn resolve_forced_end_turn(&mut self) {
+        if self.screen != Screen::Combat {
+            return;
+        }
+        let (player_dead, all_dead) = {
+            let Some(combat) = self.combat.as_mut() else {
+                return;
+            };
+            if !combat.force_end_turn {
+                return;
+            }
+            combat.force_end_turn = false;
+            combat::end_turn(&mut self.player, combat, &mut self.rng, Some(&self.dungeon));
+            (self.player.hp <= 0, combat.all_dead())
+        };
+        if player_dead {
+            self.screen = Screen::Terminal;
+            self.done = true;
+        } else if all_dead {
+            self.finish_combat();
+        }
+    }
+
     fn use_potion(&mut self, op: PotionOp, slot: usize, target: Option<usize>) {
         if slot >= self.player.potions.len() {
             return;
@@ -2746,29 +2817,39 @@ impl Game {
             Action::Proceed => {
                 self.flush_pending_cards();
                 if self.current_room == RoomType::Boss {
-                    self.reset_player_between_rooms();
-                    self.dungeon.floor += 1;
-                    self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
-                    if self.dungeon.act == crate::ids::Act::Beyond {
-                        self.current_room = RoomType::Victory;
-                        self.event = Some(EventState {
-                            id: "SpireHeart".into(),
-                            screen: 0,
-                            options: vec!["[Continue]".into()],
-                            data: Vec::new(),
-                            library_cards: Vec::new(),
-                            match_cards: Vec::new(),
-                            match_chosen: None,
-                            match_attempts: 0,
-                        });
-                        self.screen = Screen::Event;
+                    // ProceedButton.goToDoubleBoss: the first A20 Beyond boss
+                    // leaves two entries in bossList. The second boss is a real
+                    // room transition (floor/RNG reset and resetPlayer), not a
+                    // second phase of the same combat, and does not heal HP.
+                    if self.ascension >= 20 && self.dungeon.act == Act::Beyond && self.dungeon.boss_list.len() == 2 {
+                        self.rewards.clear();
+                        self.dungeon.boss = self.dungeon.boss_list[0].clone();
+                        self.enter_room(-1, 15, RoomType::Boss);
                     } else {
-                        self.screen = Screen::Treasure;
-                        self.current_room = RoomType::BossTreasure;
+                        self.reset_player_between_rooms();
+                        self.dungeon.floor += 1;
+                        self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
+                        if self.dungeon.act == Act::Beyond {
+                            self.current_room = RoomType::Victory;
+                            self.event = Some(EventState {
+                                id: "SpireHeart".into(),
+                                screen: 0,
+                                options: vec!["[Continue]".into()],
+                                data: Vec::new(),
+                                library_cards: Vec::new(),
+                                match_cards: Vec::new(),
+                                match_chosen: None,
+                                match_attempts: 0,
+                            });
+                            self.screen = Screen::Event;
+                        } else {
+                            self.screen = Screen::Treasure;
+                            self.current_room = RoomType::BossTreasure;
+                        }
+                        // Both destination rooms are real room entries (seed 683
+                        // TreasureRoomBoss MawBank +12; Beyond's VictoryRoom too).
+                        self.maw_bank_on_enter_room();
                     }
-                    // Both destination rooms are real room entries (seed 683
-                    // TreasureRoomBoss MawBank +12; Beyond's VictoryRoom too).
-                    self.maw_bank_on_enter_room();
                 } else if self.current_room == RoomType::BossTreasure {
                     // TinyHouse.onEquip CombatRewardScreen overlay: Proceed
                     // continues the act transition that BossRelic Skip would.
@@ -3596,6 +3677,14 @@ impl Game {
         } else {
             self.dungeon.next_monster().unwrap_or(EncounterId::Cultist)
         };
+        // MonsterRoomBoss.onPlayerEntry gets the current boss and then removes
+        // the head of bossList. A20's double-boss transition keys off the two
+        // unconsumed Beyond bosses left after the first entry.
+        if self.current_room == RoomType::Boss
+            && self.dungeon.boss_list.first().is_some_and(|boss| boss == &self.dungeon.boss)
+        {
+            self.dungeon.boss_list.remove(0);
+        }
         self.combat = Some(Combat::start(
             encounter,
             &mut self.player,

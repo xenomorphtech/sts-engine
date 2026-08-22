@@ -1,7 +1,7 @@
 use crate::generated::card_catalog::{CardDef, CARDS};
 use crate::ids::{CardId, CardRarity, CardTarget, CardType};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Card {
     pub id: CardId,
     pub upgraded: bool,
