@@ -70,6 +70,61 @@ fn normality_disables_every_card_after_three_cards_are_played() {
 }
 
 #[test]
+fn letter_opener_mode_shift_block_resolves_before_end_turn_lightning() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.current_room = RoomType::Boss;
+    game.combat = Some(Combat::start(
+        EncounterId::TheGuardian,
+        &mut game.player,
+        &mut game.rng,
+        16,
+        game.seed,
+        20,
+    ));
+    game.player.relics.push(RelicInstance {
+        id: RelicId::Letter_Opener,
+        counter: 2,
+        used_up: false,
+    });
+    game.player.add_power(PowerId::Focus, 2);
+    game.player.orbs = vec![Orb {
+        kind: OrbKind::Lightning,
+        evoke: 0,
+    }];
+    game.player.hand = vec![Card::new(CardId::Defend_B)];
+    game.player.draw.clear();
+    game.player.discard.clear();
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    let guardian = &mut game.combat.as_mut().unwrap().monsters[0];
+    guardian.hp = 207;
+    guardian.block = 0;
+    guardian.split_triggered = false;
+    guardian.stolen_gold = 0;
+    guardian
+        .powers
+        .iter_mut()
+        .find(|power| power.id == PowerId::ModeShift)
+        .unwrap()
+        .amount = 5;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: None,
+    });
+
+    let guardian = &game.combat.as_ref().unwrap().monsters[0];
+    assert_eq!(guardian.hp, 202);
+    assert_eq!(guardian.block, 20);
+    assert!(guardian.split_triggered);
+
+    game.step(&Action::EndTurn);
+
+    assert_eq!(game.combat.as_ref().unwrap().monsters[0].hp, 202);
+}
+
+#[test]
 fn thinking_ahead_requires_one_hand_choice_then_confirm() {
     let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
     game.combat = Some(Combat::start(

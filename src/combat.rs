@@ -4643,6 +4643,10 @@ pub fn flush_letter_opener(combat: &mut Combat, rng: &mut RngSet) {
             deal_thorns(monster, rng, 5);
         }
     }
+    // LetterOpener's DamageAllEnemiesAction can queue Guardian's defensive
+    // ChangeStateAction. Once the pending Letter Opener batch is drained, its
+    // GainBlockAction resolves before control returns to the player (rank 74).
+    flush_guardian_defensive_block(combat);
 }
 
 /// Seek/Hologram queue their pile-selection action before UseCardAction's Hex
