@@ -70,7 +70,7 @@ fn normality_disables_every_card_after_three_cards_are_played() {
 }
 
 #[test]
-fn thinking_ahead_requires_one_hand_choice_and_finishes_without_confirm() {
+fn thinking_ahead_requires_one_hand_choice_then_confirm() {
     let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
     game.combat = Some(Combat::start(
         EncounterId::TwoLouse,
@@ -104,6 +104,13 @@ fn thinking_ahead_requires_one_hand_choice_and_finishes_without_confirm() {
         y: None,
         room: None,
     });
+    assert_eq!(game.screen, Screen::HandSelect);
+    assert_eq!(game.legal_actions(), [Action::Proceed]);
+    assert_eq!(game.player.hand.iter().map(|card| card.id).collect::<Vec<_>>(), [CardId::Strike_B]);
+    assert!(game.player.draw.is_empty());
+
+    game.step(&Action::Proceed);
+
     assert_eq!(game.screen, Screen::Combat);
     assert_eq!(game.player.hand.iter().map(|card| card.id).collect::<Vec<_>>(), [CardId::Strike_B]);
     assert_eq!(game.player.draw.iter().map(|card| card.id).collect::<Vec<_>>(), [CardId::Defend_B]);
@@ -420,6 +427,67 @@ fn attack_potion_waits_for_gambling_brew_hand_selection() {
         .card_reward
         .iter()
         .all(|card| card.card_type() == sts_engine::ids::CardType::ATTACK));
+}
+
+#[test]
+fn fire_potion_waits_for_colorless_discovery_and_keeps_relic_action_order() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        14,
+        game.seed,
+        20,
+    ));
+    game.combat.as_mut().unwrap().monsters[0].hp = 60;
+    game.combat.as_mut().unwrap().monsters[0].max_hp = 60;
+    game.player.hp = 50;
+    game.player.relics.push(RelicInstance {
+        id: RelicId::Toy_Ornithopter,
+        counter: -1,
+        used_up: false,
+    });
+    game.player.potions = vec![
+        PotionInstance {
+            id: PotionId::Colorless,
+            slot: 0,
+        },
+        PotionInstance {
+            id: PotionId::Fire,
+            slot: 1,
+        },
+    ];
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 0,
+        target_index: None,
+    });
+    assert_eq!(game.screen, Screen::CardReward);
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 1,
+        target_index: Some(0),
+    });
+    assert_eq!(game.screen, Screen::CardReward);
+    assert_eq!(game.player.hp, 50);
+    assert_eq!(game.combat.as_ref().unwrap().monsters[0].hp, 60);
+    assert_eq!(game.player.potions[1].id, PotionId::Slot);
+
+    game.step(&Action::Choose {
+        index: 0,
+        label: None,
+        x: None,
+        y: None,
+        room: None,
+    });
+
+    assert_eq!(game.screen, Screen::Combat);
+    assert_eq!(game.player.hp, 60);
+    assert_eq!(game.combat.as_ref().unwrap().monsters[0].hp, 40);
 }
 
 #[test]

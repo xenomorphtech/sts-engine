@@ -102,6 +102,20 @@ struct MatchCard {
 }
 
 #[derive(Clone, Debug)]
+enum PendingPotionAction {
+    Discovery {
+        typ: Option<CardType>,
+        colorless: bool,
+        copies: usize,
+    },
+    Fire {
+        target: usize,
+        damage: i32,
+    },
+    Heal(i32),
+}
+
+#[derive(Clone, Debug)]
 pub struct Game {
     pub seed: i64,
     pub ascension: i32,
@@ -171,14 +185,10 @@ pub struct Game {
     discovery_typ: Option<crate::ids::CardType>,
     discovery_colorless: bool,
     discovery_copies: usize,
-    /// DiscoveryAction from a card-generating potion is addToBot. If another
-    /// action owns a combat overlay (for example GamblingChipAction's hand
-    /// selector), the discovery screen opens only after that action finishes.
-    pending_potion_discovery: Option<(Option<CardType>, bool, usize)>,
+    /// Potion actions are addToBot and preserve use order while another action
+    /// owns a combat overlay (Discovery, GamblingChip, LiquidMemories).
+    pending_potion_actions: Vec<PendingPotionAction>,
     toolbox_reward: bool,
-    /// ToyOrnithopter HealAction is addToBot after DiscoveryAction, so the
-    /// CARD_REWARD snapshot is still pre-heal (seed 45).
-    pending_ornithopter_heal: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1068,9 +1078,8 @@ impl Game {
             discovery_typ: None,
             discovery_colorless: false,
             discovery_copies: 1,
-            pending_potion_discovery: None,
+            pending_potion_actions: Vec::new(),
             toolbox_reward: false,
-            pending_ornithopter_heal: false,
         };
         game.neow_options = vec![NeowOption {
             label: "[Talk]".into(),
@@ -1356,20 +1365,24 @@ impl Game {
                 }
             }
             Screen::HandSelect => {
-                for (i, card) in self.player.hand.iter().enumerate() {
-                    actions.push(Action::Choose {
-                        index: i,
-                        label: Some(card.sts_id().to_string()),
-                        x: None,
-                        y: None,
-                        room: None,
-                    });
-                }
                 let thinking_ahead_requires_one = self.put_on_deck_select
                     && self.combat.as_ref().is_some_and(|combat| {
                         combat.need_put_on_deck && !combat.need_forethought
                     });
-                if !thinking_ahead_requires_one {
+                let thinking_ahead_confirm =
+                    thinking_ahead_requires_one && !self.pending_cards.is_empty();
+                if !thinking_ahead_confirm {
+                    for (i, card) in self.player.hand.iter().enumerate() {
+                        actions.push(Action::Choose {
+                            index: i,
+                            label: Some(card.sts_id().to_string()),
+                            x: None,
+                            y: None,
+                            room: None,
+                        });
+                    }
+                }
+                if !thinking_ahead_requires_one || thinking_ahead_confirm {
                     actions.push(Action::Proceed);
                 }
             }
@@ -1550,7 +1563,7 @@ impl Game {
             }
             Screen::Terminal => self.done = true,
         }
-        self.resume_pending_potion_discovery();
+        self.resume_pending_potion_actions();
         self.resolve_forced_end_turn();
         if matches!(action, Action::Quit) {
             self.done = true;
@@ -2566,7 +2579,6 @@ impl Game {
         if memories {
             self.memories_select = false;
             self.screen = Screen::Combat;
-            self.apply_pending_ornithopter_heal();
             return;
         }
         if back_to_combat {
@@ -3088,43 +3100,21 @@ impl Game {
                     }
                 }
                 PotionId::Fire => {
-                    if let (Some(combat), Some(t)) = (self.combat.as_mut(), target) {
-                        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
-                        if let Some(m) = combat.monsters.get_mut(t) {
-                            // AbstractPotion.getPotency doubles FirePotion's
-                            // base 20 while Sacred Bark is held.
-                            let damage = if self.player.has_relic(RelicId::SacredBark) {
-                                40
-                            } else {
-                                20
-                            };
-                            let block_before = m.block;
-                            combat::deal_thorns(m, &mut self.rng, damage);
-                            // AbstractCreature.decrementBlock calls brokeBlock
-                            // for THORNS damage too. HandDrill.onBlockBroken
-                            // queues Vulnerable behind FirePotion's DamageAction,
-                            // before the next player command (seed 477).
-                            if block_before > 0
-                                && m.block == 0
-                                && self.player.has_relic(RelicId::HandDrill)
-                            {
-                                combat::apply_player_power_to_monster(
-                                    &self.player,
-                                    m,
-                                    &mut self.rng,
-                                    crate::ids::PowerId::Vulnerable,
-                                    2,
-                                );
-                            }
+                    let damage = if self.player.has_relic(RelicId::SacredBark) {
+                        40
+                    } else {
+                        20
+                    };
+                    if let Some(t) = target.filter(|_| self.combat.is_some()) {
+                        if self.screen == Screen::Combat {
+                            self.apply_fire_potion_damage(t, damage);
+                        } else {
+                            // FirePotion.use addToBot DamageAction. While a
+                            // DiscoveryAction owns CARD_REWARD it remains queued
+                            // until that screen closes (rank 49, floor 14).
+                            self.pending_potion_actions
+                                .push(PendingPotionAction::Fire { target: t, damage });
                         }
-                        // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
-                        // addToBot Draw+Energy if combat is not over (seed 773).
-                        combat::gremlin_horn_on_kills(
-                            &mut self.player,
-                            combat,
-                            &mut self.rng,
-                            dead_before,
-                        );
                     }
                 }
                 PotionId::Explosive => {
@@ -3408,6 +3398,39 @@ impl Game {
         } else if skill_deck {
             self.begin_skill_from_deck_select();
         }
+    }
+
+    fn apply_fire_potion_damage(&mut self, target: usize, damage: i32) {
+        let Some(combat) = self.combat.as_mut() else {
+            return;
+        };
+        let dead_before = combat.monsters.iter().filter(|m| m.dead).count();
+        if let Some(monster) = combat.monsters.get_mut(target) {
+            let block_before = monster.block;
+            combat::deal_thorns(monster, &mut self.rng, damage);
+            // AbstractCreature.decrementBlock calls brokeBlock for THORNS
+            // damage too. HandDrill queues Vulnerable after DamageAction.
+            if block_before > 0
+                && monster.block == 0
+                && self.player.has_relic(RelicId::HandDrill)
+            {
+                combat::apply_player_power_to_monster(
+                    &self.player,
+                    monster,
+                    &mut self.rng,
+                    crate::ids::PowerId::Vulnerable,
+                    2,
+                );
+            }
+        }
+        // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
+        // addToBot Draw+Energy if combat is not over (seed 773).
+        combat::gremlin_horn_on_kills(
+            &mut self.player,
+            combat,
+            &mut self.rng,
+            dead_before,
+        );
     }
 
     fn finish_combat(&mut self) {
@@ -3900,22 +3923,46 @@ impl Game {
             1
         };
         if self.screen != Screen::Combat {
-            self.pending_potion_discovery = Some((typ, colorless, copies));
+            self.pending_potion_actions.push(PendingPotionAction::Discovery {
+                typ,
+                colorless,
+                copies,
+            });
             return;
         }
         self.begin_discovery(typ, colorless);
         self.discovery_copies = copies;
     }
 
-    fn resume_pending_potion_discovery(&mut self) {
-        if self.screen != Screen::Combat {
-            return;
+    fn resume_pending_potion_actions(&mut self) {
+        while self.screen == Screen::Combat && !self.pending_potion_actions.is_empty() {
+            match self.pending_potion_actions.remove(0) {
+                PendingPotionAction::Discovery {
+                    typ,
+                    colorless,
+                    copies,
+                } => {
+                    self.begin_discovery(typ, colorless);
+                    self.discovery_copies = copies;
+                }
+                PendingPotionAction::Fire { target, damage } => {
+                    self.apply_fire_potion_damage(target, damage);
+                    if let Some(combat) = self.combat.as_mut() {
+                        combat::flush_guardian_defensive_block(combat);
+                    }
+                    if self.combat.as_ref().is_some_and(Combat::all_dead) {
+                        // clearPostCombatActions drops later queued potion and
+                        // relic actions after a lethal DamageAction.
+                        self.pending_potion_actions.clear();
+                        self.finish_combat();
+                    }
+                }
+                PendingPotionAction::Heal(amount) => {
+                    self.heal_player(amount);
+                    combat::red_skull_on_hp_change(&mut self.player);
+                }
+            }
         }
-        let Some((typ, colorless, copies)) = self.pending_potion_discovery.take() else {
-            return;
-        };
-        self.begin_discovery(typ, colorless);
-        self.discovery_copies = copies;
     }
 
     fn begin_toolbox_reward(&mut self) {
@@ -4094,7 +4141,6 @@ impl Game {
             self.discovery_copies = 1;
             self.card_reward.clear();
             self.screen = Screen::Combat;
-            self.apply_pending_ornithopter_heal();
             return;
         }
         if let Some(real) = self.active_card_reward.take() {
@@ -7647,10 +7693,6 @@ impl Game {
     fn step_hand_select(&mut self, action: &Action) {
         match action {
             Action::Choose { index, label, .. } => {
-                let thinking_ahead_requires_one = self.put_on_deck_select
-                    && self.combat.as_ref().is_some_and(|combat| {
-                        combat.need_put_on_deck && !combat.need_forethought
-                    });
                 let by_name = label.as_ref().and_then(|name| {
                     self.player
                         .hand
@@ -7664,14 +7706,6 @@ impl Game {
                         card.upgrade();
                     }
                     self.pending_cards.push(card);
-                }
-                if thinking_ahead_requires_one && !self.pending_cards.is_empty() {
-                    let pending = std::mem::take(&mut self.pending_cards);
-                    for card in pending {
-                        self.put_card_from_forethought_or_top(card);
-                    }
-                    self.player.hand.append(&mut self.hand_held);
-                    self.finish_put_on_deck();
                 }
             }
             Action::Proceed => {
@@ -7689,7 +7723,6 @@ impl Game {
                     }
                     self.gambling_select = false;
                     self.screen = Screen::Combat;
-                    self.apply_pending_ornithopter_heal();
                     return;
                 }
                 if self.put_on_deck_select {
@@ -7874,40 +7907,21 @@ impl Game {
         if !self.player.has_relic(RelicId::Toy_Ornithopter) {
             return;
         }
-        // Combat HealAction sits behind potion.use() overlays (Discovery,
-        // Gambler's Brew, Liquid Memories).
-        if self.combat.is_some()
-            && (matches!(self.screen, Screen::CardReward | Screen::HandSelect)
-                || self.memories_select && self.screen == Screen::Grid)
-        {
-            self.pending_ornithopter_heal = true;
+        // Combat HealAction sits behind every action enqueued by potion.use().
+        // Preserve that order while an overlay owns the current action.
+        if self.combat.is_some() && self.screen != Screen::Combat {
+            self.pending_potion_actions
+                .push(PendingPotionAction::Heal(5));
             return;
         }
         self.heal_player(5);
         combat::red_skull_on_hp_change(&mut self.player);
     }
 
-    fn apply_pending_ornithopter_heal(&mut self) {
-        if self.pending_ornithopter_heal {
-            self.pending_ornithopter_heal = false;
-            if self.player.has_relic(RelicId::Toy_Ornithopter) {
-                self.heal_player(5);
-                combat::red_skull_on_hp_change(&mut self.player);
-            }
-        }
-    }
-
     /// DiscoveryAction is queued before HealAction, so combat Discovery
     /// snapshots must not include the +5 yet.
-    fn ornithopter_after_potion(&mut self, discovery_overlay: bool) {
-        if discovery_overlay
-            && self.combat.is_some()
-            && self.player.has_relic(RelicId::Toy_Ornithopter)
-        {
-            self.pending_ornithopter_heal = true;
-        } else {
-            self.on_use_potion_relics();
-        }
+    fn ornithopter_after_potion(&mut self, _discovery_overlay: bool) {
+        self.on_use_potion_relics();
     }
 
     fn gold_with_idol(&self, amount: i32) -> i32 {
