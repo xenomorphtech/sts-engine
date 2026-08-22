@@ -417,7 +417,7 @@ fn is_elite_encounter(id: EncounterId) -> bool {
     )
 }
 
-fn is_boss_encounter(id: EncounterId) -> bool {
+pub(crate) fn is_boss_encounter(id: EncounterId) -> bool {
     matches!(
         id,
         EncounterId::Hexaghost
@@ -3862,6 +3862,7 @@ fn hit_player_inner(
     vampire_heal: bool,
 ) -> i32 {
     let mut total = 0;
+    let mut pending_shuffle_actions = PendingShuffleActions::default();
     for _ in 0..hits {
         // DamageInfo.applyPowers (monster → player): chain atDamageGive /
         // atDamageReceive as floats, then MathUtils.floor once.
@@ -3917,7 +3918,11 @@ fn hit_player_inner(
             // Each Java multi-hit is a separate DamageAction. Centennial
             // Puzzle's addToTop draw therefore resolves after the first HP
             // loss, before a later hit can kill the player (seed 980 Byrd).
-            centennial_puzzle_was_hp_lost(player, rng);
+            // Shuffle relics enqueue their effects with addToBot, however, so
+            // Abacus/Sundial wait behind the remaining DamageActions (rank 74
+            // Spheric Guardian Slam).
+            pending_shuffle_actions
+                .merge(centennial_puzzle_was_hp_lost_between_hits(player, rng));
         }
         // VampireDamageAction adds HealAction to the top after damage(), ahead
         // of the Thorns/Static actions queued by onAttacked. A lethal hit ends
@@ -3952,6 +3957,9 @@ fn hit_player_inner(
             break;
         }
     }
+    if player.hp > 0 {
+        pending_shuffle_actions.resolve(player);
+    }
     if total > 0 {
         red_skull_on_hp_change(player);
     }
@@ -3973,18 +3981,36 @@ fn red_skull_at_battle_start(player: &mut Player) {
 /// (during the enemy turn if the hit was a monster attack; those 3 cards then
 /// sit under the next turn's 5-draw).
 fn centennial_puzzle_was_hp_lost(player: &mut Player, rng: &mut RngSet) {
-    let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Centennial_Puzzle) else {
-        return;
-    };
-    if r.used_up {
+    if !take_centennial_puzzle_trigger(player) {
         return;
     }
-    r.used_up = true;
     // DrawCardAction is addToTop from wasHPLost; lethal damage
     // clearPostCombatActions drops DRAW (seed 452 death hand).
     if player.hp > 0 {
         let _ = draw_cards_rng(player, 3, Some(rng));
     }
+}
+
+fn centennial_puzzle_was_hp_lost_between_hits(
+    player: &mut Player,
+    rng: &mut RngSet,
+) -> PendingShuffleActions {
+    if !take_centennial_puzzle_trigger(player) || player.hp <= 0 {
+        return PendingShuffleActions::default();
+    }
+    let (_, pending) = draw_cards_rng_inner(player, 3, Some(rng), true);
+    pending
+}
+
+fn take_centennial_puzzle_trigger(player: &mut Player) -> bool {
+    let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Centennial_Puzzle) else {
+        return false;
+    };
+    if r.used_up {
+        return false;
+    }
+    r.used_up = true;
+    true
 }
 
 pub fn red_skull_on_hp_change(player: &mut Player) {
@@ -4451,8 +4477,18 @@ pub fn draw_opening_hand(player: &mut Player, rng: &mut RngSet) {
 }
 
 /// Returns how many Status/Curse cards were drawn (Fire Breathing).
-pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngSet>) -> i32 {
+pub fn draw_cards_rng(player: &mut Player, n: i32, rng: Option<&mut RngSet>) -> i32 {
+    draw_cards_rng_inner(player, n, rng, false).0
+}
+
+fn draw_cards_rng_inner(
+    player: &mut Player,
+    mut n: i32,
+    mut rng: Option<&mut RngSet>,
+    defer_shuffle_actions: bool,
+) -> (i32, PendingShuffleActions) {
     let mut statuses = 0;
+    let mut pending_shuffle_actions = PendingShuffleActions::default();
     while n > 0 {
         if player.hand.len() >= 10 {
             break;
@@ -4464,7 +4500,12 @@ pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngS
             // EmptyDeckShuffleAction ctor: relic.onShuffle (Abacus +6 after
             // loseBlock, seed 443 block 6 vs 0) then shuffle discard into draw.
             if let Some(rng) = rng.as_mut() {
-                reshuffle_if_needed(player, rng);
+                let actions = reshuffle_if_needed_actions(player, rng);
+                if defer_shuffle_actions {
+                    pending_shuffle_actions.merge(actions);
+                } else {
+                    actions.resolve(player);
+                }
             } else {
                 player.draw.append(&mut player.discard);
             }
@@ -4493,7 +4534,7 @@ pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngS
         }
         n -= 1;
     }
-    statuses
+    (statuses, pending_shuffle_actions)
 }
 
 pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &mut RngSet) {
@@ -6735,20 +6776,46 @@ fn is_end_turn_autoplay(id: CardId) -> bool {
 }
 
 pub fn reshuffle_if_needed(player: &mut Player, rng: &mut RngSet) {
+    reshuffle_if_needed_actions(player, rng).resolve(player);
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PendingShuffleActions {
+    energy: i32,
+    block: i32,
+}
+
+impl PendingShuffleActions {
+    fn merge(&mut self, other: Self) {
+        self.energy += other.energy;
+        self.block += other.block;
+    }
+
+    fn resolve(self, player: &mut Player) {
+        player.energy += self.energy;
+        gain_player_block(player, self.block);
+    }
+}
+
+fn reshuffle_if_needed_actions(player: &mut Player, rng: &mut RngSet) -> PendingShuffleActions {
     if player.draw.is_empty() && !player.discard.is_empty() {
         // EmptyDeckShuffleAction ctor: relic.onShuffle, then shuffle discard
         // and souls.addToTop into draw. Draw was empty so append+shuffle of
         // the same cards with the same seed matches.
-        on_shuffle_relics(player);
+        let actions = on_shuffle_relics(player);
         let seed = rng.shuffle.random_long();
         shuffle_java(&mut player.discard, seed);
         player.draw.append(&mut player.discard);
+        actions
+    } else {
+        PendingShuffleActions::default()
     }
 }
 
 /// EmptyDeckShuffleAction constructor: Sundial every 3rd shuffle +2 energy,
 /// Abacus GainBlock 6.
-fn on_shuffle_relics(player: &mut Player) {
+fn on_shuffle_relics(player: &mut Player) -> PendingShuffleActions {
+    let mut actions = PendingShuffleActions::default();
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Sundial) {
         if r.counter < 0 {
             r.counter = 0;
@@ -6756,12 +6823,13 @@ fn on_shuffle_relics(player: &mut Player) {
         r.counter += 1;
         if r.counter == 3 {
             r.counter = 0;
-            player.energy += 2;
+            actions.energy += 2;
         }
     }
     if player.has_relic(RelicId::TheAbacus) {
-        gain_player_block(player, 6);
+        actions.block += 6;
     }
+    actions
 }
 
 pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dungeon: Option<&Dungeon>) {

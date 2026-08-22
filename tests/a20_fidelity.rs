@@ -22,30 +22,35 @@ fn potion_discard_remains_legal_on_card_reward_screen() {
 
 #[test]
 fn smoke_bomb_can_be_discarded_but_not_used_in_a_boss_fight() {
-    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
-    game.current_room = RoomType::Boss;
-    game.player.potions[0].id = PotionId::SmokeBomb;
-    game.combat = Some(Combat::start(
-        EncounterId::TimeEater,
-        &mut game.player,
-        &mut game.rng,
-        50,
-        game.seed,
-        20,
-    ));
-    game.screen = Screen::Combat;
+    for (room, encounter) in [
+        (RoomType::Boss, EncounterId::TimeEater),
+        (RoomType::Event, EncounterId::TheGuardian),
+    ] {
+        let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = room;
+        game.player.potions[0].id = PotionId::SmokeBomb;
+        game.combat = Some(Combat::start(
+            encounter,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            game.seed,
+            20,
+        ));
+        game.screen = Screen::Combat;
 
-    let actions = game.legal_actions();
-    assert!(!actions.contains(&Action::Potion {
-        action: PotionOp::Use,
-        slot: 0,
-        target_index: None,
-    }));
-    assert!(actions.contains(&Action::Potion {
-        action: PotionOp::Discard,
-        slot: 0,
-        target_index: None,
-    }));
+        let actions = game.legal_actions();
+        assert!(!actions.contains(&Action::Potion {
+            action: PotionOp::Use,
+            slot: 0,
+            target_index: None,
+        }));
+        assert!(actions.contains(&Action::Potion {
+            action: PotionOp::Discard,
+            slot: 0,
+            target_index: None,
+        }));
+    }
 }
 
 #[test]
@@ -1099,6 +1104,35 @@ fn spheric_guardian_uses_its_hard_block_and_damage_values() {
     monster.take_turn(&mut player, &mut rng, 20, None);
     assert_eq!(monster.block, 15);
     assert_eq!(player.hp, hp - 11);
+}
+
+#[test]
+fn spheric_guardian_slam_resolves_abacus_after_both_damage_actions() {
+    let mut rng = RngSet::generate_seeds(13);
+    let mut player = Player::defect();
+    player.hp = 57;
+    player.block = 10;
+    player.hand.clear();
+    player.draw = vec![Card::new(CardId::Ball_Lightning)];
+    player.discard = vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)];
+    player.relics.push(RelicInstance {
+        id: RelicId::Centennial_Puzzle,
+        counter: -1,
+        used_up: false,
+    });
+    player.relics.push(RelicInstance {
+        id: RelicId::TheAbacus,
+        counter: -1,
+        used_up: false,
+    });
+    let mut monster = combat::spawn_monster(MonsterId::SphericGuardian, &mut rng, 20);
+    monster.next_move = 1;
+
+    monster.take_turn(&mut player, &mut rng, 20, None);
+
+    assert_eq!(player.hp, 45);
+    assert_eq!(player.block, 6);
+    assert_eq!(player.hand.len(), 3);
 }
 
 #[test]

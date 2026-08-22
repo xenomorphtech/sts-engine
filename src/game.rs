@@ -1439,8 +1439,14 @@ impl Game {
             if potion.id == PotionId::Slot || potion.id == PotionId::Fairy {
                 continue;
             }
-            if potion.id == PotionId::SmokeBomb && self.current_room == RoomType::Boss {
-                // SmokeBomb.canUse rejects any encounter containing a BOSS.
+            if potion.id == PotionId::SmokeBomb
+                && self
+                    .combat
+                    .as_ref()
+                    .is_some_and(|combat| combat::is_boss_encounter(combat.encounter))
+            {
+                // SmokeBomb.canUse scans the living encounter for a BOSS;
+                // Mind Bloom's I am War fight remains an EventRoom (rank 74).
                 continue;
             }
             if !active_combat
