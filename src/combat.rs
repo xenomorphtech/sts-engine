@@ -5789,7 +5789,12 @@ fn apply_card_effect(
             player.draw.append(&mut player.discard);
             while !player.hand.is_empty() {
                 let i = rng.card_random.random_int(player.hand.len() as i32 - 1) as usize;
-                let c = player.hand.remove(i);
+                let mut c = player.hand.remove(i);
+                // CardTransferTransition(DRAW_PILE).complete calls
+                // clearPowers/resetAttributes after PutOnDeckAction moves each
+                // hand card. This clears Mummified Hand's turn-only discount
+                // before Reboot's final draw.
+                c.cost_for_turn = c.cost;
                 player.draw.push(c);
             }
             let seed = rng.shuffle.random_long();

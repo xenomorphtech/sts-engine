@@ -110,6 +110,40 @@ fn thinking_ahead_requires_one_hand_choice_and_finishes_without_confirm() {
 }
 
 #[test]
+fn reboot_clears_mummified_hand_costs_when_moving_hand_to_draw() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        1,
+        game.seed,
+        20,
+    ));
+    let mut discounted = Card::new(CardId::Compile_Driver);
+    discounted.cost_for_turn = 0;
+    game.player.hand = vec![Card::new(CardId::Reboot), discounted];
+    game.player.draw.clear();
+    game.player.discard.clear();
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: None,
+    });
+
+    let compile = game
+        .player
+        .hand
+        .iter()
+        .find(|card| card.id == CardId::Compile_Driver)
+        .expect("Reboot redraws Compile Driver");
+    assert_eq!(compile.cost_for_turn, compile.cost);
+    assert_eq!(compile.cost_for_turn, 1);
+}
+
+#[test]
 fn fruit_juice_and_entropic_brew_are_usable_out_of_combat() {
     let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
     game.player.potions[0].id = PotionId::FruitJuice;

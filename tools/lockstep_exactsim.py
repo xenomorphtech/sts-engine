@@ -308,6 +308,13 @@ def compact_java_observation(observation: dict) -> dict:
             for relic in player.get("relics", [])
         ],
         "hand": [card.get("id") for card in combat.get("hand", [])],
+        "hand_costs_for_turn": [
+            card.get("cost_for_turn") for card in combat.get("hand", [])
+        ],
+        "draw": [card.get("id") for card in combat.get("draw_pile", [])],
+        "draw_costs_for_turn": [
+            card.get("cost_for_turn") for card in combat.get("draw_pile", [])
+        ],
         "monsters": [
             [monster.get("id"), monster.get("current_hp")]
             for monster in combat.get("monsters", [])
@@ -384,6 +391,39 @@ def run_seed(args, seed: int) -> tuple[bool, dict]:
         java_states.append(java)
 
         for step in range(args.max_actions + 1):
+            if args.compare_energy:
+                java_energy = ((java.get("state") or {}).get("player") or {}).get("energy")
+                rust_energy = rust.get("energy")
+                if rust_energy != java_energy:
+                    return False, strict_failure(
+                        seed,
+                        step,
+                        "energy",
+                        rust,
+                        java,
+                        {
+                            "rust_energy": rust_energy,
+                            "java_energy": java_energy,
+                            "last_java_commands": java_commands[-20:],
+                        },
+                    )
+            if args.compare_hand_costs:
+                java_hand = (((java.get("state") or {}).get("combat") or {}).get("hand") or [])
+                java_costs = [card.get("cost_for_turn") for card in java_hand]
+                rust_costs = rust.get("hand_costs_for_turn")
+                if rust_costs != java_costs:
+                    return False, strict_failure(
+                        seed,
+                        step,
+                        "hand_costs",
+                        rust,
+                        java,
+                        {
+                            "rust_hand_costs_for_turn": rust_costs,
+                            "java_hand_costs_for_turn": java_costs,
+                            "last_java_commands": java_commands[-20:],
+                        },
+                    )
             java_legal = enriched_java_actions(java)
             terminal = rust.get("decision") is None and terminally_aligned(rust, java)
             if terminal:
@@ -505,6 +545,16 @@ def parse_args():
     parser.add_argument("--oracle-dir", type=Path)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-actions", type=int, default=5000)
+    parser.add_argument(
+        "--compare-energy",
+        action="store_true",
+        help="stop at the first player-energy mismatch for diagnostics",
+    )
+    parser.add_argument(
+        "--compare-hand-costs",
+        action="store_true",
+        help="stop at the first hand cost-for-turn mismatch for diagnostics",
+    )
     return parser.parse_args()
 
 
