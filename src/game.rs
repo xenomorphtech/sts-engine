@@ -490,11 +490,6 @@ impl Game {
                                     target_index: None,
                                 });
                             }
-                            actions.push(Action::Potion {
-                                action: PotionOp::Discard,
-                                slot,
-                                target_index: None,
-                            });
                         }
                     }
                 }
@@ -586,7 +581,6 @@ impl Game {
                         });
                     }
                 }
-                self.add_potion_discard_actions(&mut actions);
                 actions.push(Action::Proceed);
             }
             Screen::Neow | Screen::Event | Screen::Treasure | Screen::BossRelic => {
@@ -652,32 +646,31 @@ impl Game {
                 // unclaimable gold RewardItem remains present.
                 if self.current_room == RoomType::Boss && self.dungeon.act == Act::Beyond {
                     actions.push(Action::Proceed);
-                    return actions;
-                }
-                let mut compact = 0usize;
-                for reward in self.rewards.iter() {
-                    if !reward.taken {
-                        let label = match reward.kind {
-                            RewardKind::Gold(_) => "GOLD",
-                            RewardKind::StolenGold(_) => "STOLEN_GOLD",
-                            RewardKind::Potion(_) => "POTION",
-                            RewardKind::Relic(_) => "RELIC",
-                            RewardKind::Card => "CARD",
-                            RewardKind::EmeraldKey => "EMERALD_KEY",
-                            RewardKind::SapphireKey => "SAPPHIRE_KEY",
-                        };
-                        actions.push(Action::Choose {
-                            index: compact,
-                            label: Some(label.into()),
-                            x: None,
-                            y: None,
-                            room: None,
-                        });
-                        compact += 1;
+                } else {
+                    let mut compact = 0usize;
+                    for reward in self.rewards.iter() {
+                        if !reward.taken {
+                            let label = match reward.kind {
+                                RewardKind::Gold(_) => "GOLD",
+                                RewardKind::StolenGold(_) => "STOLEN_GOLD",
+                                RewardKind::Potion(_) => "POTION",
+                                RewardKind::Relic(_) => "RELIC",
+                                RewardKind::Card => "CARD",
+                                RewardKind::EmeraldKey => "EMERALD_KEY",
+                                RewardKind::SapphireKey => "SAPPHIRE_KEY",
+                            };
+                            actions.push(Action::Choose {
+                                index: compact,
+                                label: Some(label.into()),
+                                x: None,
+                                y: None,
+                                room: None,
+                            });
+                            compact += 1;
+                        }
                     }
+                    actions.push(Action::Proceed);
                 }
-                self.add_potion_discard_actions(&mut actions);
-                actions.push(Action::Proceed);
             }
             Screen::CardReward => {
                 for (i, card) in self.card_reward.iter().enumerate() {
@@ -709,6 +702,9 @@ impl Game {
                 actions.push(Action::Proceed);
             }
         }
+        if self.screen != Screen::Terminal {
+            self.add_potion_discard_actions(&mut actions);
+        }
         actions
     }
 
@@ -730,6 +726,13 @@ impl Game {
     }
 
     fn add_potion_discard_actions(&self, actions: &mut Vec<Action>) {
+        if self
+            .event
+            .as_ref()
+            .is_some_and(|event| event.id == "WeMeetAgain")
+        {
+            return;
+        }
         for (slot, potion) in self.player.potions.iter().enumerate() {
             if potion.id != PotionId::Slot {
                 actions.push(Action::Potion {
@@ -1486,6 +1489,12 @@ impl Game {
                     self.finish_grid();
                 }
             }
+            Action::Skip if confirm => {
+                if let Some(grid) = self.grid.as_mut() {
+                    grid.confirm = false;
+                    grid.hovered = None;
+                }
+            }
             Action::Skip => self.finish_grid(),
             _ => {}
         }
@@ -1817,8 +1826,15 @@ impl Game {
             return out;
         }
         let node = self.dungeon.map.node(self.current_x, self.current_y);
-        for edge in &node.edges {
-            let dest = self.dungeon.map.node(edge.dst_x, edge.dst_y);
+        let mut destinations: Vec<(i32, i32)> = node
+            .edges
+            .iter()
+            .map(|edge| (edge.dst_y, edge.dst_x))
+            .collect();
+        destinations.sort_unstable();
+        destinations.dedup();
+        for (dest_y, dest_x) in destinations {
+            let dest = self.dungeon.map.node(dest_x, dest_y);
             out.push((dest.x, dest.y, dest.room.unwrap_or(RoomType::Monster)));
         }
         out

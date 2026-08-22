@@ -1,11 +1,90 @@
-use sts_engine::action::Action;
+use sts_engine::action::{Action, PotionOp};
 use sts_engine::card::Card;
 use sts_engine::combat::{self, Combat};
 use sts_engine::creature::{Player, RelicInstance};
-use sts_engine::game::{Game, Screen};
-use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PowerId, RelicId, RoomType};
+use sts_engine::game::{Game, NeowKind, NeowOption, Screen};
+use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PotionId, PowerId, RelicId, RoomType};
 use sts_engine::rng::RngSet;
 use sts_engine::Unlocks;
+
+#[test]
+fn potion_discard_remains_legal_on_card_reward_screen() {
+    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    game.player.potions[0].id = PotionId::EssenceOfDarkness;
+    game.screen = Screen::CardReward;
+
+    assert!(game.legal_actions().contains(&Action::Potion {
+        action: PotionOp::Discard,
+        slot: 0,
+        target_index: None,
+    }));
+}
+
+#[test]
+fn map_legal_actions_do_not_duplicate_a_destination() {
+    use std::collections::HashSet;
+
+    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    game.dungeon.first_room_chosen = true;
+    game.screen = Screen::Map;
+
+    for y in 0..14 {
+        for x in 0..7 {
+            game.current_x = x;
+            game.current_y = y;
+            let destinations: Vec<_> = game
+                .legal_actions()
+                .into_iter()
+                .filter_map(|action| match action {
+                    Action::Choose { x: Some(x), y: Some(y), .. } => Some((x, y)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                destinations.len(),
+                destinations.iter().collect::<HashSet<_>>().len(),
+                "duplicate map destination from ({x}, {y}): {destinations:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn skip_on_grid_confirmation_cancels_the_preview() {
+    let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+    game.neow_screen = 3;
+    game.neow_options = vec![NeowOption {
+        label: "Remove a card".into(),
+        kind: NeowKind::RemoveCard,
+    }];
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("Remove a card".into()),
+        x: None,
+        y: None,
+        room: None,
+    });
+
+    let deck_before = game.player.deck.clone();
+    let card = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| matches!(action, Action::Choose { .. }))
+        .expect("purge card choice");
+    game.step(&card);
+    assert!(game.legal_actions().contains(&Action::Proceed));
+    assert!(game.legal_actions().contains(&Action::Skip));
+
+    game.step(&Action::Skip);
+
+    assert_eq!(game.screen, Screen::Grid);
+    assert_eq!(game.player.deck, deck_before);
+    assert!(game
+        .legal_actions()
+        .iter()
+        .any(|action| matches!(action, Action::Choose { .. })));
+    assert!(!game.legal_actions().contains(&Action::Proceed));
+}
 
 #[test]
 fn a20_beyond_proceed_starts_second_boss_without_healing() {

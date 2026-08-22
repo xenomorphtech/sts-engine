@@ -6,7 +6,7 @@ use crate::ids::Character;
 use crate::replay::{load_commands, open_jsonl};
 use crate::rng::RngSnapshot;
 use crate::Unlocks;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::{Display, Formatter};
 use std::io::BufRead;
@@ -47,7 +47,7 @@ pub struct WalkFail {
     pub last_cmd: Option<Action>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Side {
     pub screen: String,
     pub room: String,
@@ -73,6 +73,42 @@ pub struct Side {
     pub pending: Vec<String>,
     pub overlay: String,
     pub rng: Vec<(String, String)>,
+}
+
+pub fn gameplay_mismatches(rust: &Side, java: &Side) -> Vec<&'static str> {
+    let mut mismatched = Vec::new();
+    if rust.hp != java.hp {
+        mismatched.push("hp");
+    }
+    if rust.gold != java.gold {
+        mismatched.push("gold");
+    }
+    if rust.block != java.block {
+        mismatched.push("block");
+    }
+    if rust.floor != java.floor {
+        mismatched.push("floor");
+    }
+    if rust.act != java.act {
+        mismatched.push("act");
+    }
+    if rust.deck != java.deck {
+        let mut landed = rust.deck.clone();
+        landed.extend(rust.pending.iter().cloned());
+        if landed != java.deck {
+            mismatched.push("deck");
+        }
+    }
+    if rust.mons != java.mons {
+        mismatched.push("mons");
+    }
+    if rust.hand != java.hand {
+        mismatched.push("hand");
+    }
+    if rust.relics != java.relics {
+        mismatched.push("relics");
+    }
+    mismatched
 }
 
 impl Display for WalkFail {
@@ -316,37 +352,10 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
                 combat.publish_intents();
             }
         }
-        let rust = rust_side(&game);
+        let rust = game_side(&game);
         let java = java_side(&snap);
-        let mut mismatched = Vec::new();
-        if rust.hp != java.hp {
-            mismatched.push("hp");
-        }
-        if rust.gold != java.gold {
-            mismatched.push("gold");
-        }
-        if rust.block != java.block {
-            mismatched.push("block");
-        }
-        if rust.floor != java.floor {
-            mismatched.push("floor");
-        }
-        if rust.act != java.act {
-            mismatched.push("act");
-        }
-        if rust.deck != java.deck {
-            // Combat-reward picks and Neow ShowCardAndObtain / FastCardObtain
-            // effects land before the next stable boundary. Other obtains
-            // (some relics) may still sit in pending_cards; ExactTextSim waits,
-            // so java.deck may already include them.
-            let mut landed = rust.deck.clone();
-            landed.extend(rust.pending.iter().cloned());
-            if landed != java.deck {
-                mismatched.push("deck");
-            }
-        }
-        if rust.mons != java.mons {
-            mismatched.push("mons");
+        let mut mismatched = gameplay_mismatches(&rust, &java);
+        if mismatched.contains(&"mons") {
             if let Some(c) = game.combat.as_ref() {
                 for (i, m) in c.monsters.iter().enumerate() {
                     eprintln!(
@@ -359,12 +368,6 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
                     );
                 }
             }
-        }
-        if rust.hand != java.hand {
-            mismatched.push("hand");
-        }
-        if rust.relics != java.relics {
-            mismatched.push("relics");
         }
         if cfg.compare_rng {
             mismatched.extend(rng_mismatches(&rust.rng, &java.rng));
@@ -433,7 +436,7 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
     })
 }
 
-fn rust_side(game: &Game) -> Side {
+pub fn game_side(game: &Game) -> Side {
     let mut overlay = String::new();
     if let Some(g) = game.grid_summary() {
         overlay = format!("grid {g}");
@@ -639,6 +642,12 @@ fn java_side(snap: &Envelope) -> Side {
         overlay: java_grid(&st.screen),
         rng: java_rng(&st.rng),
     }
+}
+
+pub fn java_side_from_value(value: &Value) -> Result<Side, String> {
+    let envelope: Envelope =
+        serde_json::from_value(value.clone()).map_err(|error| format!("invalid Java observation: {error}"))?;
+    Ok(java_side(&envelope))
 }
 
 fn java_screen_name(v: &Value) -> String {
