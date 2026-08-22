@@ -504,7 +504,7 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
             monster.add_power(PowerId::Explosive, 3);
         }
         MonsterId::Transient => {
-            monster.add_power(PowerId::Fading, 5);
+            monster.add_power(PowerId::Fading, if monster.ascension >= 17 { 6 } else { 5 });
         }
         MonsterId::GiantHead => {
             monster.add_power(PowerId::Slow, 1);
@@ -753,8 +753,9 @@ fn apply_encounter_misc(_encounter: EncounterId, _rng: &mut RngSet) {
 pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster {
     let (hp_min, hp_max) = hp_range(id, ascension);
     if id == MonsterId::BronzeOrb {
-        // Constructor burns monsterHpRng once, then setHp rolls the real range.
-        let _ = rng.monster_hp.random_range(hp_min, hp_max);
+        // BronzeOrb passes the base 52..58 roll to super before setHp rolls
+        // its ascension-dependent range.
+        let _ = rng.monster_hp.random_range(52, 58);
     }
     if id == MonsterId::Taskmaster {
         // Taskmaster passes monsterHpRng.random(54, 60) to super, then setHp.
@@ -1127,7 +1128,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (300, 300)
             }
         }
-        MonsterId::BronzeOrb => (52, 58),
+        MonsterId::BronzeOrb => {
+            if a9 {
+                (54, 60)
+            } else {
+                (52, 58)
+            }
+        }
         MonsterId::SpireShield => (110, 110),
         MonsterId::SpireSpear => (160, 160),
         MonsterId::CorruptHeart => {
@@ -1772,7 +1779,8 @@ impl Monster {
                 }
             }
             MonsterId::Transient => {
-                self.set_move(1, Intent::Attack, 30 + self.extra * 10, 1);
+                let starting_damage = if self.ascension >= 2 { 40 } else { 30 };
+                self.set_move(1, Intent::Attack, starting_damage + self.extra * 10, 1);
             }
             MonsterId::SlimeBoss => {
                 if self.first_move {
@@ -2949,17 +2957,20 @@ impl Monster {
             }
 
             (MonsterId::SphericGuardian, 1) => {
-                let _ = hit_player(player, self, rng, 10, 2);
+                let damage = if ascension >= 2 { 11 } else { 10 };
+                let _ = hit_player(player, self, rng, damage, 2);
             }
             (MonsterId::SphericGuardian, 2) => {
-                self.block += 25;
+                self.block += if ascension >= 17 { 35 } else { 25 };
             }
             (MonsterId::SphericGuardian, 3) => {
                 self.block += 15;
-                let _ = hit_player(player, self, rng, 10, 1);
+                let damage = if ascension >= 2 { 11 } else { 10 };
+                let _ = hit_player(player, self, rng, damage, 1);
             }
             (MonsterId::SphericGuardian, 4) => {
-                let _ = hit_player(player, self, rng, 10, 1);
+                let damage = if ascension >= 2 { 11 } else { 10 };
+                let _ = hit_player(player, self, rng, damage, 1);
                 player.add_power_from_monster(PowerId::Frail, 5);
             }
             (MonsterId::Chosen, 5) => {
@@ -3213,9 +3224,10 @@ impl Monster {
                 let _ = hit_player(player, self, rng, 7, 1);
             }
             (MonsterId::Transient, 1) => {
-                let _ = hit_player(player, self, rng, 30 + self.extra * 10, 1);
+                let starting_damage = if self.ascension >= 2 { 40 } else { 30 };
+                let _ = hit_player(player, self, rng, starting_damage + self.extra * 10, 1);
                 self.extra += 1;
-                self.set_move(1, Intent::Attack, 30 + self.extra * 10, 1);
+                self.set_move(1, Intent::Attack, starting_damage + self.extra * 10, 1);
             }
             (MonsterId::SlimeBoss, 1) => {
                 // A4+: slam 38, else 35. Java queues DamageAction then
@@ -7117,6 +7129,12 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         // this monster but another enemy remains, Java still consumes aiRng
         // and records its next move; only all-dead post-combat cleanup drops
         // the queued roll (seed 535 AcidSlime_M killed by Thorns).
+        // AwakenedOne.damage queues ClearCardQueueAction when its first form
+        // dies, but that action only clears cardQueue. The already queued
+        // RollMoveAction still consumes aiRng; the later SetMoveAction restores
+        // REBIRTH after the roll (seed 979071298687117498 Bronze Scales).
+        let awakened_waiting_to_rebirth =
+            combat.monsters[i].id == MonsterId::AwakenedOne && combat.monsters[i].half_dead;
         if !skip_roll && !combat.all_dead() {
             let missing: i32 = combat
                 .monsters
@@ -7126,6 +7144,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 .sum();
             let allies = combat.monsters.iter().filter(|m| m.alive()).count() as i32;
             combat.monsters[i].roll_move_group(rng, missing, allies, i as i32);
+            if awakened_waiting_to_rebirth {
+                combat.monsters[i].set_move(3, Intent::Unknown, 0, 1);
+                combat.monsters[i].create_intent();
+            }
         }
         // AcidSlime_L.damage: setMove(SPLIT) plus addToBottom SetMoveAction
         // after RollMoveAction, so a thorns hit that crosses 50% HP during
@@ -7173,6 +7195,13 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             monster.add_power(PowerId::Strength, ritual);
         }
     }
+    // GameActionManager has already queued the next-turn DrawCardAction with
+    // the current gameHandSize before DrawReductionPower's atEndOfRound
+    // ReducePowerAction restores that size. Preserve the reduced draw for this
+    // turn even when the power is removed before the queued draw resolves.
+    // One DrawReductionPower lowers hand size by one; stacked amount extends
+    // its duration rather than reducing hand size multiple times.
+    let draw_reduction = i32::from(player.power_amount(PowerId::DrawReduction) > 0);
     let _ = crate::creature::end_of_round(&mut player.powers, true);
     combat.turn += 1;
     for monster in combat.monsters.iter_mut().filter(|m| m.alive()) {
@@ -7351,7 +7380,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     let draw_n = 5
         + if player.has_relic(RelicId::Snecko_Eye) { 2 } else { 0 }
         + player.power_amount(PowerId::DrawCard)
-        - player.power_amount(PowerId::DrawReduction);
+        - draw_reduction;
     let statuses = draw_cards_rng(player, draw_n.max(0), Some(rng));
     apply_fire_breathing(player, &mut combat.monsters, rng, statuses);
     if pocketwatch {

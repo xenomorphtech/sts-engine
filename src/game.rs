@@ -205,9 +205,31 @@ fn purgeable_card(c: &Card) -> bool {
 
 fn shop_card_matches(card: &Card, label: &str) -> bool {
     let id = card.sts_id();
-    label == id
+    if label == id
         || label == id.replace('_', " ")
         || (card.upgraded && (label == format!("{id}+") || label == format!("{}+", id.replace('_', " "))))
+    {
+        return true;
+    }
+    let (label, requested_upgrade) = label.strip_suffix('+').map_or((label, false), |base| (base, true));
+    (!requested_upgrade || card.upgraded)
+        && label
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .eq(id.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase))
+}
+
+#[cfg(test)]
+mod shop_label_tests {
+    use super::shop_card_matches;
+    use crate::card::Card;
+    use crate::ids::CardId;
+
+    #[test]
+    fn java_display_name_matches_compact_card_id() {
+        assert!(shop_card_matches(&Card::new(CardId::BootSequence), "Boot Sequence"));
+    }
 }
 
 fn shop_relic_matches(id: RelicId, label: &str) -> bool {
@@ -624,6 +646,14 @@ impl Game {
                 }
             }
             Screen::CombatReward => {
+                // The Beyond boss room never opens CombatRewardScreen. Its
+                // room-complete state exposes only Proceed (including the
+                // interval between A20's two bosses), even though the room's
+                // unclaimable gold RewardItem remains present.
+                if self.current_room == RoomType::Boss && self.dungeon.act == Act::Beyond {
+                    actions.push(Action::Proceed);
+                    return actions;
+                }
                 let mut compact = 0usize;
                 for reward in self.rewards.iter() {
                     if !reward.taken {
@@ -1527,10 +1557,30 @@ impl Game {
                 let astrolabe = self.grid.as_ref().is_some_and(|g| {
                     g.needed == 3 && g.return_screen == Some(Screen::BossRelic)
                 });
+                let event_transform = self.grid.as_ref().is_some_and(|g| g.return_event);
                 if astrolabe {
                     // Astrolabe.giveCards: transformCard(c, true, miscRng) and
                     // obtain immediately (seed 133 Gash+/White Noise+/Steam+).
                     self.apply_astrolabe_transforms(&selection_order);
+                } else if event_transform {
+                    // Event update methods (DrugDealer, Designer, and the
+                    // transform result of GremlinWheelGame) iterate the grid's
+                    // selectedCards in click order and call transformCard with
+                    // AbstractDungeon.miscRng.
+                    let selected: Vec<CardId> = selection_order
+                        .iter()
+                        .filter_map(|&i| self.player.deck.get(i).map(|card| card.id))
+                        .collect();
+                    for i in idxs.into_iter().rev() {
+                        if i < self.player.deck.len() {
+                            self.player.deck.remove(i);
+                        }
+                    }
+                    for old in selected {
+                        if let Some(id) = self.misc_transform_roll(old) {
+                            self.pending_cards.push(Card::new(id));
+                        }
+                    }
                 } else {
                     // Java NeowReward.update TRANSFORM_*: transformCard via
                     // NeowEvent.rng, remove immediately, then queue
@@ -1760,7 +1810,9 @@ impl Game {
         if self.current_y < 0 {
             return out;
         }
-        if self.current_y >= 13 {
+        // Vanilla assigns map row 14 as a mandatory RestRoom and only exposes
+        // the boss after leaving that row.
+        if self.current_y >= 14 {
             out.push((-1, 15, RoomType::Boss));
             return out;
         }

@@ -1,9 +1,9 @@
 use sts_engine::action::Action;
 use sts_engine::card::Card;
 use sts_engine::combat::{self, Combat};
-use sts_engine::creature::Player;
+use sts_engine::creature::{Player, RelicInstance};
 use sts_engine::game::{Game, Screen};
-use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PowerId, RoomType};
+use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PowerId, RelicId, RoomType};
 use sts_engine::rng::RngSet;
 use sts_engine::Unlocks;
 
@@ -19,6 +19,7 @@ fn a20_beyond_proceed_starts_second_boss_without_healing() {
     game.screen = Screen::CombatReward;
     game.player.hp = 17;
 
+    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
     game.step(&Action::Proceed);
 
     assert_eq!(game.screen, Screen::Combat);
@@ -70,6 +71,117 @@ fn time_eater_has_a20_hp_haste_and_head_slam_effects() {
     monster.take_turn(&mut player, &mut rng, 20, None);
     assert_eq!(player.power_amount(PowerId::DrawReduction), 1);
     assert_eq!(player.discard.iter().filter(|card| card.id == CardId::Slimed).count(), 2);
+}
+
+#[test]
+fn expiring_draw_reduction_still_reduces_the_already_queued_draw() {
+    let mut rng = RngSet::generate_seeds(29);
+    let mut player = Player::defect();
+    let mut combat = Combat::start(EncounterId::TimeEater, &mut player, &mut rng, 51, 29, 20);
+    player.hand.clear();
+    player.discard.clear();
+    player.exhaust.clear();
+    player.draw = vec![Card::new(CardId::Defend_B); 6];
+    player.add_power_from_monster(PowerId::DrawReduction, 1);
+    player.powers.iter_mut().find(|power| power.id == PowerId::DrawReduction).unwrap().just_applied = false;
+    combat.monsters[0].next_move = 3;
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    assert_eq!(player.hand.len(), 4);
+    assert_eq!(player.power_amount(PowerId::DrawReduction), 0);
+}
+
+#[test]
+fn spheric_guardian_uses_its_hard_block_and_damage_values() {
+    let mut rng = RngSet::generate_seeds(13);
+    let mut player = Player::defect();
+    let mut monster = combat::spawn_monster(MonsterId::SphericGuardian, &mut rng, 20);
+
+    monster.block = 0;
+    monster.next_move = 2;
+    monster.take_turn(&mut player, &mut rng, 20, None);
+    assert_eq!(monster.block, 35);
+
+    let hp = player.hp;
+    monster.block = 0;
+    monster.next_move = 3;
+    monster.take_turn(&mut player, &mut rng, 20, None);
+    assert_eq!(monster.block, 15);
+    assert_eq!(player.hp, hp - 11);
+}
+
+#[test]
+fn bronze_orb_uses_its_ascension_nine_hp_range() {
+    let mut saw_upper_bound = false;
+    for seed in 0..100 {
+        let mut rng = RngSet::generate_seeds(seed);
+        let monster = combat::spawn_monster(MonsterId::BronzeOrb, &mut rng, 20);
+        assert!((54..=60).contains(&monster.hp), "seed {seed} rolled {} HP", monster.hp);
+        saw_upper_bound |= monster.hp == 60;
+    }
+    assert!(saw_upper_bound);
+}
+
+#[test]
+fn a20_transient_has_six_turns_and_starts_at_forty_damage() {
+    let mut rng = RngSet::generate_seeds(17);
+    let mut player = Player::defect();
+    let combat = Combat::start(EncounterId::Transient, &mut player, &mut rng, 1, 17, 20);
+    let monster = &combat.monsters[0];
+
+    assert_eq!(monster.power_amount(PowerId::Fading), 6);
+    assert_eq!(monster.next_move, 1);
+    assert_eq!(monster.intent_damage, 40);
+}
+
+#[test]
+fn awakened_one_rebirth_resolves_during_the_monster_phase() {
+    let mut rng = RngSet::generate_seeds(19);
+    let mut player = Player::defect();
+    let mut combat = Combat::start(EncounterId::AwakenedOne, &mut player, &mut rng, 50, 19, 20);
+    for monster in &mut combat.monsters {
+        if monster.id == MonsterId::Cultist {
+            monster.hp = 0;
+            monster.dead = true;
+        }
+    }
+    let awakened = combat.monsters.iter_mut().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    awakened.hp = 1;
+    combat::damage_monster(awakened, &mut player, &mut rng, 1, 1);
+    assert!(awakened.half_dead);
+    assert_eq!(awakened.next_move, 3);
+
+    let ai_before_rebirth = rng.ai.counter;
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    let awakened = combat.monsters.iter().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    assert!(!awakened.half_dead);
+    assert_eq!(awakened.hp, 320);
+    assert_eq!(awakened.next_move, 5);
+    assert_eq!(rng.ai.counter, ai_before_rebirth + 1);
+
+    let mut rng = RngSet::generate_seeds(23);
+    let mut player = Player::defect();
+    player.relics.push(RelicInstance { id: RelicId::Bronze_Scales, counter: -1, used_up: false });
+    let mut combat = Combat::start(EncounterId::AwakenedOne, &mut player, &mut rng, 50, 23, 20);
+    for monster in &mut combat.monsters {
+        if monster.id == MonsterId::Cultist {
+            monster.hp = 0;
+            monster.dead = true;
+        }
+    }
+    let awakened = combat.monsters.iter_mut().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    awakened.hp = 9;
+    awakened.next_move = 2;
+
+    let ai_before_reactive_death = rng.ai.counter;
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    let awakened = combat.monsters.iter().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    assert!(awakened.half_dead);
+    assert_eq!(awakened.next_move, 3);
+    assert_eq!(rng.ai.counter, ai_before_reactive_death + 1);
 }
 
 #[test]

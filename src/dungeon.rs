@@ -107,7 +107,7 @@ impl Dungeon {
         };
         dungeon.generate_monsters(&mut rng.monster);
         dungeon.initialize_boss(&mut rng.monster, unlocks);
-        dungeon.initialize_events();
+        dungeon.initialize_events(ascension);
         dungeon.initialize_card_pools(character, unlocks);
         dungeon.initialize_relics(character, unlocks, &mut rng.relic, &[]);
         rng.map = StsRandom::from_seed(seed.wrapping_add(1));
@@ -378,7 +378,7 @@ impl Dungeon {
         self.boss = self.boss_list[0].clone();
     }
 
-    fn initialize_events(&mut self) {
+    fn initialize_events(&mut self, ascension: i32) {
         self.event_list.extend(
             [
                 "Big Fish",
@@ -414,6 +414,11 @@ impl Dungeon {
             ]
             .map(str::to_string),
         );
+        // NoteForYourself.isNoteForYourselfAvailable is false at A15+.
+        // Removing it here preserves Java's subsequent special-event order.
+        if ascension >= 15 {
+            self.special_one_time.retain(|event| event != "NoteForYourself");
+        }
         self.initialize_shrines();
     }
 
