@@ -1273,6 +1273,45 @@ fn a18_gremlin_nob_does_not_skull_bash_within_two_moves() {
 }
 
 #[test]
+fn darkling_killed_by_bronze_scales_counts_before_regrowing() {
+    let mut player = Player::for_character(Character::Defect);
+    player.hp = 200;
+    player.max_hp = 200;
+    player.relics.push(RelicInstance {
+        id: RelicId::Bronze_Scales,
+        counter: -1,
+        used_up: false,
+    });
+    let mut rng = RngSet::generate_seeds(969606797112288563);
+    let mut combat = Combat::start(
+        EncounterId::ThreeDarklings,
+        &mut player,
+        &mut rng,
+        36,
+        969606797112288563,
+        20,
+    );
+    player.orbs.clear();
+    combat.monsters[0].hp = 3;
+    combat.monsters[0].block = 0;
+    combat.monsters[0].next_move = 1;
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+    assert_eq!(combat.monsters[0].hp, 0);
+    assert!(combat.monsters[0].half_dead);
+    assert_eq!(combat.monsters[0].next_move, 4);
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+    assert_eq!(combat.monsters[0].hp, 0);
+    assert!(combat.monsters[0].half_dead);
+    assert_eq!(combat.monsters[0].next_move, 5);
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+    assert_eq!(combat.monsters[0].hp, combat.monsters[0].max_hp / 2);
+    assert!(!combat.monsters[0].half_dead);
+}
+
+#[test]
 fn a20_beyond_proceed_starts_second_boss_without_healing() {
     let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
     game.dungeon.act = Act::Beyond;

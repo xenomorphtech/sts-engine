@@ -7101,6 +7101,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         let skip_roll = combat.monsters[i].skip_roll_after_turn();
         let id = combat.monsters[i].id;
         let used_move = combat.monsters[i].next_move;
+        let half_dead_before_turn = combat.monsters[i].half_dead;
         let gremlin_slots = if id == MonsterId::GremlinLeader && used_move == 2 {
             Some(next_gremlin_summon_slots(&combat.monsters))
         } else if id == MonsterId::Reptomancer && used_move == 2 {
@@ -7277,6 +7278,14 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         // REBIRTH after the roll (seed 979071298687117498 Bronze Scales).
         let awakened_waiting_to_rebirth =
             combat.monsters[i].id == MonsterId::AwakenedOne && combat.monsters[i].half_dead;
+        // Darkling.damage likewise queues SetMoveAction(COUNT) behind the
+        // RollMoveAction already appended by takeTurn. Reactive damage during
+        // its own attack must therefore roll once, then restore COUNT; a
+        // Darkling that began the turn half-dead is allowed to advance from
+        // COUNT to REINCARNATE normally (rank 37 Bronze Scales).
+        let darkling_waiting_to_count = combat.monsters[i].id == MonsterId::Darkling
+            && !half_dead_before_turn
+            && combat.monsters[i].half_dead;
         if !skip_roll && !combat.all_dead() {
             let missing: i32 = combat
                 .monsters
@@ -7288,6 +7297,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             combat.monsters[i].roll_move_group(rng, missing, allies, i as i32);
             if awakened_waiting_to_rebirth {
                 combat.monsters[i].set_move(3, Intent::Unknown, 0, 1);
+                combat.monsters[i].create_intent();
+            }
+            if darkling_waiting_to_count {
+                combat.monsters[i].set_move(4, Intent::Unknown, 0, 1);
                 combat.monsters[i].create_intent();
             }
         }
