@@ -186,6 +186,10 @@ impl Combat {
         if player.has_relic(RelicId::Vajra) {
             player.add_power(PowerId::Strength, 1);
         }
+        // Sling.atBattleStart: eliteTrigger grants Strength 2 for the fight.
+        if player.has_relic(RelicId::Sling) && is_elite_encounter(encounter) {
+            player.add_power(PowerId::Strength, 2);
+        }
         // OddlySmoothStone.atBattleStart: ApplyPowerAction Dexterity 1.
         if player.has_relic(RelicId::Oddly_Smooth_Stone) {
             player.add_power(PowerId::Dexterity, 1);
@@ -7110,7 +7114,17 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         // MonsterQueueItem drains the actions from one monster before moving
         // to the next. Deaths during that batch (notably ExplosivePower's
         // self-kill) therefore enqueue Gremlin Horn's energy/draw here.
-        gremlin_horn_on_kills(player, combat, rng, dead_before_monster_action);
+        // Large slime Split instead uses SuicideAction(..., false), so Java
+        // deliberately skips relic death hooks for the disappearing parent.
+        let split_suicide = used_move == 3
+            && spawned.is_some()
+            && matches!(
+                id,
+                MonsterId::SlimeBoss | MonsterId::AcidSlimeL | MonsterId::SpikeSlimeL
+            );
+        if !split_suicide {
+            gremlin_horn_on_kills(player, combat, rng, dead_before_monster_action);
+        }
         flush_spore_cloud(player, combat);
         if let Some(p) = combat.monsters[i].powers.iter_mut().find(|p| p.id == PowerId::Malleable) {
             p.amount = 3;

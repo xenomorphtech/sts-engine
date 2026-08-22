@@ -6,6 +6,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from lockstep_exactsim import (
+    compact_java_observation,
     enriched_java_actions,
     neow_label_matches,
     terminally_aligned,
@@ -14,6 +15,21 @@ from lockstep_exactsim import (
 
 
 class ActionTransformerTests(unittest.TestCase):
+    def test_compact_java_trace_keeps_rng_snapshot(self):
+        rng = {"card_random": {"counter": 7, "state0": 11, "state1": 13}}
+        compact = compact_java_observation(
+            {
+                "state": {
+                    "rng": rng,
+                    "player": {},
+                    "dungeon": {},
+                    "combat": {},
+                }
+            }
+        )
+
+        self.assertEqual(compact["rng"], rng)
+
     def test_three_enemy_kill_accepts_java_spelled_number(self):
         self.assertTrue(
             neow_label_matches(

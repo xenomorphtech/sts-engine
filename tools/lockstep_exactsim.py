@@ -301,6 +301,7 @@ def compact_java_observation(observation: dict) -> dict:
         "gold": player.get("gold"),
         "energy": player.get("energy"),
         "block": player.get("block"),
+        "rng": state.get("rng", []),
         "deck": [card.get("id") for card in player.get("master_deck", [])],
         "deck_upgraded": [card.get("upgraded") for card in player.get("master_deck", [])],
         "relics": [relic.get("id") for relic in player.get("relics", [])],

@@ -1,7 +1,7 @@
 use sts_engine::action::{Action, PotionOp};
 use sts_engine::card::Card;
 use sts_engine::combat::{self, Combat};
-use sts_engine::creature::{Orb, OrbKind, Player, RelicInstance};
+use sts_engine::creature::{Orb, OrbKind, Player, PotionInstance, RelicInstance};
 use sts_engine::game::{Game, NeowDrawback, NeowKind, NeowOption, Screen};
 use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PotionId, PowerId, RelicId, RoomType};
 use sts_engine::rng::RngSet;
@@ -238,6 +238,56 @@ fn gremlin_horn_draws_when_exploder_dies_during_its_monster_turn() {
 }
 
 #[test]
+fn gremlin_horn_does_not_draw_for_large_slime_split_suicide() {
+    let mut player = Player::defect();
+    player.relics.push(RelicInstance {
+        id: RelicId::Gremlin_Horn,
+        counter: -1,
+        used_up: false,
+    });
+    player.relics.push(RelicInstance {
+        id: RelicId::Runic_Pyramid,
+        counter: -1,
+        used_up: false,
+    });
+    let mut rng = RngSet::generate_seeds(17);
+    let mut combat = Combat::start(
+        EncounterId::TwoLouse,
+        &mut player,
+        &mut rng,
+        1,
+        17,
+        20,
+    );
+    combat.monsters[0].id = MonsterId::AcidSlimeL;
+    combat.monsters[0].hp = 31;
+    combat.monsters[0].max_hp = 62;
+    combat.monsters[0].next_move = 3;
+    combat.monsters[0].dead = false;
+    combat.monsters[0].powers.clear();
+    player.hand.clear();
+    player.draw = vec![
+        Card::new(CardId::Defend_B),
+        Card::new(CardId::Zap),
+        Card::new(CardId::Strike_B),
+        Card::new(CardId::Cold_Snap),
+        Card::new(CardId::Ball_Lightning),
+        Card::new(CardId::Dualcast),
+    ];
+    player.discard.clear();
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    assert!(combat
+        .monsters
+        .iter()
+        .any(|monster| monster.id == MonsterId::AcidSlimeM));
+    assert!(combat.monsters.iter().filter(|monster| monster.alive()).count() >= 2);
+    assert_eq!(player.hand.len(), 5);
+    assert_eq!(player.draw.len(), 1);
+}
+
+#[test]
 fn ball_lightning_channels_before_gremlin_leader_minions_escape() {
     let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
     game.current_room = RoomType::Elite;
@@ -284,6 +334,177 @@ fn ball_lightning_channels_before_gremlin_leader_minions_escape() {
 
     assert_eq!(game.screen, Screen::CombatReward);
     assert_eq!(game.player.block, 8);
+}
+
+#[test]
+fn skipped_skill_potion_discovery_burns_the_unused_offer_rounds() {
+    let seed = 5_053_207_210_280_065_480;
+    let mut game = Game::new(seed, Character::Defect, 20, Unlocks::fixture());
+    game.current_room = RoomType::Boss;
+    game.combat = Some(Combat::start(
+        EncounterId::SlimeBoss,
+        &mut game.player,
+        &mut game.rng,
+        16,
+        seed,
+        20,
+    ));
+    game.player.potions = vec![PotionInstance {
+        id: PotionId::Skill,
+        slot: 0,
+    }];
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 0,
+        target_index: None,
+    });
+    assert_eq!(game.screen, Screen::CardReward);
+    assert_eq!(game.rng.card_random.counter, 3);
+
+    game.step(&Action::Skip);
+
+    assert_eq!(game.screen, Screen::Combat);
+    assert_eq!(game.rng.card_random.counter, 51);
+}
+
+#[test]
+fn attack_potion_waits_for_gambling_brew_hand_selection() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        6,
+        game.seed,
+        20,
+    ));
+    game.player.hand = vec![
+        Card::new(CardId::Defend_B),
+        Card::new(CardId::Zap),
+        Card::new(CardId::Ball_Lightning),
+    ];
+    game.player.potions = vec![
+        PotionInstance {
+            id: PotionId::GamblersBrew,
+            slot: 0,
+        },
+        PotionInstance {
+            id: PotionId::Attack,
+            slot: 1,
+        },
+    ];
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 0,
+        target_index: None,
+    });
+    assert_eq!(game.screen, Screen::HandSelect);
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 1,
+        target_index: None,
+    });
+    assert_eq!(game.screen, Screen::HandSelect);
+    assert!(game.card_reward.is_empty());
+
+    game.step(&Action::Proceed);
+
+    assert_eq!(game.screen, Screen::CardReward);
+    assert_eq!(game.card_reward.len(), 3);
+    assert!(game
+        .card_reward
+        .iter()
+        .all(|card| card.card_type() == sts_engine::ids::CardType::ATTACK));
+}
+
+#[test]
+fn upgraded_seek_adds_selected_cards_to_hand_in_click_order() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        6,
+        game.seed,
+        20,
+    ));
+    let mut seek = Card::new(CardId::Seek);
+    seek.upgrade();
+    game.player.hand = vec![seek];
+    game.player.draw = vec![
+        Card::new(CardId::Defragment),
+        Card::new(CardId::Ball_Lightning),
+        Card::new(CardId::Defend_B),
+    ];
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: None,
+    });
+    assert_eq!(game.screen, Screen::Grid);
+
+    let defragment = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Defragment"))
+        .expect("Defragment grid choice");
+    game.step(&defragment);
+    let ball_lightning = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Ball Lightning"))
+        .expect("Ball Lightning grid choice");
+    game.step(&ball_lightning);
+
+    assert_eq!(game.screen, Screen::Combat);
+    assert_eq!(
+        game.player.hand.iter().map(|card| card.id).collect::<Vec<_>>(),
+        [CardId::Defragment, CardId::Ball_Lightning]
+    );
+}
+
+#[test]
+fn sling_of_courage_grants_strength_only_in_elite_combat() {
+    let mut elite_player = Player::defect();
+    elite_player.relics.push(RelicInstance {
+        id: RelicId::Sling,
+        counter: -1,
+        used_up: false,
+    });
+    let mut elite_rng = RngSet::generate_seeds(17);
+    let _elite = Combat::start(
+        EncounterId::BookOfStabbing,
+        &mut elite_player,
+        &mut elite_rng,
+        23,
+        17,
+        20,
+    );
+    assert_eq!(elite_player.power_amount(PowerId::Strength), 2);
+
+    let mut hallway_player = Player::defect();
+    hallway_player.relics.push(RelicInstance {
+        id: RelicId::Sling,
+        counter: -1,
+        used_up: false,
+    });
+    let mut hallway_rng = RngSet::generate_seeds(17);
+    let _hallway = Combat::start(
+        EncounterId::TwoLouse,
+        &mut hallway_player,
+        &mut hallway_rng,
+        23,
+        17,
+        20,
+    );
+    assert_eq!(hallway_player.power_amount(PowerId::Strength), 0);
 }
 
 #[test]

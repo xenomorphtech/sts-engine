@@ -171,6 +171,10 @@ pub struct Game {
     discovery_typ: Option<crate::ids::CardType>,
     discovery_colorless: bool,
     discovery_copies: usize,
+    /// DiscoveryAction from a card-generating potion is addToBot. If another
+    /// action owns a combat overlay (for example GamblingChipAction's hand
+    /// selector), the discovery screen opens only after that action finishes.
+    pending_potion_discovery: Option<(Option<CardType>, bool, usize)>,
     toolbox_reward: bool,
     /// ToyOrnithopter HealAction is addToBot after DiscoveryAction, so the
     /// CARD_REWARD snapshot is still pre-heal (seed 45).
@@ -351,7 +355,9 @@ mod event_fidelity_tests {
             .find(|action| matches!(action, Action::Choose { .. }))
             .expect("purge choice");
         beggar.step(&purge);
-        assert_eq!(event_verbs(&beggar), ["Leave"]);
+        assert_eq!(beggar.screen, Screen::Grid);
+        beggar.step(&Action::Proceed);
+        assert_eq!(beggar.screen, Screen::Map);
 
         let mut beggar_decline = start_named_event("Beggar");
         beggar_decline.step(&Action::Choose {
@@ -1062,6 +1068,7 @@ impl Game {
             discovery_typ: None,
             discovery_colorless: false,
             discovery_copies: 1,
+            pending_potion_discovery: None,
             toolbox_reward: false,
             pending_ornithopter_heal: false,
         };
@@ -1543,6 +1550,7 @@ impl Game {
             }
             Screen::Terminal => self.done = true,
         }
+        self.resume_pending_potion_discovery();
         self.resolve_forced_end_turn();
         if matches!(action, Action::Quit) {
             self.done = true;
@@ -2294,6 +2302,10 @@ impl Game {
         }
         let mut idxs = selection_order.clone();
         idxs.sort_unstable();
+        let completed_beggar_purge = kind == GridKind::Purge
+            && !selection_order.is_empty()
+            && self.grid.as_ref().is_some_and(|grid| grid.return_event)
+            && self.event.as_ref().is_some_and(|event| event.id == "Beggar");
         match kind {
             GridKind::Purge => {
                 let shop_purge = self.grid.as_ref().is_some_and(|g| g.return_shop);
@@ -2439,8 +2451,25 @@ impl Game {
                 }
             }
             GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
+                // SeekAction iterates gridSelectScreen.selectedCards in click
+                // order. Capture that order before removing descending pile
+                // indices so index stability does not reverse the cards added
+                // to hand (or moved to discard when the hand fills).
+                let chosen: Vec<Card> = selection_order
+                    .iter()
+                    .filter_map(|&i| self.player.draw.get(i).cloned())
+                    .collect();
                 for i in idxs.into_iter().rev() {
-                    combat::draw_pile_to_hand(&mut self.player, i);
+                    if i < self.player.draw.len() {
+                        self.player.draw.remove(i);
+                    }
+                }
+                for card in chosen {
+                    if self.player.hand.len() < 10 {
+                        self.player.hand.push(card);
+                    } else {
+                        self.player.discard.push(card);
+                    }
                 }
             }
             GridKind::Bottle(_) => {
@@ -2462,6 +2491,14 @@ impl Game {
                     }
                 }
             }
+        }
+        // Beggar.update observes the non-empty grid selection after the purge
+        // screen closes, removes the card, and calls openMap immediately. The
+        // Leave option installed by GAVE_MONEY is never another stable choice.
+        if completed_beggar_purge {
+            self.grid = None;
+            self.open_map();
+            return;
         }
         self.finish_grid();
     }
@@ -3857,10 +3894,28 @@ impl Game {
     }
 
     fn begin_potion_discovery(&mut self, typ: Option<crate::ids::CardType>, colorless: bool) {
-        self.begin_discovery(typ, colorless);
-        if self.player.has_relic(RelicId::SacredBark) {
-            self.discovery_copies = 2;
+        let copies = if self.player.has_relic(RelicId::SacredBark) {
+            2
+        } else {
+            1
+        };
+        if self.screen != Screen::Combat {
+            self.pending_potion_discovery = Some((typ, colorless, copies));
+            return;
         }
+        self.begin_discovery(typ, colorless);
+        self.discovery_copies = copies;
+    }
+
+    fn resume_pending_potion_discovery(&mut self) {
+        if self.screen != Screen::Combat {
+            return;
+        }
+        let Some((typ, colorless, copies)) = self.pending_potion_discovery.take() else {
+            return;
+        };
+        self.begin_discovery(typ, colorless);
+        self.discovery_copies = copies;
     }
 
     fn begin_toolbox_reward(&mut self) {
@@ -4001,13 +4056,6 @@ impl Game {
                                 self.player.discard.push(card.clone());
                             }
                         }
-                        crate::rewards::burn_discovery_rng(
-                            &self.dungeon,
-                            &mut self.rng,
-                            self.discovery_typ,
-                            self.discovery_colorless,
-                            15,
-                        );
                     } else {
                         crate::rewards::preview_obtain(&self.player, &mut card);
                         self.pending_cards.push(card);
@@ -4029,6 +4077,18 @@ impl Game {
             return;
         }
         if self.discovery_combat {
+            // DiscoveryAction.update rebuilds one unused offer before checking
+            // the closed screen, then exact-text-sim2 batches the remaining
+            // fourteen vanilla frame updates. This happens for both a chosen
+            // card and Skip, so consume the fifteen rounds in the shared close
+            // path rather than only in the selection branch.
+            crate::rewards::burn_discovery_rng(
+                &self.dungeon,
+                &mut self.rng,
+                self.discovery_typ,
+                self.discovery_colorless,
+                15,
+            );
             self.discovery_combat = false;
             self.discovery_skippable = false;
             self.discovery_copies = 1;
