@@ -45,7 +45,10 @@ struct Observation {
     screen: String,
     room: String,
     energy: i32,
+    orbs: Vec<String>,
     hand_costs_for_turn: Vec<i16>,
+    hand_upgraded: Vec<bool>,
+    deck_upgraded: Vec<bool>,
     legal_actions: Vec<Action>,
     decision: Option<Action>,
     state: Side,
@@ -100,12 +103,33 @@ fn observation(session: &Session) -> Observation {
         screen: format!("{:?}", session.game.screen),
         room: format!("{:?}", session.game.current_room),
         energy: session.game.player.energy,
+        orbs: session
+            .game
+            .player
+            .orbs
+            .iter()
+            .map(|orb| format!("{:?}", orb.kind))
+            .collect(),
         hand_costs_for_turn: session
             .game
             .player
             .hand
             .iter()
             .map(|card| card.cost_for_turn)
+            .collect(),
+        hand_upgraded: session
+            .game
+            .player
+            .hand
+            .iter()
+            .map(|card| card.upgraded)
+            .collect(),
+        deck_upgraded: session
+            .game
+            .player
+            .deck
+            .iter()
+            .map(|card| card.upgraded)
             .collect(),
         legal_actions: session.game.legal_actions(),
         decision: session.pending_decision.clone(),

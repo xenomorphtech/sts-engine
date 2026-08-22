@@ -302,12 +302,15 @@ def compact_java_observation(observation: dict) -> dict:
         "energy": player.get("energy"),
         "block": player.get("block"),
         "deck": [card.get("id") for card in player.get("master_deck", [])],
+        "deck_upgraded": [card.get("upgraded") for card in player.get("master_deck", [])],
         "relics": [relic.get("id") for relic in player.get("relics", [])],
         "relic_counters": [
             [relic.get("id"), relic.get("counter")]
             for relic in player.get("relics", [])
         ],
         "hand": [card.get("id") for card in combat.get("hand", [])],
+        "orbs": [orb.get("id") for orb in combat.get("orbs", [])],
+        "hand_upgraded": [card.get("upgraded") for card in combat.get("hand", [])],
         "hand_costs_for_turn": [
             card.get("cost_for_turn") for card in combat.get("hand", [])
         ],
@@ -332,7 +335,10 @@ def compact_rust_observation(observation: dict) -> dict:
             "screen",
             "room",
             "energy",
+            "orbs",
             "hand_costs_for_turn",
+            "hand_upgraded",
+            "deck_upgraded",
             "decision",
             "legal_actions",
             "state",
@@ -351,6 +357,22 @@ def strict_failure(seed: int, step: int, kind: str, rust: dict, java: dict, deta
         "rust": compact_rust_observation(rust),
         "java": compact_java_observation(java),
     }
+
+
+def append_trace(path: Path, seed: int, step: int, rust: dict, java: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(
+            json.dumps(
+                {
+                    "seed": seed,
+                    "step": step,
+                    "rust": compact_rust_observation(rust),
+                    "java": compact_java_observation(java),
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
 
 
 def terminally_aligned(rust: dict, java: dict) -> bool:
@@ -391,6 +413,8 @@ def run_seed(args, seed: int) -> tuple[bool, dict]:
         java_states.append(java)
 
         for step in range(args.max_actions + 1):
+            if args.trace_jsonl is not None:
+                append_trace(args.trace_jsonl, seed, step, rust, java)
             if args.compare_block:
                 java_block = ((java.get("state") or {}).get("player") or {}).get("block")
                 rust_block = (rust.get("state") or {}).get("block")
@@ -562,6 +586,11 @@ def parse_args():
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-actions", type=int, default=5000)
     parser.add_argument(
+        "--trace-jsonl",
+        type=Path,
+        help="write compact Rust/Java observations at every boundary",
+    )
+    parser.add_argument(
         "--compare-block",
         action="store_true",
         help="stop at the first player-block mismatch for diagnostics",
@@ -581,6 +610,9 @@ def parse_args():
 
 def main() -> int:
     args = parse_args()
+    if args.trace_jsonl is not None:
+        args.trace_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        args.trace_jsonl.write_text("", encoding="utf-8")
     seeds = [args.seed] if args.seed is not None else load_seeds(args.seed_list)
     for index, seed in enumerate(seeds, 1):
         try:

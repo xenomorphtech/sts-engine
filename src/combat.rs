@@ -353,6 +353,13 @@ impl Combat {
             .all(|m| !m.alive() || self.is_minion(m.id))
     }
 
+    fn gremlin_leader_escapes_pending(&self) -> bool {
+        self.monsters
+            .iter()
+            .any(|monster| monster.id == MonsterId::GremlinLeader && monster.dead)
+            && self.monsters.iter().any(|monster| monster.alive())
+    }
+
     fn is_minion(&self, id: MonsterId) -> bool {
         match id {
             MonsterId::Cultist => self
@@ -5591,8 +5598,11 @@ fn apply_card_effect(
                     damage_monster(m, player, rng, dmg, 1);
                 }
             }
-            // DamageAction -> GameActionManager.clearPostCombatActions drops ChannelAction.
-            if !combat.all_dead() {
+            // DamageAction -> GameActionManager.clearPostCombatActions drops
+            // ChannelAction. Gremlin Leader is different: its surviving
+            // minions receive queued EscapeActions, so this already-queued
+            // channel resolves before those escapes finish the room.
+            if !combat.all_dead() || combat.gremlin_leader_escapes_pending() {
                 for _ in 0..card.base_magic.max(1) {
                     channel_orb(player, combat, rng, OrbKind::Lightning);
                 }
@@ -5604,8 +5614,9 @@ fn apply_card_effect(
                     damage_monster(m, player, rng, dmg, 1);
                 }
             }
-            // DamageAction -> GameActionManager.clearPostCombatActions drops ChannelAction.
-            if !combat.all_dead() {
+            // See Ball Lightning: queued Gremlin Leader minion escapes sit
+            // behind this ChannelAction.
+            if !combat.all_dead() || combat.gremlin_leader_escapes_pending() {
                 for _ in 0..card.base_magic.max(1) {
                     channel_orb(player, combat, rng, OrbKind::Frost);
                 }
@@ -5715,8 +5726,13 @@ fn apply_card_effect(
                     kinds.push(orb.kind);
                 }
             }
-            let n = draw_cards_rng(player, kinds.len() as i32, Some(rng));
-            apply_fire_breathing(player, &mut combat.monsters, rng, n);
+            // CompileDriverAction is queued behind DamageAction. If that
+            // damage ends combat, AbstractRoom.endBattle clears the action
+            // manager before the draw (and any Abacus shuffle) can resolve.
+            if player.hp > 0 && !combat.all_dead() {
+                let n = draw_cards_rng(player, kinds.len() as i32, Some(rng));
+                apply_fire_breathing(player, &mut combat.monsters, rng, n);
+            }
         }
         CardId::Coolheaded => {
             channel_orb(player, combat, rng, OrbKind::Frost);
@@ -6988,6 +7004,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             i += 1;
             continue;
         }
+        let dead_before_monster_action = gremlin_horn_death_count(combat);
         let skip_roll = combat.monsters[i].skip_roll_after_turn();
         let id = combat.monsters[i].id;
         let used_move = combat.monsters[i].next_move;
@@ -7090,6 +7107,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 p.amount -= 1;
             }
         }
+        // MonsterQueueItem drains the actions from one monster before moving
+        // to the next. Deaths during that batch (notably ExplosivePower's
+        // self-kill) therefore enqueue Gremlin Horn's energy/draw here.
+        gremlin_horn_on_kills(player, combat, rng, dead_before_monster_action);
+        flush_spore_cloud(player, combat);
         if let Some(p) = combat.monsters[i].powers.iter_mut().find(|p| p.id == PowerId::Malleable) {
             p.amount = 3;
         }
@@ -7687,7 +7709,7 @@ pub fn channel_orb(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, k
     // ChannelAction is dropped by GameActionManager.clearPostCombatActions
     // (658249: duplicated Glacier's last Frost channel after Lightning evoke
     // killed Jaw Worm — Java block 19, rust kept channeling to 24).
-    if combat.all_dead() {
+    if combat.all_dead() && !combat.gremlin_leader_escapes_pending() {
         return;
     }
     if player.max_orbs <= 0 {

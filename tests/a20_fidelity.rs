@@ -1,7 +1,7 @@
 use sts_engine::action::{Action, PotionOp};
 use sts_engine::card::Card;
 use sts_engine::combat::{self, Combat};
-use sts_engine::creature::{Player, RelicInstance};
+use sts_engine::creature::{Orb, OrbKind, Player, RelicInstance};
 use sts_engine::game::{Game, NeowDrawback, NeowKind, NeowOption, Screen};
 use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PotionId, PowerId, RelicId, RoomType};
 use sts_engine::rng::RngSet;
@@ -145,6 +145,145 @@ fn reboot_clears_mummified_hand_costs_when_moving_hand_to_draw() {
     assert!(compiles
         .iter()
         .all(|card| card.cost_for_turn == card.cost && card.cost_for_turn == 1));
+}
+
+#[test]
+fn lethal_compile_driver_cancels_queued_draw_and_abacus_shuffle() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.player.relics.push(RelicInstance {
+        id: RelicId::TheAbacus,
+        counter: -1,
+        used_up: false,
+    });
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        1,
+        game.seed,
+        20,
+    ));
+    let combat = game.combat.as_mut().expect("combat");
+    for monster in &mut combat.monsters {
+        monster.hp = 0;
+        monster.dead = true;
+    }
+    combat.monsters[0].hp = 1;
+    combat.monsters[0].dead = false;
+    game.player.orbs = vec![Orb {
+        kind: OrbKind::Frost,
+        evoke: 0,
+    }];
+    game.player.hand = vec![Card::new(CardId::Compile_Driver)];
+    game.player.draw.clear();
+    game.player.discard = vec![Card::new(CardId::Defend_B)];
+    game.player.block = 0;
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: Some(0),
+    });
+
+    assert_eq!(game.screen, Screen::CombatReward);
+    assert_eq!(game.player.block, 0);
+    assert!(game.player.draw.is_empty());
+}
+
+#[test]
+fn gremlin_horn_draws_when_exploder_dies_during_its_monster_turn() {
+    let mut player = Player::defect();
+    player.relics.push(RelicInstance {
+        id: RelicId::Gremlin_Horn,
+        counter: -1,
+        used_up: false,
+    });
+    player.relics.push(RelicInstance {
+        id: RelicId::Runic_Pyramid,
+        counter: -1,
+        used_up: false,
+    });
+    let mut rng = RngSet::generate_seeds(17);
+    let mut combat = Combat::start(
+        EncounterId::TwoLouse,
+        &mut player,
+        &mut rng,
+        1,
+        17,
+        20,
+    );
+    combat.monsters[0].id = MonsterId::Exploder;
+    combat.monsters[0].hp = 30;
+    combat.monsters[0].max_hp = 30;
+    combat.monsters[0].dead = false;
+    combat.monsters[0].add_power(PowerId::Explosive, 1);
+    player.hand.clear();
+    player.draw = vec![
+        Card::new(CardId::Defend_B),
+        Card::new(CardId::Zap),
+        Card::new(CardId::Strike_B),
+        Card::new(CardId::Cold_Snap),
+        Card::new(CardId::Ball_Lightning),
+        Card::new(CardId::Dualcast),
+    ];
+    player.discard.clear();
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    assert!(combat.monsters[0].dead);
+    assert!(combat.monsters[1].alive());
+    assert_eq!(player.hand.len(), 6);
+    assert!(player.draw.is_empty());
+}
+
+#[test]
+fn ball_lightning_channels_before_gremlin_leader_minions_escape() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.current_room = RoomType::Elite;
+    game.combat = Some(Combat::start(
+        EncounterId::GremlinLeader,
+        &mut game.player,
+        &mut game.rng,
+        23,
+        game.seed,
+        20,
+    ));
+    let combat = game.combat.as_mut().expect("combat");
+    let leader = combat
+        .monsters
+        .iter()
+        .position(|monster| monster.id == MonsterId::GremlinLeader)
+        .expect("Gremlin Leader");
+    combat.monsters[leader].hp = 1;
+    combat.monsters[leader].block = 0;
+    game.player.orbs = vec![
+        Orb {
+            kind: OrbKind::Frost,
+            evoke: 0,
+        },
+        Orb {
+            kind: OrbKind::Dark,
+            evoke: 6,
+        },
+        Orb {
+            kind: OrbKind::Frost,
+            evoke: 0,
+        },
+    ];
+    game.player.add_power(PowerId::Focus, 3);
+    game.player.hand = vec![Card::new(CardId::Ball_Lightning)];
+    game.player.block = 0;
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: Some(leader),
+    });
+
+    assert_eq!(game.screen, Screen::CombatReward);
+    assert_eq!(game.player.block, 8);
 }
 
 #[test]

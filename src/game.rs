@@ -345,6 +345,31 @@ mod event_fidelity_tests {
         });
         assert_eq!(beggar.screen, Screen::Grid);
         assert!(!beggar.legal_actions().contains(&Action::Skip));
+        let purge = beggar
+            .legal_actions()
+            .into_iter()
+            .find(|action| matches!(action, Action::Choose { .. }))
+            .expect("purge choice");
+        beggar.step(&purge);
+        assert_eq!(event_verbs(&beggar), ["Leave"]);
+
+        let mut beggar_decline = start_named_event("Beggar");
+        beggar_decline.step(&Action::Choose {
+            index: 1,
+            label: Some("[Leave]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(event_verbs(&beggar_decline), ["Leave"]);
+        beggar_decline.step(&Action::Choose {
+            index: 0,
+            label: Some("[Leave]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(beggar_decline.screen, Screen::Map);
 
         let mut duplicator = start_named_event("Duplicator");
         assert_eq!(event_verbs(&duplicator), ["Pray", "Leave"]);
@@ -568,6 +593,42 @@ mod event_fidelity_tests {
         let transformed = game.misc_transform_roll(CardId::Regret).expect("replacement curse");
         assert_ne!(transformed, CardId::Regret);
         assert_eq!(transformed.def().color, crate::ids::CardColor::CURSE);
+    }
+
+    #[test]
+    fn event_transform_applies_toxic_egg_to_the_obtained_replacement() {
+        let mut game = start_named_event("Transmorgrifier");
+        game.player.relics.push(RelicInstance {
+            id: RelicId::Toxic_Egg_2,
+            counter: -1,
+            used_up: false,
+        });
+        game.dungeon.common_cards = std::sync::Arc::new(vec![CardId::Fission]);
+        game.dungeon.uncommon_cards = std::sync::Arc::new(Vec::new());
+        game.dungeon.rare_cards = std::sync::Arc::new(Vec::new());
+
+        game.step(&Action::Choose {
+            index: 0,
+            label: Some("[Pray] #gTransform #ga #gcard.".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        let strike = game
+            .legal_actions()
+            .into_iter()
+            .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Strike_B"))
+            .expect("transformable Strike");
+        game.step(&strike);
+        game.step(&Action::Proceed);
+
+        let fission = game
+            .player
+            .deck
+            .iter()
+            .find(|card| card.id == CardId::Fission)
+            .expect("transformed Fission");
+        assert!(fission.upgraded);
     }
 
     #[test]
@@ -2311,7 +2372,12 @@ impl Game {
                     }
                     for old in selected {
                         if let Some(id) = self.misc_transform_roll(old) {
-                            self.pending_cards.push(Card::new(id));
+                            let mut card = Card::new(id);
+                            // ShowCardAndObtainEffect invokes onObtainCard on
+                            // the transformed replacement. Egg relics upgrade
+                            // it exactly like a reward card.
+                            crate::rewards::preview_obtain(&self.player, &mut card);
+                            self.pending_cards.push(card);
                         }
                     }
                 } else {
@@ -6345,13 +6411,13 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Continue]".into()];
+                        event.options = vec!["[Leave]".into()];
                     }
                 }
                 1 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Continue]".into()];
+                        event.options = vec!["[Leave]".into()];
                     }
                     self.open_grid(GridKind::Purge, 1, true);
                 }
