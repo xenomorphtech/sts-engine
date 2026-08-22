@@ -7109,21 +7109,29 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         } else {
             None
         };
-        let mut spawned = if id == MonsterId::Byrd
-            && used_move == 1
-            && player.power_amount(PowerId::StaticDischarge) > 0
-        {
-            // Peck is five separate DamageActions. Static Discharge puts its
-            // ChannelActions on top after every hit, so a full orb row evokes
-            // before the next DamageAction and can kill the attacking Byrd.
-            let hits = if combat.ascension >= 2 { 6 } else { 5 };
+        let reactive_multi_hit = if player.power_amount(PowerId::StaticDischarge) > 0 {
+            match (id, used_move) {
+                (MonsterId::Byrd, 1) => {
+                    Some((1, if combat.ascension >= 2 { 6 } else { 5 }))
+                }
+                (MonsterId::Maw, 5) => Some((5, (combat.monsters[i].extra / 2).max(1))),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let mut spawned = if let Some((damage, hits)) = reactive_multi_hit {
+            // Peck and Maw's multiattack are separate DamageActions. Static
+            // Discharge puts its ChannelActions on top after every hit, so a
+            // full orb row evokes before the next DamageAction and can kill
+            // the attacker, clearing its remaining hits (rank 27 Maw).
             for _ in 0..hits {
                 if !combat.monsters[i].alive() || player.hp <= 0 {
                     break;
                 }
                 {
-                    let byrd = &mut combat.monsters[i];
-                    let _ = hit_player(player, byrd, rng, 1, 1);
+                    let attacker = &mut combat.monsters[i];
+                    let _ = hit_player(player, attacker, rng, damage, 1);
                 }
                 flush_mid_hit_evokes(player, combat, rng);
             }

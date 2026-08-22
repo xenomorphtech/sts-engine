@@ -1312,6 +1312,55 @@ fn darkling_killed_by_bronze_scales_counts_before_regrowing() {
 }
 
 #[test]
+fn static_discharge_kills_maw_before_remaining_multiattack_hits() {
+    let mut player = Player::for_character(Character::Defect);
+    player.relics.push(RelicInstance {
+        id: RelicId::Lizard_Tail,
+        counter: -1,
+        used_up: false,
+    });
+    let mut rng = RngSet::generate_seeds(8360976353793871823);
+    let mut combat = Combat::start(
+        EncounterId::Maw,
+        &mut player,
+        &mut rng,
+        39,
+        8360976353793871823,
+        20,
+    );
+    player.hp = 35;
+    player.max_hp = 76;
+    player.block = 22;
+    player.add_power(PowerId::Focus, 1);
+    player.add_power(PowerId::StaticDischarge, 1);
+    player.add_power(PowerId::Electro, 1);
+    player.max_orbs = 3;
+    player.orbs = vec![
+        Orb { kind: OrbKind::Lightning, evoke: 0 },
+        Orb { kind: OrbKind::Lightning, evoke: 0 },
+        Orb { kind: OrbKind::Lightning, evoke: 0 },
+    ];
+    combat.monsters[0].hp = 29;
+    combat.monsters[0].block = 0;
+    combat.monsters[0].next_move = 5;
+    combat.monsters[0].extra = 12;
+    combat.monsters[0].add_power(PowerId::Strength, 5);
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    assert!(combat.monsters[0].dead);
+    assert_eq!(player.hp, 17);
+    assert_eq!(
+        player
+            .relics
+            .iter()
+            .find(|relic| relic.id == RelicId::Lizard_Tail)
+            .map(|relic| relic.counter),
+        Some(-1)
+    );
+}
+
+#[test]
 fn a20_beyond_proceed_starts_second_boss_without_healing() {
     let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
     game.dungeon.act = Act::Beyond;
