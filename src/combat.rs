@@ -5050,7 +5050,13 @@ pub fn play_owned_card(
             channel_orb(player, combat, rng, OrbKind::Lightning);
         }
         flush_on_attacked(combat, rng);
-        flush_guardian_defensive_block(combat);
+        // ModeShift's ChangeStateAction is appended while the card's queued
+        // damage/evoke actions resolve. A Letter Opener DamageAllEnemiesAction
+        // already queued by onUseCard stays ahead of that state change (rank
+        // 46 Dualcast); flush_letter_opener drains both in the right order.
+        if combat.pending_letter_opener == 0 {
+            flush_guardian_defensive_block(combat);
+        }
         // AllCostToHandAction snapshots eligible discard cards after the hit,
         // then queues one DiscardToHandAction per card behind Ink Bottle's
         // DrawCardAction and this card's UseCardAction.

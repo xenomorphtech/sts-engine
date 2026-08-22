@@ -130,6 +130,65 @@ fn letter_opener_mode_shift_block_resolves_before_end_turn_lightning() {
 }
 
 #[test]
+fn dualcast_letter_opener_resolves_before_mode_shift_queued_by_second_evoke() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.current_room = RoomType::Boss;
+    game.combat = Some(Combat::start(
+        EncounterId::TheGuardian,
+        &mut game.player,
+        &mut game.rng,
+        16,
+        game.seed,
+        20,
+    ));
+    game.player.relics.push(RelicInstance {
+        id: RelicId::Letter_Opener,
+        counter: 2,
+        used_up: false,
+    });
+    game.player.orbs = vec![
+        Orb {
+            kind: OrbKind::Lightning,
+            evoke: 0,
+        },
+        Orb {
+            kind: OrbKind::Lightning,
+            evoke: 0,
+        },
+        Orb {
+            kind: OrbKind::Lightning,
+            evoke: 0,
+        },
+    ];
+    game.player.hand = vec![Card::new(CardId::Dualcast)];
+    game.player.draw.clear();
+    game.player.discard.clear();
+    game.player.energy = 1;
+    game.screen = Screen::Combat;
+
+    let guardian = &mut game.combat.as_mut().unwrap().monsters[0];
+    guardian.hp = 26;
+    guardian.block = 0;
+    guardian.split_triggered = false;
+    guardian
+        .powers
+        .iter_mut()
+        .find(|power| power.id == PowerId::ModeShift)
+        .unwrap()
+        .amount = 12;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: None,
+    });
+
+    let guardian = &game.combat.as_ref().unwrap().monsters[0];
+    assert_eq!(guardian.hp, 5);
+    assert_eq!(guardian.block, 20);
+    assert!(guardian.split_triggered);
+}
+
+#[test]
 fn thinking_ahead_requires_one_hand_choice_then_confirm() {
     let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
     game.combat = Some(Combat::start(
