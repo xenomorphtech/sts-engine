@@ -341,6 +341,7 @@ impl Combat {
             slavers_collar_active,
             force_end_turn: false,
         };
+        resolve_darklings(&mut combat);
         gremlin_horn_on_kills(player, &mut combat, rng, dead_before_hourglass);
         combat
     }
@@ -7466,6 +7467,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, rng, 3);
         }
+        resolve_darklings(combat);
         gremlin_horn_on_kills(player, combat, rng, dead_before);
         flush_spore_cloud(player, combat);
         hourglass_ended_combat = combat.all_dead();
@@ -7510,6 +7512,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, rng, 3);
         }
+        resolve_darklings(combat);
         // MercuryHourglass's DamageAllEnemiesAction was queued before the
         // normal DrawCardAction. A killed Bronze Orb queues StasisPower's
         // returned card behind that draw, followed by Gremlin Horn's draw.

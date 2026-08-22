@@ -1361,6 +1361,42 @@ fn static_discharge_kills_maw_before_remaining_multiattack_hits() {
 }
 
 #[test]
+fn mercury_hourglass_finishes_an_all_half_dead_darkling_group() {
+    let mut player = Player::for_character(Character::Defect);
+    player.hp = 200;
+    player.max_hp = 200;
+    player.relics.push(RelicInstance {
+        id: RelicId::Mercury_Hourglass,
+        counter: -1,
+        used_up: false,
+    });
+    let mut rng = RngSet::generate_seeds(8945191795714220528);
+    let mut combat = Combat::start(
+        EncounterId::ThreeDarklings,
+        &mut player,
+        &mut rng,
+        41,
+        8945191795714220528,
+        20,
+    );
+    player.orbs.clear();
+    for monster in &mut combat.monsters[..2] {
+        monster.hp = 0;
+        monster.dead = false;
+        monster.half_dead = true;
+        monster.next_move = 4;
+    }
+    combat.monsters[2].hp = 1;
+    combat.monsters[2].block = 0;
+    combat.monsters[2].next_move = 4;
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    assert!(combat.all_dead());
+    assert!(combat.monsters.iter().all(|monster| monster.dead));
+}
+
+#[test]
 fn a20_beyond_proceed_starts_second_boss_without_healing() {
     let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
     game.dungeon.act = Act::Beyond;
