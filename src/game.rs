@@ -835,6 +835,37 @@ mod event_fidelity_tests {
     }
 
     #[test]
+    fn seek_grid_sorts_by_java_localized_card_name() {
+        let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        let mut cold_snap = Card::new(CardId::Cold_Snap);
+        cold_snap.upgrade();
+        game.player.draw = vec![cold_snap, Card::new(CardId::Conserve_Battery)];
+        game.grid = Some(GridSelect {
+            kind: GridKind::DrawPileToHand,
+            needed: 1,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: false,
+            return_screen: None,
+            can_cancel: true,
+            immediate: false,
+        });
+        game.screen = Screen::Grid;
+
+        let labels = game
+            .legal_actions()
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::Choose { label, .. } => label,
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["Conserve Battery", "Cold Snap"]);
+    }
+
+    #[test]
     fn special_screens_publish_java_skip_potion_and_terminal_controls() {
         let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
         game.discovery_combat = true;
@@ -8116,11 +8147,40 @@ fn seek_draw_grid_indices(draw: &[Card]) -> Vec<usize> {
         }
     }
     fn grid_name(c: &Card) -> String {
-        let mut name = match c.sts_id() {
-            "Strike_B" | "Strike_R" | "Strike_G" | "Strike_P" => "Strike".into(),
-            "Defend_B" | "Defend_R" | "Defend_G" | "Defend_P" => "Defend".into(),
-            "AscendersBane" => "Ascender's Bane".into(),
-            other => other.replace('_', " "),
+        // CardNameComparator uses the localized AbstractCard.name, which is
+        // not always derived from the internal card ID. Keep the aliases that
+        // can enter a Defect run (its own pool, colorless/special cards, and
+        // curses) here so Seek publishes Java's exact grid order.
+        let mut name = match c.id {
+            CardId::All_For_One => "All for One".into(),
+            CardId::Auto_Shields => "Auto-Shields".into(),
+            CardId::BootSequence => "Boot Sequence".into(),
+            CardId::Gash => "Claw".into(),
+            CardId::Conserve_Battery => "Charge Battery".into(),
+            CardId::Defend_B | CardId::Defend_R | CardId::Defend_G | CardId::Defend_P => {
+                "Defend".into()
+            }
+            CardId::Lockon => "Bullseye".into(),
+            CardId::Steam_Power => "Overclock".into(),
+            CardId::Redo => "Recursion".into(),
+            CardId::Steam => "Steam Barrier".into(),
+            CardId::Strike_B | CardId::Strike_R | CardId::Strike_G | CardId::Strike_P => {
+                "Strike".into()
+            }
+            CardId::Turbo => "TURBO".into(),
+            CardId::Undo => "Equilibrium".into(),
+            CardId::Ghostly => "Apparition".into(),
+            CardId::HandOfGreed => "Hand of Greed".into(),
+            CardId::Jack_Of_All_Trades => "Jack of All Trades".into(),
+            CardId::PanicButton => "Panic Button".into(),
+            CardId::RitualDagger => "Ritual Dagger".into(),
+            CardId::ThroughViolence => "Through Violence".into(),
+            CardId::BecomeAlmighty => "Become Almighty".into(),
+            CardId::FameAndFortune => "Fame and Fortune".into(),
+            CardId::LiveForever => "Live Forever".into(),
+            CardId::AscendersBane => "Ascender's Bane".into(),
+            CardId::CurseOfTheBell => "Curse of the Bell".into(),
+            _ => c.sts_id().replace('_', " "),
         };
         // AbstractCard.upgradeName appends `+`, and CardNameComparator sorts
         // the displayed name. This orders Defragment before Defragment+ even
