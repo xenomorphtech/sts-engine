@@ -765,11 +765,6 @@ pub fn spawn_monster(id: MonsterId, rng: &mut RngSet, ascension: i32) -> Monster
         // OrbWalker ctor: super(..., monsterHpRng.random(90, 96)) then setHp.
         let _ = rng.monster_hp.random_range(90, 96);
     }
-    if id == MonsterId::Reptomancer {
-        // Constructor passes a first random HP into super, then setHp rolls
-        // the ascension range a second time.
-        let _ = rng.monster_hp.random_range(180, 190);
-    }
     if id == MonsterId::TorchHead {
         let _ = rng.monster_hp.random_range(38, 40);
     }
