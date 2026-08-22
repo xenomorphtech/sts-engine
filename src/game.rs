@@ -112,6 +112,7 @@ enum PendingPotionAction {
         target: usize,
         damage: i32,
     },
+    Block(i32),
     Heal(i32),
 }
 
@@ -3038,11 +3039,20 @@ impl Game {
                     }
                 }
                 PotionId::Block => {
-                    self.player.block += if self.player.has_relic(RelicId::SacredBark) {
+                    let amount = if self.player.has_relic(RelicId::SacredBark) {
                         24
                     } else {
                         12
                     };
+                    if self.screen == Screen::Combat {
+                        self.player.block += amount;
+                    } else {
+                        // BlockPotion.use addToBot(GainBlockAction). An open
+                        // DiscoveryAction keeps it queued until the card choice
+                        // resolves (rank 77, Power Potion then Block Potion).
+                        self.pending_potion_actions
+                            .push(PendingPotionAction::Block(amount));
+                    }
                 }
                 PotionId::Ancient => {
                     // AncientPotion.use: ArtifactPower(getPotency()=1) in combat only.
@@ -3962,6 +3972,9 @@ impl Game {
                         self.pending_potion_actions.clear();
                         self.finish_combat();
                     }
+                }
+                PendingPotionAction::Block(amount) => {
+                    self.player.block += amount;
                 }
                 PendingPotionAction::Heal(amount) => {
                     self.heal_player(amount);

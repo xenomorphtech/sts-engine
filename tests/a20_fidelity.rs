@@ -551,6 +551,55 @@ fn fire_potion_waits_for_colorless_discovery_and_keeps_relic_action_order() {
 }
 
 #[test]
+fn block_potion_waits_for_power_potion_discovery() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        14,
+        game.seed,
+        20,
+    ));
+    game.player.potions = vec![
+        PotionInstance {
+            id: PotionId::Power,
+            slot: 0,
+        },
+        PotionInstance {
+            id: PotionId::Block,
+            slot: 1,
+        },
+    ];
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 0,
+        target_index: None,
+    });
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 1,
+        target_index: None,
+    });
+
+    assert_eq!(game.screen, Screen::CardReward);
+    assert_eq!(game.player.block, 0);
+
+    game.step(&Action::Choose {
+        index: 0,
+        label: None,
+        x: None,
+        y: None,
+        room: None,
+    });
+
+    assert_eq!(game.screen, Screen::Combat);
+    assert_eq!(game.player.block, 12);
+}
+
+#[test]
 fn upgraded_seek_adds_selected_cards_to_hand_in_click_order() {
     let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
     game.combat = Some(Combat::start(
