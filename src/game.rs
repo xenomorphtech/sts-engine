@@ -248,6 +248,7 @@ mod shop_label_tests {
 #[cfg(test)]
 mod event_fidelity_tests {
     use super::*;
+    use crate::ids::MonsterId;
 
     fn start_named_event(id: &str) -> Game {
         let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
@@ -320,6 +321,103 @@ mod event_fidelity_tests {
         dead_adventurer.dungeon.special_one_time.clear();
         dead_adventurer.start_event();
         assert_eq!(event_verbs(&dead_adventurer), ["Search", "Leave"]);
+    }
+
+    #[test]
+    fn beggar_duplicator_colosseum_and_heart_follow_java_event_controls() {
+        let mut beggar = start_named_event("Beggar");
+        let gold_before = beggar.player.gold;
+        beggar.step(&Action::Choose {
+            index: 0,
+            label: Some("[Offer Gold]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(beggar.player.gold, gold_before - 75);
+        assert_eq!(event_verbs(&beggar), ["Continue"]);
+        beggar.step(&Action::Choose {
+            index: 0,
+            label: Some("[Continue]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(beggar.screen, Screen::Grid);
+        assert!(!beggar.legal_actions().contains(&Action::Skip));
+
+        let mut duplicator = start_named_event("Duplicator");
+        assert_eq!(event_verbs(&duplicator), ["Pray", "Leave"]);
+        duplicator.step(&Action::Choose {
+            index: 0,
+            label: Some("[Pray]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(duplicator.screen, Screen::Grid);
+        assert!(!duplicator.legal_actions().contains(&Action::Skip));
+
+        let mut colosseum = start_named_event("Colosseum");
+        colosseum.current_room = RoomType::Event;
+        colosseum.step(&Action::Choose {
+            index: 0,
+            label: Some("[Continue]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        colosseum.step(&Action::Choose {
+            index: 0,
+            label: Some("[Fight]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        for monster in &mut colosseum.combat.as_mut().expect("first fight").monsters {
+            monster.hp = 0;
+            monster.dead = true;
+        }
+        colosseum.finish_combat();
+        assert_eq!(
+            colosseum.event.as_ref().expect("colosseum").options,
+            [
+                "[COWARDICE] Escape.",
+                "[VICTORY] A powerful fight with many rewards."
+            ]
+        );
+        colosseum.step(&Action::Choose {
+            index: 1,
+            label: Some("[VICTORY] A powerful fight with many rewards.".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(
+            colosseum
+                .combat
+                .as_ref()
+                .expect("second fight")
+                .monsters
+                .iter()
+                .map(|monster| monster.id)
+                .collect::<Vec<_>>(),
+            [MonsterId::Taskmaster, MonsterId::GremlinNob]
+        );
+        assert_eq!(colosseum.rewards.len(), 3);
+
+        let mut heart = start_named_event("SpireHeart");
+        heart.event.as_mut().expect("heart").options = vec!["[Continue]".into()];
+        for label in ["[Continue]", "[Attack] #b???", "[Continue]"] {
+            heart.step(&Action::Choose {
+                index: 0,
+                label: Some(label.into()),
+                x: None,
+                y: None,
+                room: None,
+            });
+        }
+        assert_eq!(event_verbs(&heart), ["Sleep"]);
     }
 
     #[test]
@@ -3267,7 +3365,10 @@ impl Game {
             self.rewards.clear();
             self.combat = None;
             if let Some(event) = self.event.as_mut() {
-                event.options = vec!["[Flee]".into(), "[Fight]".into()];
+                event.options = vec![
+                    "[COWARDICE] Escape.".into(),
+                    "[VICTORY] A powerful fight with many rewards.".into(),
+                ];
             }
             self.screen = Screen::Event;
             return;
@@ -4920,7 +5021,7 @@ impl Game {
                 opts.push("[Leave]".into());
                 opts
             }
-            "MindBloom" => vec!["[I am War]".into(), "[I am Awake]".into(), "[I am Rich]".into()],
+            "MindBloom" => mind_bloom_options(self.dungeon.floor),
             "World of Goop" => {
                 let (lo, hi) = if self.ascension >= 15 { (35, 75) } else { (20, 50) };
                 let mut loss = self.rng.misc.random_range(lo, hi);
@@ -5020,6 +5121,10 @@ impl Game {
             "Beggar" => vec![
                 "[Offer Gold] #y75 #yGold: #gRemove #ga #gcard #gfrom #gyour #gdeck."
                     .into(),
+                "[Leave]".into(),
+            ],
+            "Duplicator" => vec![
+                "[Pray] #gDuplicate #ga #gcard #gin #gyour #gdeck.".into(),
                 "[Leave]".into(),
             ],
             "Living Wall" => {
@@ -5675,7 +5780,7 @@ impl Game {
                         event.options = vec![if go_to_ending {
                             "[Approach Door]".into()
                         } else {
-                            "[Continue]".into()
+                            "[Sleep]".into()
                         }];
                     }
                 }
@@ -5716,6 +5821,23 @@ impl Game {
                         event.screen = 2;
                     }
                     self.start_combat_encounter(EncounterId::ColosseumSlavers);
+                }
+                2 if *index == 1 => {
+                    // POST_COMBAT/VICTORY: seed both rewards before entering
+                    // the Taskmaster + Gremlin Nob event fight.
+                    self.rewards.clear();
+                    if let Some(id) = self.take_relic(RelicTier::RARE) {
+                        self.add_relic_to_rewards(id);
+                    }
+                    if let Some(id) = self.take_relic(RelicTier::UNCOMMON) {
+                        self.add_relic_to_rewards(id);
+                    }
+                    self.add_gold_to_rewards(100);
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 3;
+                        event.options.clear();
+                    }
+                    self.start_combat_encounter(EncounterId::ColosseumNobs);
                 }
                 _ => self.open_map(),
             }
@@ -6208,6 +6330,51 @@ impl Game {
                 }
             } else {
                 self.open_map();
+            }
+            return;
+        }
+        if id == "Beggar" {
+            match screen {
+                0 if *index == 0 => {
+                    self.player.gold = (self.player.gold - 75).max(0);
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec!["[Continue]".into()];
+                    }
+                }
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Continue]".into()];
+                    }
+                }
+                1 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Continue]".into()];
+                    }
+                    self.open_grid(GridKind::Purge, 1, true);
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Duplicator" {
+            match screen {
+                0 if *index == 0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                    self.open_grid(GridKind::Copy, 1, true);
+                }
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                _ => self.open_map(),
             }
             return;
         }
@@ -7784,4 +7951,28 @@ fn seek_draw_grid_indices(draw: &[Card]) -> Vec<usize> {
         sa.cmp(&sb)
     });
     idxs
+}
+
+/// MindBloom's third option follows `AbstractDungeon.floorNum % 50`, including
+/// the endless-mode cycle behavior retained by the base game.
+fn mind_bloom_options(floor: i32) -> Vec<String> {
+    let third = if floor % 50 <= 40 {
+        "[I am Rich]"
+    } else {
+        "[I am Healthy]"
+    };
+    vec!["[I am War]".into(), "[I am Awake]".into(), third.into()]
+}
+
+#[cfg(test)]
+mod mind_bloom_tests {
+    use super::mind_bloom_options;
+
+    #[test]
+    fn third_option_switches_from_rich_to_healthy_after_floor_forty() {
+        assert_eq!(mind_bloom_options(40)[2], "[I am Rich]");
+        assert_eq!(mind_bloom_options(41)[2], "[I am Healthy]");
+        assert_eq!(mind_bloom_options(91)[2], "[I am Healthy]");
+        assert_eq!(mind_bloom_options(100)[2], "[I am Rich]");
+    }
 }

@@ -5786,6 +5786,11 @@ fn apply_card_effect(
             on_shuffle_relics(player);
             let seed = rng.shuffle.random_long();
             shuffle_java(&mut player.discard, seed);
+            for card in &mut player.discard {
+                // CardTransferTransition(DRAW_PILE).complete clears the
+                // turn-only attributes of every discard card it transfers.
+                card.cost_for_turn = card.cost;
+            }
             player.draw.append(&mut player.discard);
             while !player.hand.is_empty() {
                 let i = rng.card_random.random_int(player.hand.len() as i32 - 1) as usize;
@@ -7309,6 +7314,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             .iter()
             .any(|m| m.alive() && m.block < 3 && m.hp <= 3 - m.block);
     let mut hourglass_ended_combat = false;
+    let mut hourglass_horn_after_draw = 0;
     if hourglass_before_loop {
         let dead_before = gremlin_horn_death_count(combat);
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
@@ -7358,9 +7364,24 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         for m in combat.monsters.iter_mut().filter(|m| m.alive()) {
             deal_thorns(m, rng, 3);
         }
-        gremlin_horn_on_kills(player, combat, rng, dead_before);
+        // MercuryHourglass's DamageAllEnemiesAction was queued before the
+        // normal DrawCardAction. A killed Bronze Orb queues StasisPower's
+        // returned card behind that draw, followed by Gremlin Horn's draw.
+        for monster in combat.monsters.iter_mut().filter(|m| m.dead) {
+            if let Some(card) = monster.stasis_card.take() {
+                combat.pending_stasis_cards.push(card);
+            }
+        }
+        hourglass_horn_after_draw = gremlin_horn_trigger_count(player, combat, dead_before);
         flush_spore_cloud(player, combat);
         if combat.all_dead() {
+            flush_pending_stasis(player, combat);
+            resolve_gremlin_horn_triggers(
+                player,
+                combat,
+                rng,
+                hourglass_horn_after_draw,
+            );
             return;
         }
     }
@@ -7402,6 +7423,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // Loop's orb passive is queued behind the turn draw. If it kills a
     // Bronze Orb, StasisPower returns the captured card after those draws.
     flush_pending_stasis(player, combat);
+    resolve_gremlin_horn_triggers(player, combat, rng, hourglass_horn_after_draw);
     // MayhemPower.atStartOfTurn queues a wrapper addToBot whose update
     // addToBot PlayTopCardAction. DrawCardAction is queued after the wrapper,
     // so the autoplay is after the turn's draw (seed 533 Genetic Algorithm).

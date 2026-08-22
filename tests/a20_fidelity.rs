@@ -122,9 +122,11 @@ fn reboot_clears_mummified_hand_costs_when_moving_hand_to_draw() {
     ));
     let mut discounted = Card::new(CardId::Compile_Driver);
     discounted.cost_for_turn = 0;
+    let mut discarded_discounted = Card::new(CardId::Compile_Driver);
+    discarded_discounted.cost_for_turn = 0;
     game.player.hand = vec![Card::new(CardId::Reboot), discounted];
     game.player.draw.clear();
-    game.player.discard.clear();
+    game.player.discard = vec![discarded_discounted];
     game.player.energy = 3;
     game.screen = Screen::Combat;
 
@@ -133,14 +135,16 @@ fn reboot_clears_mummified_hand_costs_when_moving_hand_to_draw() {
         target_index: None,
     });
 
-    let compile = game
+    let compiles = game
         .player
         .hand
         .iter()
-        .find(|card| card.id == CardId::Compile_Driver)
-        .expect("Reboot redraws Compile Driver");
-    assert_eq!(compile.cost_for_turn, compile.cost);
-    assert_eq!(compile.cost_for_turn, 1);
+        .filter(|card| card.id == CardId::Compile_Driver)
+        .collect::<Vec<_>>();
+    assert_eq!(compiles.len(), 2);
+    assert!(compiles
+        .iter()
+        .all(|card| card.cost_for_turn == card.cost && card.cost_for_turn == 1));
 }
 
 #[test]
@@ -624,6 +628,69 @@ fn bronze_orb_uses_its_ascension_nine_hp_range() {
         saw_upper_bound |= monster.hp == 60;
     }
     assert!(saw_upper_bound);
+}
+
+#[test]
+fn hourglass_returns_stasis_card_between_turn_draw_and_gremlin_horn_draw() {
+    let mut rng = RngSet::generate_seeds(31);
+    let mut player = Player::defect();
+    player.relics.push(RelicInstance {
+        id: RelicId::Mercury_Hourglass,
+        counter: -1,
+        used_up: false,
+    });
+    player.relics.push(RelicInstance {
+        id: RelicId::Gremlin_Horn,
+        counter: -1,
+        used_up: false,
+    });
+    let mut combat = Combat::start(EncounterId::TwoLouse, &mut player, &mut rng, 33, 31, 20);
+    player.orbs.clear();
+    player.hand.clear();
+    player.discard.clear();
+    player.exhaust.clear();
+    player.draw = [
+        CardId::Doom_and_Gloom,
+        CardId::Barrage,
+        CardId::Defend_B,
+        CardId::AscendersBane,
+        CardId::Strike_B,
+        CardId::Zap,
+    ]
+    .into_iter()
+    .map(Card::new)
+    .collect();
+
+    combat.monsters = vec![
+        combat::spawn_monster(MonsterId::BronzeOrb, &mut rng, 20),
+        combat::spawn_monster(MonsterId::BronzeAutomaton, &mut rng, 20),
+    ];
+    let stasis_orb = &mut combat.monsters[0];
+    stasis_orb.hp = 3;
+    stasis_orb.block = 0;
+    stasis_orb.next_move = 2;
+    stasis_orb.stasis_card = Some(Card::new(CardId::Glacier));
+    for monster in &mut combat.monsters {
+        if monster.id == MonsterId::BronzeAutomaton {
+            monster.next_move = 99;
+        }
+    }
+
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+
+    assert_eq!(
+        player.hand.iter().map(|card| card.id).collect::<Vec<_>>(),
+        [
+            CardId::Zap,
+            CardId::Strike_B,
+            CardId::AscendersBane,
+            CardId::Defend_B,
+            CardId::Barrage,
+            CardId::Glacier,
+            CardId::Doom_and_Gloom,
+        ]
+    );
+    assert_eq!(player.energy, player.energy_master + 1);
 }
 
 #[test]

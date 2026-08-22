@@ -391,6 +391,22 @@ def run_seed(args, seed: int) -> tuple[bool, dict]:
         java_states.append(java)
 
         for step in range(args.max_actions + 1):
+            if args.compare_block:
+                java_block = ((java.get("state") or {}).get("player") or {}).get("block")
+                rust_block = (rust.get("state") or {}).get("block")
+                if rust_block != java_block:
+                    return False, strict_failure(
+                        seed,
+                        step,
+                        "block",
+                        rust,
+                        java,
+                        {
+                            "rust_block": rust_block,
+                            "java_block": java_block,
+                            "last_java_commands": java_commands[-20:],
+                        },
+                    )
             if args.compare_energy:
                 java_energy = ((java.get("state") or {}).get("player") or {}).get("energy")
                 rust_energy = rust.get("energy")
@@ -545,6 +561,11 @@ def parse_args():
     parser.add_argument("--oracle-dir", type=Path)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-actions", type=int, default=5000)
+    parser.add_argument(
+        "--compare-block",
+        action="store_true",
+        help="stop at the first player-block mismatch for diagnostics",
+    )
     parser.add_argument(
         "--compare-energy",
         action="store_true",
