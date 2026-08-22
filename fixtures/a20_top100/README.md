@@ -5,12 +5,12 @@ any Java replay or parity result was inspected.
 
 ## Source cohort
 
-- Engine commit: `1562ddb`
+- Engine commit: `ca5729a`
 - Character: Defect
 - Ascension: 20
 - Unlock profile: `fixture`
 - Random seed source: `20260822`
-- Candidate count: 10,000
+- Candidate count: 1,000
 - Maximum actions per run: 5,000
 - Concurrent Rust workers: 12
 
@@ -20,14 +20,17 @@ The source command was:
 target/release/sts-htn \
   --character DEFECT \
   --a20 \
-  --count 10000 \
+  --count 1000 \
   --concurrent 12 \
-  --seed-source 20260822
+  --seed-source 20260822 \
+  --max-steps 5000 \
+  --fixture-jsonl /tmp/sts-a20-1000-20260822-ca5729a.jsonl
 ```
 
-The run completed with 56 wins, 9,944 losses, zero capped runs, and zero
-stopped runs. Its full compact report had SHA-256
-`48c7844961599b812920cfeabedf862a9981e96922e919590dfdae9bf01ddeb5`.
+The run completed with 995 losses and zero capped runs. Five runs reached a
+terminal `Victory` room on floor 52; the current batch runner labels those
+terminal states `stopped`. The complete 1,000-state fixture JSONL had SHA-256
+`640de70b48b368b9b460f71e36d9007510aab33fc7be693899d9ac704dfd7904`.
 
 ## Frozen ranking
 
@@ -37,8 +40,10 @@ The deterministic rank is:
 2. greater `floor_achieved` first;
 3. smaller signed numeric seed first.
 
-The selected cohort contains all 56 wins (floor 52) and the first 44 losses at
-floor 51. `selection.tsv` records the rank, Rust outcome, floor, and final live
+The selected cohort contains all five terminal Victory/stopped runs at floor
+52, all 24 losses at floor 51, all 59 losses at floor 50, all three losses at
+floor 48, the floor-47 loss, all seven floor-46 losses, and the first floor-45
+loss. `selection.tsv` records the rank, raw Rust outcome, floor, and final live
 monsters. `seed_list.txt` is the authoritative replay order.
 
 Do not replace members based on Java results. A seed remains in the cohort even
@@ -71,7 +76,7 @@ subset.
 The generated gzip JSONL oracle corpus is stored outside Git under:
 
 ```text
-../exact-text-sim/runtime/oracles/defect/a20-rust-top100-20260822/
+../exact-text-sim/runtime/oracles/defect/a20-rust-top100-from1k-20260822/
 ```
 
 Run `sts-htn-rpc`, then use `tools/lockstep_exactsim.py` to inspect the first

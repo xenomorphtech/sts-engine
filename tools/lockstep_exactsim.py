@@ -61,6 +61,13 @@ def bracket_verb(label) -> str | None:
 
 def neow_label_matches(kind: str, java_label) -> bool:
     label = normalized_label(java_label)
+    if kind == "ThreeEnemyKill":
+        return (
+            ("3" in label or "three" in label)
+            and ("enemy" in label or "combat" in label)
+            and "1" in label
+            and "hp" in label
+        )
     required = {
         "ThreeCards": ("choose", "card"),
         "RandomRareCard": ("random", "rare", "card"),
@@ -71,7 +78,6 @@ def neow_label_matches(kind: str, java_label) -> bool:
         "ThreePotions": ("potion",),
         "RandomCommonRelic": ("common", "relic"),
         "TenHp": ("max", "hp"),
-        "ThreeEnemyKill": ("3", "enemy", "1", "hp"),
         "HundredGold": ("100", "gold"),
         "RandomColorless2": ("rare", "colorless", "card"),
         "RemoveTwo": ("remove", "2", "card"),
@@ -120,6 +126,31 @@ def action_match_reason(rust: dict, java: dict) -> str | None:
     java_card_id = java.get("_card_id") or java.get("card_id")
     if same_index and java_card_id and compact_label(rust_label) == compact_label(java_card_id):
         return "card-id"
+    rust_compact = compact_label(rust_label)
+    java_compact = compact_label(java_label)
+    if same_index and rust_compact.removesuffix("+") == java_compact.removesuffix("+"):
+        return "upgrade-display-name"
+    sts_display_aliases = {
+        "boot": "theboot",
+        "conservebattery": "chargebattery",
+        "fairypotion": "fairyinabottle",
+        "frozenegg2": "frozenegg",
+        "gash": "claw",
+        "lockon": "bullseye",
+        "moltenegg2": "moltenegg",
+        "redo": "recursion",
+        "sling": "slingofcourage",
+        "steam": "steambarrier",
+        "steampower": "overclock",
+        "steroidpotion": "flexpotion",
+        "toxicegg2": "toxicegg",
+    }
+    if (
+        same_index
+        and sts_display_aliases.get(rust_compact.removesuffix("+"))
+        == java_compact.removesuffix("+")
+    ):
+        return "sts-id-display-name"
     if isinstance(rust_label, str) and same_index and neow_label_matches(rust_label, java_label):
         return "neow-kind-label"
 
@@ -268,9 +299,14 @@ def compact_java_observation(observation: dict) -> dict:
         "floor": dungeon.get("floor"),
         "hp": player.get("current_hp"),
         "gold": player.get("gold"),
+        "energy": player.get("energy"),
         "block": player.get("block"),
         "deck": [card.get("id") for card in player.get("master_deck", [])],
         "relics": [relic.get("id") for relic in player.get("relics", [])],
+        "relic_counters": [
+            [relic.get("id"), relic.get("counter")]
+            for relic in player.get("relics", [])
+        ],
         "hand": [card.get("id") for card in combat.get("hand", [])],
         "monsters": [
             [monster.get("id"), monster.get("current_hp")]
@@ -282,7 +318,18 @@ def compact_java_observation(observation: dict) -> dict:
 def compact_rust_observation(observation: dict) -> dict:
     return {
         key: observation.get(key)
-        for key in ("seed", "steps", "done", "screen", "room", "decision", "legal_actions", "state")
+        for key in (
+            "seed",
+            "steps",
+            "done",
+            "screen",
+            "room",
+            "energy",
+            "hand_costs_for_turn",
+            "decision",
+            "legal_actions",
+            "state",
+        )
     }
 
 
@@ -297,6 +344,16 @@ def strict_failure(seed: int, step: int, kind: str, rust: dict, java: dict, deta
         "rust": compact_rust_observation(rust),
         "java": compact_java_observation(java),
     }
+
+
+def terminally_aligned(rust: dict, java: dict) -> bool:
+    """Return true when both RPCs have published their terminal run state."""
+    if not rust.get("done"):
+        return False
+    java_legal = java.get("legal_actions", [])
+    return not java_legal or (
+        java.get("boundary") == "death" and java_legal == [{"op": "quit"}]
+    )
 
 
 def run_seed(args, seed: int) -> tuple[bool, dict]:
@@ -328,10 +385,23 @@ def run_seed(args, seed: int) -> tuple[bool, dict]:
 
         for step in range(args.max_actions + 1):
             java_legal = enriched_java_actions(java)
-            mapping, legal_error = transform_legal_actions(rust.get("legal_actions", []), java_legal)
-            if legal_error is not None:
-                legal_error["java_executor_actions"] = java_legal
-                return False, strict_failure(seed, step, "legal_actions", rust, java, legal_error)
+            terminal = rust.get("decision") is None and terminally_aligned(rust, java)
+            if terminal:
+                # Java's executor still permits hidden potion discards at the
+                # death boundary. They are irrelevant once both simulations
+                # have published the same terminal state, so do not require a
+                # legal-action bijection with Rust's sole Quit action.
+                mapping = None
+            else:
+                mapping, legal_error = transform_legal_actions(
+                    rust.get("legal_actions", []), java_legal
+                )
+                if legal_error is not None:
+                    legal_error["java_executor_actions"] = java_legal
+                    legal_error["last_java_commands"] = java_commands[-20:]
+                    return False, strict_failure(
+                        seed, step, "legal_actions", rust, java, legal_error
+                    )
 
             comparison = request(
                 args.rust_rpc,
@@ -356,7 +426,7 @@ def run_seed(args, seed: int) -> tuple[bool, dict]:
 
             decision = rust.get("decision")
             if decision is None:
-                if rust.get("done") and not java.get("legal_actions"):
+                if terminal:
                     if args.oracle_dir is not None:
                         write_oracle(args.oracle_dir, seed, java_states, java_commands)
                     return True, {

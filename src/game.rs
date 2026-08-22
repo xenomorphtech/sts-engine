@@ -128,6 +128,7 @@ pub struct Game {
     pub potion_blizzard: i32,
     pub card_blizz: i32,
     pub pending_cards: Vec<Card>,
+    pending_neow_curse: bool,
     pending_gold: i32,
     pending_rest_heal: i32,
     pending_equip: Vec<RelicId>,
@@ -143,18 +144,30 @@ pub struct Game {
     shop: ShopState,
     rest_smithing: bool,
     rest_smith_picked: bool,
+    rest_smith_pending: Option<usize>,
     rest_selected: bool,
     has_ruby_key: bool,
     has_emerald_key: bool,
     has_sapphire_key: bool,
     final_act_available: bool,
     grid: Option<GridSelect>,
+    /// Java reuses one GridSelectConfirmButton for the whole run. Normal grid
+    /// opens hide it without resetting `isDisabled`, so a prior preview can
+    /// leave a (usually unusable) Proceed action visible on the next grid.
+    grid_confirm_disabled: bool,
     exhaust_select: bool,
     put_on_deck_select: bool,
     gambling_select: bool,
     memories_select: bool,
     pending_shop_purge: Option<usize>,
+    /// AbstractPotion forbids use and discard while WeMeetAgain remains the
+    /// current room event, including its map screen after the event closes.
+    we_meet_again_room: bool,
     discovery_combat: bool,
+    /// CardRewardScreen.customCombatOpen's `skippable` argument. Typed
+    /// DiscoveryAction instances (Attack/Skill/Power Potions) pass true;
+    /// ordinary Discovery and Colorless Potion pass false.
+    discovery_skippable: bool,
     discovery_typ: Option<crate::ids::CardType>,
     discovery_colorless: bool,
     discovery_copies: usize,
@@ -232,6 +245,474 @@ mod shop_label_tests {
     }
 }
 
+#[cfg(test)]
+mod event_fidelity_tests {
+    use super::*;
+
+    fn start_named_event(id: &str) -> Game {
+        let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        *game.dungeon.event_list = vec![id.into()];
+        *game.dungeon.shrine_list = vec![id.into()];
+        game.dungeon.special_one_time.clear();
+        game.start_event();
+        assert_eq!(game.event.as_ref().map(|event| event.id.as_str()), Some(id));
+        game
+    }
+
+    fn event_verbs(game: &Game) -> Vec<String> {
+        game.event
+            .as_ref()
+            .expect("event")
+            .options
+            .iter()
+            .map(|label| {
+                label
+                    .strip_prefix('[')
+                    .and_then(|label| label.split_once(']'))
+                    .map(|(verb, _)| verb.to_string())
+                    .unwrap_or_else(|| label.clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn common_shrine_and_exordium_events_publish_java_intro_verbs() {
+        assert_eq!(event_verbs(&start_named_event("Liars Game")), ["Agree", "Disagree"]);
+        assert_eq!(
+            event_verbs(&start_named_event("Accursed Blacksmith")),
+            ["Forge", "Rummage", "Leave"]
+        );
+        assert_eq!(event_verbs(&start_named_event("Purifier")), ["Pray", "Leave"]);
+        assert_eq!(
+            event_verbs(&start_named_event("Transmorgrifier")),
+            ["Pray", "Leave"]
+        );
+        assert_eq!(
+            event_verbs(&start_named_event("Upgrade Shrine")),
+            ["Pray", "Leave"]
+        );
+        assert_eq!(
+            event_verbs(&start_named_event("World of Goop")),
+            ["Gather Gold", "Leave It"]
+        );
+        assert_eq!(event_verbs(&start_named_event("Cursed Tome")), ["Read", "Leave"]);
+        assert_eq!(event_verbs(&start_named_event("Beggar")), ["Offer Gold", "Leave"]);
+        assert_eq!(
+            event_verbs(&start_named_event("Mysterious Sphere")),
+            ["Open Sphere", "Leave"]
+        );
+        assert_eq!(
+            start_named_event("Masked Bandits")
+                .event
+                .expect("event")
+                .options,
+            ["[Pay] #rLose #rALL of your #yGold.", "[Fight!]"]
+        );
+        assert_eq!(
+            event_verbs(&start_named_event("The Mausoleum")),
+            ["Open Coffin", "Leave"]
+        );
+
+        let mut dead_adventurer = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        dead_adventurer.dungeon.floor = 7;
+        *dead_adventurer.dungeon.event_list = vec!["Dead Adventurer".into()];
+        *dead_adventurer.dungeon.shrine_list = vec!["Dead Adventurer".into()];
+        dead_adventurer.dungeon.special_one_time.clear();
+        dead_adventurer.start_event();
+        assert_eq!(event_verbs(&dead_adventurer), ["Search", "Leave"]);
+    }
+
+    #[test]
+    fn knowing_skull_and_back_to_basics_publish_java_controls() {
+        let mut skull = start_named_event("Knowing Skull");
+        skull.step(&Action::Choose {
+            index: 0,
+            label: Some("[Continue]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(
+            event_verbs(&skull),
+            ["A Pick Me Up?", "Riches?", "Success?", "How do I leave?"]
+        );
+
+        let mut basics = start_named_event("Back to Basics");
+        basics.step(&Action::Choose {
+            index: 0,
+            label: Some("[Elegance]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(basics.screen, Screen::Grid);
+        assert!(basics.legal_actions().contains(&Action::Skip));
+
+        let mut designer = start_named_event("Designer");
+        designer.step(&Action::Choose {
+            index: 0,
+            label: Some("[Continue]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(event_verbs(&designer)[0], "Adjustments");
+    }
+
+    #[test]
+    fn nloth_tomb_and_peace_pipe_publish_java_choices() {
+        let mut nloth = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        nloth.player.relics.push(RelicInstance {
+            id: RelicId::Velvet_Choker,
+            counter: -1,
+            used_up: false,
+        });
+        *nloth.dungeon.event_list = vec!["N'loth".into()];
+        *nloth.dungeon.shrine_list = vec!["N'loth".into()];
+        nloth.dungeon.special_one_time.clear();
+        nloth.start_event();
+        let options = &nloth.event.as_ref().expect("event").options;
+        assert_eq!(options.len(), 3);
+        assert!(options.iter().any(|option| option.starts_with("[Offer: Cracked Core]")));
+        assert!(options.iter().any(|option| option.starts_with("[Offer: Velvet Choker]")));
+        assert_eq!(options[2], "[Leave]");
+
+        let tomb = start_named_event("Tomb of Lord Red Mask");
+        assert_eq!(
+            tomb.event.as_ref().expect("event").options,
+            [
+                format!(
+                    "[Offer: {} Gold] #rLose #rall #rGold. #gObtain #ga #gRelic.",
+                    tomb.player.gold
+                ),
+                "[Leave]".into(),
+            ]
+        );
+
+        let mut rest = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        rest.player.relics.push(RelicInstance {
+            id: RelicId::Peace_Pipe,
+            counter: -1,
+            used_up: false,
+        });
+        rest.current_room = RoomType::Rest;
+        rest.screen = Screen::Rest;
+        assert_eq!(rest.campfire_options(), ["Rest", "Smith", "Toke", "Recall"]);
+        rest.step(&Action::Choose {
+            index: 2,
+            label: Some("Toke".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(rest.screen, Screen::Grid);
+        assert!(rest.legal_actions().contains(&Action::Skip));
+
+        let mut lift = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        lift.gain_relic(RelicId::Girya);
+        lift.current_room = RoomType::Rest;
+        lift.screen = Screen::Rest;
+        assert!(lift.campfire_options().contains(&"Lift"));
+        lift.step(&Action::Choose {
+            index: 2,
+            label: Some("Lift".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(
+            lift.player
+                .relics
+                .iter()
+                .find(|relic| relic.id == RelicId::Girya)
+                .expect("girya")
+                .counter,
+            1
+        );
+        assert!(lift.rest_selected);
+    }
+
+    #[test]
+    fn a20_woman_in_blue_leave_loses_ceil_five_percent_max_hp() {
+        let mut game = start_named_event("The Woman in Blue");
+        game.player.max_hp = 73;
+        game.player.hp = 60;
+
+        game.step(&Action::Choose {
+            index: 3,
+            label: Some("[Leave]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+
+        assert_eq!(game.player.hp, 56);
+        assert_eq!(event_verbs(&game), ["Leave"]);
+    }
+
+    #[test]
+    fn we_meet_again_keeps_potions_locked_after_opening_the_map() {
+        let mut game = start_named_event("WeMeetAgain");
+        game.player.potions[0].id = PotionId::GamblersBrew;
+        game.open_map();
+
+        assert!(!game
+            .legal_actions()
+            .iter()
+            .any(|action| matches!(action, Action::Potion { .. })));
+    }
+
+    #[test]
+    fn event_transform_of_a_curse_stays_in_the_vanilla_curse_pool() {
+        let mut game = Game::new(1_146_262_684_929_551_399, Character::Defect, 20, Unlocks::fixture());
+        game.rng.reset_floor_streams(game.seed, 21);
+
+        let transformed = game.misc_transform_roll(CardId::Regret).expect("replacement curse");
+        assert_ne!(transformed, CardId::Regret);
+        assert_eq!(transformed.def().color, crate::ids::CardColor::CURSE);
+    }
+
+    #[test]
+    fn vampires_accept_replaces_starter_strikes_and_loses_max_hp() {
+        let mut game = start_named_event("Vampires");
+        let max_before = game.player.max_hp;
+        let loss = game.event.as_ref().expect("event").data[0];
+        assert_eq!(event_verbs(&game), ["Accept", "Refuse"]);
+
+        game.step(&Action::Choose {
+            index: 0,
+            label: Some("[Accept]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+
+        assert_eq!(game.player.max_hp, max_before - loss);
+        assert!(!game.player.deck.iter().any(|card| card.id == CardId::Strike_B));
+        assert_eq!(game.player.deck.iter().filter(|card| card.id == CardId::Bite).count(), 5);
+        assert_eq!(event_verbs(&game), ["Leave"]);
+    }
+
+    #[test]
+    fn a20_library_sleep_heals_twenty_percent_with_gdx_rounding() {
+        let mut game = start_named_event("The Library");
+        let expected = crate::rewards::gdx_round(game.player.max_hp as f32 * 0.2);
+        assert_eq!(game.event.as_ref().expect("event").data, [expected]);
+        game.player.hp = 1;
+
+        game.step(&Action::Choose {
+            index: 1,
+            label: Some("[Sleep]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+
+        assert_eq!(game.player.hp, 1 + expected);
+        assert_eq!(event_verbs(&game), ["Leave"]);
+    }
+
+    #[test]
+    fn liars_game_agree_defers_then_grants_gold_and_doubt() {
+        let mut game = start_named_event("Liars Game");
+        let gold_before = game.player.gold;
+        game.step(&Action::Choose {
+            index: 0,
+            label: Some("[Agree]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(event_verbs(&game), ["Continue"]);
+        assert_eq!(game.player.gold, gold_before);
+
+        game.step(&Action::Choose {
+            index: 0,
+            label: Some("[Continue]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(game.player.gold, gold_before + 150);
+        assert!(game.player.deck.iter().any(|card| card.id == CardId::Doubt));
+        assert_eq!(event_verbs(&game), ["Leave"]);
+    }
+
+    #[test]
+    fn golden_wing_destroy_is_conditional_and_pray_opens_uncancellable_purge() {
+        let mut game = start_named_event("Golden Wing");
+        assert_eq!(event_verbs(&game), ["Pray", "Leave"]);
+
+        game.player.deck.push(Card::new(CardId::Streamline));
+        *game.dungeon.event_list = vec!["Golden Wing".into()];
+        *game.dungeon.shrine_list = vec!["Golden Wing".into()];
+        game.start_event();
+        assert_eq!(event_verbs(&game), ["Pray", "Destroy", "Leave"]);
+
+        let hp_before = game.player.hp;
+        game.step(&Action::Choose {
+            index: 0,
+            label: Some("[Pray]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(game.player.hp, hp_before - 7);
+        assert_eq!(event_verbs(&game), ["Continue"]);
+        game.step(&Action::Choose {
+            index: 0,
+            label: Some("[Continue]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert_eq!(game.screen, Screen::Grid);
+        let actions = game.legal_actions();
+        assert!(!actions.contains(&Action::Proceed));
+        assert!(!actions.contains(&Action::Skip));
+    }
+
+    #[test]
+    fn moai_head_publishes_exact_jump_cost_and_heals_after_max_hp_loss() {
+        let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        game.player.max_hp = 80;
+        game.player.hp = 30;
+        *game.dungeon.event_list = vec!["The Moai Head".into()];
+        *game.dungeon.shrine_list = vec!["The Moai Head".into()];
+        game.dungeon.special_one_time.clear();
+        game.start_event();
+
+        assert_eq!(
+            game.event.as_ref().expect("event").options,
+            [
+                "[Jump Inside] #gHeal #gto #gfull #gHP. #rLose #r14 #rMax #rHP.",
+                "[Leave]",
+            ]
+        );
+        game.step(&Action::Choose {
+            index: 0,
+            label: Some("[Jump Inside]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+
+        assert_eq!((game.player.hp, game.player.max_hp), (66, 66));
+        assert_eq!(event_verbs(&game), ["Leave"]);
+
+        let mut idol_game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        idol_game.player.relics.push(RelicInstance {
+            id: RelicId::Golden_Idol,
+            counter: -1,
+            used_up: false,
+        });
+        *idol_game.dungeon.event_list = vec!["The Moai Head".into()];
+        *idol_game.dungeon.shrine_list = vec!["The Moai Head".into()];
+        idol_game.dungeon.special_one_time.clear();
+        idol_game.start_event();
+        assert_eq!(
+            idol_game.event.as_ref().expect("event").options[1],
+            "[Offer: Golden Idol] #gGain #g333 #gGold. #rLose #rGolden #rIdol."
+        );
+        let gold_before = idol_game.player.gold;
+        idol_game.step(&Action::Choose {
+            index: 1,
+            label: Some("[Offer: Golden Idol]".into()),
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert!(!idol_game.player.has_relic(RelicId::Golden_Idol));
+        assert_eq!(idol_game.player.gold, gold_before + 333);
+    }
+
+    #[test]
+    fn draw_pile_grid_labels_come_from_the_sorted_draw_pile_and_can_cancel() {
+        let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        game.player.draw = vec![Card::new(CardId::Strike_B), Card::new(CardId::Strike_B)];
+        game.grid = Some(GridSelect {
+            kind: GridKind::DrawPileToHand,
+            needed: 1,
+            confirm: false,
+            hovered: None,
+            picked: Vec::new(),
+            return_event: false,
+            return_shop: false,
+            return_screen: None,
+            can_cancel: true,
+            immediate: false,
+        });
+        game.screen = Screen::Grid;
+
+        let actions = game.legal_actions();
+        assert_eq!(
+            actions
+                .iter()
+                .filter_map(|action| match action {
+                    Action::Choose { label, .. } => label.clone(),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            ["Strike_B", "Strike_B"]
+        );
+        assert!(actions.contains(&Action::Skip));
+    }
+
+    #[test]
+    fn special_screens_publish_java_skip_potion_and_terminal_controls() {
+        let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        game.discovery_combat = true;
+        game.screen = Screen::CardReward;
+        assert!(!game.legal_actions().contains(&Action::Skip));
+
+        game.discovery_skippable = true;
+        assert!(game.legal_actions().contains(&Action::Skip));
+
+        game.discovery_combat = false;
+        game.discovery_skippable = false;
+        game.boss_relics = vec![RelicId::SacredBark];
+        game.screen = Screen::BossRelic;
+        assert!(!game.legal_actions().contains(&Action::Proceed));
+
+        game.screen = Screen::Terminal;
+        assert_eq!(game.legal_actions(), [Action::Quit]);
+    }
+
+    #[test]
+    fn combat_potions_remain_usable_on_overlays_but_fairy_does_not() {
+        let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        let combat = Combat::start(
+            EncounterId::TwoLouse,
+            &mut game.player,
+            &mut game.rng,
+            1,
+            7,
+            20,
+        );
+        game.combat = Some(combat);
+        game.player.potions[0].id = PotionId::EssenceOfDarkness;
+        game.player.potions[1].id = PotionId::Fairy;
+        game.screen = Screen::Grid;
+
+        let actions = game.legal_actions();
+        assert!(actions.contains(&Action::Potion {
+            action: PotionOp::Use,
+            slot: 0,
+            target_index: None,
+        }));
+        assert!(!actions.iter().any(|action| {
+            matches!(
+                action,
+                Action::Potion {
+                    action: PotionOp::Use,
+                    slot: 1,
+                    ..
+                }
+            )
+        }));
+    }
+}
+
 fn shop_relic_matches(id: RelicId, label: &str) -> bool {
     let sts = id.sts_id();
     label == sts || label.replace(' ', "") == sts.replace(' ', "")
@@ -276,6 +757,16 @@ fn potion_shop_name(id: crate::ids::PotionId) -> &'static str {
 pub struct NeowOption {
     pub label: String,
     pub kind: NeowKind,
+    pub drawback: NeowDrawback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NeowDrawback {
+    None,
+    TenPercentHpLoss,
+    NoGold,
+    Curse,
+    PercentDamage,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -330,6 +821,7 @@ struct GridSelect {
     return_event: bool,
     return_shop: bool,
     return_screen: Option<Screen>,
+    can_cancel: bool,
     /// ChoiceDriver.chooseGrid: forUpgrade/forTransform/forPurge wait for
     /// confirm; otherwise closeCurrentScreen after the click (BackToBasics).
     immediate: bool,
@@ -372,6 +864,7 @@ impl Game {
             potion_blizzard: 0,
             card_blizz: 5,
             pending_cards: Vec::new(),
+            pending_neow_curse: false,
             pending_gold: 0,
             pending_rest_heal: 0,
             pending_equip: Vec::new(),
@@ -391,18 +884,22 @@ impl Game {
             },
             rest_smithing: false,
             rest_smith_picked: false,
+            rest_smith_pending: None,
             rest_selected: false,
             has_ruby_key: false,
             has_emerald_key: false,
             has_sapphire_key: false,
             final_act_available,
             grid: None,
+            grid_confirm_disabled: true,
             exhaust_select: false,
             put_on_deck_select: false,
             gambling_select: false,
             memories_select: false,
             pending_shop_purge: None,
+            we_meet_again_room: false,
             discovery_combat: false,
+            discovery_skippable: false,
             discovery_typ: None,
             discovery_colorless: false,
             discovery_copies: 1,
@@ -412,6 +909,7 @@ impl Game {
         game.neow_options = vec![NeowOption {
             label: "[Talk]".into(),
             kind: NeowKind::ThreeCards,
+            drawback: NeowDrawback::None,
         }];
         game
     }
@@ -440,8 +938,15 @@ impl Game {
                     let velvet_choker_full = self.player.relics.iter().any(|r| {
                         r.id == RelicId::Velvet_Choker && r.counter >= 6
                     });
+                    let normality_full = combat.cards_played_this_turn >= 3
+                        && self
+                            .player
+                            .hand
+                            .iter()
+                            .any(|card| card.id == CardId::Normality);
                     for (i, card) in self.player.hand.iter().enumerate() {
                         if velvet_choker_full
+                            || normality_full
                             || crate::combat::status_or_curse_unplayable(card, &self.player)
                         {
                             continue;
@@ -469,29 +974,6 @@ impl Game {
                         }
                     }
                     actions.push(Action::EndTurn);
-                    for (slot, pot) in self.player.potions.iter().enumerate() {
-                        if pot.id != PotionId::Slot {
-                            if pot.id == PotionId::Fire
-                                || pot.id == PotionId::Explosive
-                                || pot.id == PotionId::Fear
-                                || pot.id == PotionId::Weak
-                            {
-                                for (t, _) in combat.living() {
-                                    actions.push(Action::Potion {
-                                        action: PotionOp::Use,
-                                        slot,
-                                        target_index: Some(t),
-                                    });
-                                }
-                            } else {
-                                actions.push(Action::Potion {
-                                    action: PotionOp::Use,
-                                    slot,
-                                    target_index: None,
-                                });
-                            }
-                        }
-                    }
                 }
             }
             Screen::Map => {
@@ -509,6 +991,7 @@ impl Game {
                 if self.rest_smithing {
                     if self.rest_smith_picked {
                         actions.push(Action::Proceed);
+                        actions.push(Action::Skip);
                     } else {
                         for (i, card) in self
                             .player
@@ -525,9 +1008,10 @@ impl Game {
                                 room: None,
                             });
                         }
-                        if actions.is_empty() {
+                        if !self.grid_confirm_disabled {
                             actions.push(Action::Proceed);
                         }
+                        actions.push(Action::Skip);
                     }
                 } else if self.rest_selected {
                     actions.push(Action::Proceed);
@@ -581,7 +1065,11 @@ impl Game {
                         });
                     }
                 }
-                actions.push(Action::Proceed);
+                actions.push(if self.shop.open {
+                    Action::Skip
+                } else {
+                    Action::Proceed
+                });
             }
             Screen::Neow | Screen::Event | Screen::Treasure | Screen::BossRelic => {
                 let n = match self.screen {
@@ -607,7 +1095,9 @@ impl Game {
                         room: None,
                     });
                 }
-                if self.screen == Screen::BossRelic {
+                if self.screen == Screen::Treasure
+                    || (self.screen == Screen::BossRelic && self.boss_relics.is_empty())
+                {
                     actions.push(Action::Proceed);
                 }
             }
@@ -619,13 +1109,18 @@ impl Game {
                     } else {
                         let cards = self.grid_card_indices(grid.kind);
                         for (i, &pile_i) in cards.iter().enumerate() {
-                            if grid.picked.contains(&pile_i) {
-                                continue;
-                            }
                             let label = match grid.kind {
                                 GridKind::DiscardToHand => {
                                     self.player.discard.get(pile_i).map(|c| c.sts_id().to_string())
                                 }
+                                GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
+                                    self.player.draw.get(pile_i).map(|c| c.sts_id().to_string())
+                                }
+                                GridKind::Library => self
+                                    .event
+                                    .as_ref()
+                                    .and_then(|event| event.library_cards.get(pile_i))
+                                    .map(|card| card.sts_id().to_string()),
                                 _ => self.player.deck.get(pile_i).map(|c| c.sts_id().to_string()),
                             };
                             actions.push(Action::Choose {
@@ -635,6 +1130,12 @@ impl Game {
                                 y: None,
                                 room: None,
                             });
+                        }
+                        if !self.grid_confirm_disabled {
+                            actions.push(Action::Proceed);
+                        }
+                        if grid.can_cancel {
+                            actions.push(Action::Skip);
                         }
                     }
                 }
@@ -682,7 +1183,9 @@ impl Game {
                         room: None,
                     });
                 }
-                if !self.toolbox_reward {
+                if !self.toolbox_reward
+                    && (!self.discovery_combat || self.discovery_skippable)
+                {
                     actions.push(Action::Skip);
                 }
             }
@@ -696,13 +1199,21 @@ impl Game {
                         room: None,
                     });
                 }
+                let thinking_ahead_requires_one = self.put_on_deck_select
+                    && self.combat.as_ref().is_some_and(|combat| {
+                        combat.need_put_on_deck && !combat.need_forethought
+                    });
+                if !thinking_ahead_requires_one {
+                    actions.push(Action::Proceed);
+                }
+            }
+            Screen::DoorUnlock | Screen::ActTransition => {
                 actions.push(Action::Proceed);
             }
-            Screen::DoorUnlock | Screen::ActTransition | Screen::Terminal => {
-                actions.push(Action::Proceed);
-            }
+            Screen::Terminal => actions.push(Action::Quit),
         }
         if self.screen != Screen::Terminal {
+            self.add_potion_use_actions(&mut actions);
             self.add_potion_discard_actions(&mut actions);
         }
         actions
@@ -726,17 +1237,53 @@ impl Game {
     }
 
     fn add_potion_discard_actions(&self, actions: &mut Vec<Action>) {
-        if self
-            .event
-            .as_ref()
-            .is_some_and(|event| event.id == "WeMeetAgain")
-        {
+        if self.we_meet_again_room {
             return;
         }
         for (slot, potion) in self.player.potions.iter().enumerate() {
             if potion.id != PotionId::Slot {
                 actions.push(Action::Potion {
                     action: PotionOp::Discard,
+                    slot,
+                    target_index: None,
+                });
+            }
+        }
+    }
+
+    fn add_potion_use_actions(&self, actions: &mut Vec<Action>) {
+        if self.we_meet_again_room {
+            return;
+        }
+        let active_combat = self.combat.as_ref().is_some_and(|combat| !combat.all_dead());
+        for (slot, potion) in self.player.potions.iter().enumerate() {
+            if potion.id == PotionId::Slot || potion.id == PotionId::Fairy {
+                continue;
+            }
+            if potion.id == PotionId::SmokeBomb && self.current_room == RoomType::Boss {
+                // SmokeBomb.canUse rejects any encounter containing a BOSS.
+                continue;
+            }
+            if !active_combat
+                && !matches!(potion.id, PotionId::FruitJuice | PotionId::EntropicBrew)
+            {
+                continue;
+            }
+            if active_combat
+                && matches!(potion.id, PotionId::Fire | PotionId::Fear | PotionId::Weak)
+            {
+                if let Some(combat) = &self.combat {
+                    for (target_index, _) in combat.living() {
+                        actions.push(Action::Potion {
+                            action: PotionOp::Use,
+                            slot,
+                            target_index: Some(target_index),
+                        });
+                    }
+                }
+            } else {
+                actions.push(Action::Potion {
+                    action: PotionOp::Use,
                     slot,
                     target_index: None,
                 });
@@ -855,7 +1402,7 @@ impl Game {
         }
         if self.neow_screen == 3 {
             if let Some(opt) = self.neow_options.get(*index).cloned() {
-                self.apply_neow(opt.kind);
+                self.apply_neow(opt.kind, opt.drawback);
             }
             if matches!(
                 self.screen,
@@ -874,10 +1421,12 @@ impl Game {
     /// before publishing Neow Leave, so pending obtains are already in
     /// masterDeck at that snapshot.
     fn present_neow_leave(&mut self) {
+        self.queue_neow_curse();
         self.flush_pending_cards();
         self.neow_options = vec![NeowOption {
             label: "[Leave]".into(),
             kind: NeowKind::ThreeCards,
+            drawback: NeowDrawback::None,
         }];
         self.neow_screen = 99;
         self.screen = Screen::Neow;
@@ -903,20 +1452,25 @@ impl Game {
         let pick = |rng: &mut StsRandom, opts: &[NeowKind]| opts[rng.random_range(0, opts.len() as i32 - 1) as usize];
         let a = pick(&mut self.neow_rng, &cat0);
         let b = pick(&mut self.neow_rng, &cat1);
-        let drawback = self.neow_rng.random_range(0, 3);
+        let drawback = match self.neow_rng.random_range(0, 3) {
+            0 => NeowDrawback::TenPercentHpLoss,
+            1 => NeowDrawback::NoGold,
+            2 => NeowDrawback::Curse,
+            _ => NeowDrawback::PercentDamage,
+        };
         // NeowReward.getRewardOptions(2) order, then NeowReward(3) still rolls
         // rng.random(0, 0) even though the boss-relic list has one entry.
         let mut cat2 = vec![NeowKind::RandomColorless2];
-        if drawback != 2 {
+        if drawback != NeowDrawback::Curse {
             cat2.push(NeowKind::RemoveTwo);
         }
         cat2.push(NeowKind::RareRelic);
         cat2.push(NeowKind::ThreeRareCards);
-        if drawback != 1 {
+        if drawback != NeowDrawback::NoGold {
             cat2.push(NeowKind::TwoFiftyGold);
         }
         cat2.push(NeowKind::TransformTwo);
-        if drawback != 0 {
+        if drawback != NeowDrawback::TenPercentHpLoss {
             cat2.push(NeowKind::TwentyHp);
         }
         let c = pick(&mut self.neow_rng, &cat2);
@@ -925,23 +1479,46 @@ impl Game {
             NeowOption {
                 label: format!("{a:?}"),
                 kind: a,
+                drawback: NeowDrawback::None,
             },
             NeowOption {
                 label: format!("{b:?}"),
                 kind: b,
+                drawback: NeowDrawback::None,
             },
             NeowOption {
                 label: format!("{c:?}"),
                 kind: c,
+                drawback,
             },
             NeowOption {
                 label: "Boss Relic".into(),
                 kind: NeowKind::BossRelic,
+                drawback: NeowDrawback::None,
             },
         ];
     }
 
-    fn apply_neow(&mut self, kind: NeowKind) {
+    fn apply_neow(&mut self, kind: NeowKind, drawback: NeowDrawback) {
+        // NeowReward.activate applies the drawback before the reward. Its
+        // hp_bonus is captured when the option is constructed, before either.
+        let hp_bonus = self.player.max_hp / 10;
+        match drawback {
+            NeowDrawback::None => {}
+            NeowDrawback::TenPercentHpLoss => {
+                self.player.max_hp = (self.player.max_hp - hp_bonus).max(1);
+                self.player.hp = self.player.hp.min(self.player.max_hp);
+            }
+            NeowDrawback::NoGold => self.player.gold = 0,
+            // NeowReward.activate only marks the curse pending. The reward is
+            // opened first; NeowReward.update then rolls and obtains the curse.
+            NeowDrawback::Curse => {}
+            NeowDrawback::PercentDamage => {
+                let damage = self.player.hp / 10 * 3;
+                self.player.hp = self.player.hp.saturating_sub(damage);
+            }
+        }
+
         match kind {
             NeowKind::RandomRareCard => {
                 if let Some(id) = self.random_card(CardRarity::RARE, true) {
@@ -950,10 +1527,15 @@ impl Game {
             }
             NeowKind::HundredGold => self.player.gold += 100,
             NeowKind::TenHp => {
-                let bonus = self.player.max_hp / 10;
+                self.player.max_hp += hp_bonus;
+                self.player.hp += hp_bonus;
+            }
+            NeowKind::TwentyHp => {
+                let bonus = hp_bonus * 2;
                 self.player.max_hp += bonus;
                 self.player.hp += bonus;
             }
+            NeowKind::TwoFiftyGold => self.player.gold += 250,
             NeowKind::ThreePotions => {
                 // CombatRewardScreen.open() always rolls a CARD reward, then
                 // Neow removes that item. The 9 cardRng calls and blizzard
@@ -1010,7 +1592,23 @@ impl Game {
                 self.card_reward = self.neow_colored_cards(3, true);
                 self.screen = Screen::CardReward;
             }
-            _ => {}
+        }
+
+        if drawback == NeowDrawback::Curse {
+            // NeowReward.update queues the curse only after the reward screen
+            // has opened. Its RNG consumption and CardObtainTransition remain
+            // pending behind card-reward and grid screens.
+            self.pending_neow_curse = true;
+        }
+    }
+
+    fn queue_neow_curse(&mut self) {
+        if self.pending_neow_curse {
+            self.pending_neow_curse = false;
+            // AbstractDungeon.getCardWithoutRng(CURSE) consumes cardRng once,
+            // despite its name.
+            let curse = self.return_random_curse();
+            self.pending_cards.push(Card::new(curse));
         }
     }
 
@@ -1053,6 +1651,7 @@ impl Game {
             return_event: true,
             return_shop: false,
             return_screen: None,
+            can_cancel: true,
             immediate: true,
         });
         self.screen = Screen::Grid;
@@ -1109,6 +1708,7 @@ impl Game {
             return_event,
             return_shop: false,
             return_screen: None,
+            can_cancel: false,
             immediate: false,
         });
         self.screen = Screen::Grid;
@@ -1206,6 +1806,25 @@ impl Game {
 
     /// AbstractDungeon.returnTrulyRandomCardFromAvailable via miscRng.
     fn misc_transform_roll(&mut self, avoid: CardId) -> Option<CardId> {
+        if avoid.def().color == crate::ids::CardColor::CURSE {
+            // CardLibrary.getCurse(c, miscRng): HashMap iteration order from
+            // the vanilla curse registry, excluding the source and specials.
+            let mut pool = vec![
+                CardId::Regret,
+                CardId::Injury,
+                CardId::Shame,
+                CardId::Parasite,
+                CardId::Normality,
+                CardId::Doubt,
+                CardId::Writhe,
+                CardId::Pain,
+                CardId::Decay,
+                CardId::Clumsy,
+            ];
+            pool.retain(|id| *id != avoid);
+            let idx = self.rng.misc.random_int(pool.len() as i32 - 1) as usize;
+            return Some(pool[idx]);
+        }
         if avoid.def().color == crate::ids::CardColor::COLORLESS {
             // transformCard routes colorless sources through
             // returnTrulyRandomColorlessCardFromAvailable, whose list is the
@@ -1277,6 +1896,7 @@ impl Game {
             return_event: false,
             return_shop: prev == Screen::Shop,
             return_screen: Some(prev),
+            can_cancel: false,
             immediate: false,
         });
         self.screen = Screen::Grid;
@@ -1296,6 +1916,7 @@ impl Game {
             return_event: false,
             return_shop: prev == Screen::Shop,
             return_screen: Some(prev),
+            can_cancel: false,
             immediate: false,
         });
         self.screen = Screen::Grid;
@@ -1335,9 +1956,10 @@ impl Game {
         out
     }
 
-    /// Read-only HTN view of a pending grid selection: the kind plus the card
-    /// behind each legal `Choose` index (already-picked entries excluded). An
-    /// empty card list means the grid is at its confirm stage.
+    /// Read-only HTN view of a pending grid selection: the kind plus each card
+    /// still worth choosing. `legal_actions` keeps already-picked entries as
+    /// Java-compatible no-ops, while this policy view excludes them so a
+    /// multi-card decision makes progress. An empty list means confirm stage.
     pub fn grid_view(&self) -> Option<(GridKind, Vec<(usize, &Card)>)> {
         let grid = self.grid.as_ref()?;
         if grid.confirm {
@@ -1460,6 +2082,7 @@ impl Game {
                     if needed == 1 {
                         grid.hovered = Some(pile_i);
                         grid.confirm = true;
+                        self.grid_confirm_disabled = false;
                     } else {
                         if !grid.picked.contains(&pile_i) {
                             grid.picked.push(pile_i);
@@ -1490,6 +2113,9 @@ impl Game {
                 }
             }
             Action::Skip if confirm => {
+                // GridCardSelectScreen.cancelUpgrade resets the shared
+                // confirm button before returning to the card list.
+                self.grid_confirm_disabled = true;
                 if let Some(grid) = self.grid.as_mut() {
                     grid.confirm = false;
                     grid.hovered = None;
@@ -1826,6 +2452,21 @@ impl Game {
             return out;
         }
         let node = self.dungeon.map.node(self.current_x, self.current_y);
+        let winged = self
+            .player
+            .relics
+            .iter()
+            .any(|relic| relic.id == RelicId::WingedGreaves && relic.counter > 0);
+        if winged {
+            if let Some(dest_y) = node.edges.first().map(|edge| edge.dst_y) {
+                for dest in &self.dungeon.map.nodes[dest_y as usize] {
+                    if dest.has_edges() {
+                        out.push((dest.x, dest.y, dest.room.unwrap_or(RoomType::Monster)));
+                    }
+                }
+            }
+            return out;
+        }
         let mut destinations: Vec<(i32, i32)> = node
             .edges
             .iter()
@@ -1874,6 +2515,29 @@ impl Game {
         // Map node click always enters. Fruit Juice is usable on the map as a
         // Potion action before this choose; deferring entry left rust on Map
         // while Java was already in the first hallway (191892).
+        let normal_connection = !self.dungeon.first_room_chosen
+            || self.current_y < 0
+            || self
+                .dungeon
+                .map
+                .node(self.current_x, self.current_y)
+                .edges
+                .iter()
+                .any(|edge| edge.dst_x == mx && edge.dst_y == my);
+        if !normal_connection {
+            if let Some(relic) = self
+                .player
+                .relics
+                .iter_mut()
+                .find(|relic| relic.id == RelicId::WingedGreaves && relic.counter > 0)
+            {
+                relic.counter -= 1;
+                if relic.counter <= 0 {
+                    relic.counter = -2;
+                    relic.used_up = true;
+                }
+            }
+        }
         self.enter_room(mx, my, room);
     }
 
@@ -1892,6 +2556,7 @@ impl Game {
         // the previous room (ShopRoom zeros shopSize).
         let prev_room = self.current_room;
         self.event = None;
+        self.we_meet_again_room = false;
         if self.pending_gold != 0 {
             self.player.gold += self.gold_with_idol(self.pending_gold);
             self.pending_gold = 0;
@@ -1918,6 +2583,7 @@ impl Game {
             RoomType::Rest => {
                 self.rest_smithing = false;
                 self.rest_smith_picked = false;
+                self.rest_smith_pending = None;
                 self.rest_selected = false;
                 // RestRoom.onPlayerEntry: every relic.onEnterRestRoom.
                 // AncientTeaSet sets counter = -2 (armed for the next fight).
@@ -3016,6 +3682,7 @@ impl Game {
     fn begin_discovery(&mut self, typ: Option<crate::ids::CardType>, colorless: bool) {
         self.card_reward = crate::rewards::discovery_cards(&self.dungeon, &mut self.rng, typ, colorless);
         self.discovery_combat = self.combat.is_some();
+        self.discovery_skippable = typ.is_some();
         self.discovery_typ = typ;
         self.discovery_colorless = colorless;
         self.discovery_copies = 1;
@@ -3123,6 +3790,11 @@ impl Game {
     }
 
     fn step_card_reward(&mut self, action: &Action) {
+        if self.current_room == RoomType::Neow {
+            // NeowReward.update runs before the selected card's obtain effect,
+            // so a deferred curse precedes that card in the master deck.
+            self.queue_neow_curse();
+        }
         match action {
             Action::Skip => {
                 self.finish_card_reward();
@@ -3191,6 +3863,7 @@ impl Game {
         }
         if self.discovery_combat {
             self.discovery_combat = false;
+            self.discovery_skippable = false;
             self.discovery_copies = 1;
             self.card_reward.clear();
             self.screen = Screen::Combat;
@@ -3224,8 +3897,27 @@ impl Game {
         if !self.player.has_relic(RelicId::Coffee_Dripper) {
             opts.push("Rest");
         }
-        if self.player.deck.iter().any(|c| c.can_upgrade()) {
+        if !self.player.has_relic(RelicId::Fusion_Hammer)
+            && self.player.deck.iter().any(|c| c.can_upgrade())
+        {
             opts.push("Smith");
+        }
+        if self.player.has_relic(RelicId::Peace_Pipe)
+            && self
+                .player
+                .deck
+                .iter()
+                .any(|card| purgeable_card(card) && !card.in_bottle)
+        {
+            opts.push("Toke");
+        }
+        if self
+            .player
+            .relics
+            .iter()
+            .any(|relic| relic.id == RelicId::Girya && relic.counter < 3)
+        {
+            opts.push("Lift");
         }
         if self.final_act_available && !self.has_ruby_key {
             opts.push("Recall");
@@ -3235,15 +3927,46 @@ impl Game {
 
     fn step_rest(&mut self, action: &Action) {
         match action {
-            Action::Proceed | Action::Skip => {
-                if self.rest_smithing && self.rest_smith_picked {
-                    // GRID confirm after a smith pick; campfire stays open.
+            Action::Proceed => {
+                if self.rest_smithing {
+                    if !self.rest_smith_picked {
+                        // Java may publish this stale button action after a
+                        // previous grid, but confirmSelection rejects it.
+                        return;
+                    }
+                    if let Some(i) = self.rest_smith_pending.take() {
+                        if let Some(card) = self.player.deck.get_mut(i) {
+                            card.upgrade();
+                        }
+                    }
                     self.rest_smithing = false;
                     self.rest_smith_picked = false;
                     return;
                 }
                 self.rest_smithing = false;
                 self.rest_smith_picked = false;
+                self.rest_smith_pending = None;
+                self.open_map();
+            }
+            Action::Skip => {
+                if self.rest_smithing && self.rest_smith_picked {
+                    // cancelUpgrade returns to the same selection grid and
+                    // disables the shared confirm button.
+                    self.rest_smith_picked = false;
+                    self.rest_smith_pending = None;
+                    self.grid_confirm_disabled = true;
+                    return;
+                }
+                if self.rest_smithing {
+                    // Cancel the initial smith grid and reopen the campfire.
+                    self.rest_smithing = false;
+                    self.rest_smith_pending = None;
+                    self.rest_selected = false;
+                    return;
+                }
+                self.rest_smithing = false;
+                self.rest_smith_picked = false;
+                self.rest_smith_pending = None;
                 self.open_map();
             }
             Action::Choose { index, label, .. } => {
@@ -3251,17 +3974,15 @@ impl Game {
                     return;
                 }
                 if self.rest_smithing {
-                    if let Some(name) = label.as_deref() {
+                    let selected = if let Some(name) = label.as_deref() {
                         let base = name.trim_end_matches('+');
-                        if let Some(card) = self.player.deck.iter_mut().find(|c| {
+                        self.player.deck.iter().position(|c| {
                             let id = c.sts_id();
                             c.can_upgrade()
                                 && (id == base
                                     || id.replace('_', " ") == base
                                     || c.def().sts_id == base)
-                        }) {
-                            card.upgrade();
-                        }
+                        })
                     } else {
                         let upg: Vec<usize> = self
                             .player
@@ -3271,17 +3992,21 @@ impl Game {
                             .filter(|(_, c)| c.can_upgrade())
                             .map(|(i, _)| i)
                             .collect();
-                        if let Some(&i) = upg.get(*index) {
-                            self.player.deck[i].upgrade();
-                        }
+                        upg.get(*index).copied()
+                    };
+                    if let Some(i) = selected {
+                        self.rest_smith_pending = Some(i);
+                        self.rest_smith_picked = true;
+                        self.grid_confirm_disabled = false;
                     }
-                    self.rest_smith_picked = true;
                     return;
                 }
                 let kind = match label.as_deref() {
                     Some("Rest") => Some("Rest"),
                     Some(s) if s.contains("Sleep") => Some("Rest"),
                     Some("Smith") => Some("Smith"),
+                    Some("Toke") => Some("Toke"),
+                    Some("Lift") => Some("Lift"),
                     Some("Recall") => Some("Recall"),
                     _ => self.campfire_options().get(*index).copied(),
                 };
@@ -3308,7 +4033,29 @@ impl Game {
                         self.rest_selected = true;
                         self.rest_smithing = true;
                         self.rest_smith_picked = false;
+                        self.rest_smith_pending = None;
+                    }
+                    Some("Toke") => {
                         self.rest_selected = true;
+                        self.open_grid(GridKind::Purge, 1, false);
+                        if let Some(grid) = self.grid.as_mut() {
+                            // CampfireTokeTransition opens the purge grid with
+                            // canCancel=true and completes the rest room after
+                            // the selected card is removed.
+                            grid.can_cancel = true;
+                            grid.return_screen = Some(Screen::Rest);
+                        }
+                    }
+                    Some("Lift") => {
+                        if let Some(girya) = self
+                            .player
+                            .relics
+                            .iter_mut()
+                            .find(|relic| relic.id == RelicId::Girya && relic.counter < 3)
+                        {
+                            girya.counter += 1;
+                            self.rest_selected = true;
+                        }
                     }
                     Some("Recall") => {
                         self.has_ruby_key = true;
@@ -3446,6 +4193,7 @@ impl Game {
                     return_event: false,
                     return_shop: true,
                     return_screen: None,
+                    can_cancel: true,
                     immediate: false,
                 });
                 self.screen = Screen::Grid;
@@ -3620,6 +4368,16 @@ impl Game {
     }
 
     fn step_treasure(&mut self, action: &Action) {
+        if matches!(action, Action::Proceed | Action::Skip) {
+            // ChoiceDriver exposes Proceed before an unopened chest because
+            // chests are optional (notably avoiding Cursed Key's curse).
+            if self.current_room == RoomType::BossTreasure {
+                self.begin_next_act();
+            } else {
+                self.open_map();
+            }
+            return;
+        }
         if let Action::Choose { label: Some(label), .. } = action {
             if label == "open" {
                 // fall through
@@ -3898,6 +4656,7 @@ impl Game {
             return_event: false,
             return_shop: false,
             return_screen: None,
+            can_cancel: true,
             immediate: false,
         });
         self.screen = Screen::Grid;
@@ -4088,6 +4847,7 @@ impl Game {
         // generateEvent uses a duplicate of eventRng and does not write it back.
         let mut local = StsRandom::from_seed_counter(self.seed, self.rng.event.counter);
         let id = self.pick_event(&mut local);
+        self.we_meet_again_room = id == "WeMeetAgain";
         let mut data = Vec::new();
         let options = match id.as_str() {
             "Scrap Ooze" => {
@@ -4105,7 +4865,27 @@ impl Game {
                 "[Buy 3 Potions]".into(),
                 "[Leave]".into(),
             ],
-            "The Library" => vec!["[Read]".into(), "[Sleep]".into()],
+            "The Library" => {
+                let pct = if self.ascension >= 15 { 0.2 } else { 0.33 };
+                let heal = crate::rewards::gdx_round(self.player.max_hp as f32 * pct);
+                data = vec![heal];
+                vec!["[Read]".into(), format!("[Sleep] #gHeal #g{heal} #gHP.")]
+            }
+            "Cursed Tome" => vec!["[Read]".into(), "[Leave]".into()],
+            "Dead Adventurer" => {
+                // DeadAdventurer constructor shuffles its three hidden rewards
+                // and rolls the elite before publishing the first choice.
+                let mut rewards = vec![0, 1, 2]; // GOLD, NOTHING, RELIC
+                let shuffle_seed = self.rng.misc.random_long();
+                shuffle_java(&mut rewards, shuffle_seed);
+                let enemy = self.rng.misc.random_range(0, 2);
+                let chance = if self.ascension >= 15 { 35 } else { 25 };
+                data = vec![chance, enemy, rewards[0], rewards[1], rewards[2]];
+                vec![
+                    format!("[Search] #gFind #gLoot. #r{chance}%: #rmonster #rreturns."),
+                    "[Leave]".into(),
+                ]
+            }
             "Ghosts" => vec![
                 "[Accept] #gReceive #g5 Apparition. #rLose #r40 #rMax #rHP.".into(),
                 "[Refuse]".into(),
@@ -4125,6 +4905,21 @@ impl Game {
                 data = vec![hp_loss, heal, max_hp_loss];
                 vec!["[Continue]".into()]
             }
+            "The Moai Head" => {
+                let max_hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * 0.18);
+                data = vec![max_hp_loss];
+                let mut opts = vec![format!(
+                    "[Jump Inside] #gHeal #gto #gfull #gHP. #rLose #r{max_hp_loss} #rMax #rHP."
+                )];
+                if self.player.has_relic(RelicId::Golden_Idol) {
+                    opts.push(
+                        "[Offer: Golden Idol] #gGain #g333 #gGold. #rLose #rGolden #rIdol."
+                            .into(),
+                    );
+                }
+                opts.push("[Leave]".into());
+                opts
+            }
             "MindBloom" => vec!["[I am War]".into(), "[I am Awake]".into(), "[I am Rich]".into()],
             "World of Goop" => {
                 let (lo, hi) = if self.ascension >= 15 { (35, 75) } else { (20, 50) };
@@ -4134,9 +4929,70 @@ impl Game {
                 }
                 data = vec![loss, 75, 11];
                 vec![
-                    format!("[Gather Gold] #gGain #g75 #gGold. #rTake #r11 #rDamage."),
-                    format!("[Leave] #rLose #r{loss} #rGold."),
+                    format!("[Gather Gold] #gGain #g75 #gGold. #rLose #r11 #rHP."),
+                    format!("[Leave It] #rLose #r{loss} #rGold."),
                 ]
+            }
+            "Golden Wing" => {
+                let can_attack = self.player.deck.iter().any(|card| {
+                    card.card_type() == crate::ids::CardType::ATTACK && card.base_damage >= 10
+                });
+                data = vec![7, i32::from(can_attack)];
+                let mut opts = vec![
+                    "[Pray] #gRemove #ga #gcard #gfrom #gyour #gdeck. #rLose #r7 #rHP."
+                        .into(),
+                ];
+                if can_attack {
+                    opts.push("[Destroy] #gGain #g50 #g- #g80 #gGold.".into());
+                }
+                opts.push("[Leave]".into());
+                opts
+            }
+            "Liars Game" => {
+                let gold = if self.ascension >= 15 { 150 } else { 175 };
+                data = vec![gold];
+                vec![
+                    format!(
+                        "[Agree] #gGain #g{gold} #gGold. #rBecome #rCursed #r- #rDoubt."
+                    ),
+                    "[Disagree]".into(),
+                ]
+            }
+            "Accursed Blacksmith" => {
+                let mut opts = Vec::new();
+                if self.player.deck.iter().any(|card| card.can_upgrade()) {
+                    opts.push("[Forge] #gUpgrade #ga #gcard #gin #gyour #gdeck.".into());
+                }
+                opts.push(
+                    "[Rummage] #gObtain #ga #gspecial #gRelic. #rBecome #rCursed #r- #rPain."
+                        .into(),
+                );
+                opts.push("[Leave]".into());
+                opts
+            }
+            "Purifier" => {
+                let mut opts = Vec::new();
+                if self.player.deck.iter().any(|card| purgeable_card(card) && !card.in_bottle) {
+                    opts.push("[Pray] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into());
+                }
+                opts.push("[Leave]".into());
+                opts
+            }
+            "Transmorgrifier" => {
+                let mut opts = Vec::new();
+                if self.player.deck.iter().any(purgeable_card) {
+                    opts.push("[Pray] #gTransform #ga #gcard.".into());
+                }
+                opts.push("[Leave]".into());
+                opts
+            }
+            "Upgrade Shrine" => {
+                let mut opts = Vec::new();
+                if self.player.deck.iter().any(|card| card.can_upgrade()) {
+                    opts.push("[Pray] #gUpgrade #ga #gcard.".into());
+                }
+                opts.push("[Leave]".into());
+                opts
             }
             "Big Fish" => {
                 let heal = self.player.max_hp / 3;
@@ -4161,6 +5017,11 @@ impl Game {
                 opts.push("[Leave]".into());
                 opts
             }
+            "Beggar" => vec![
+                "[Offer Gold] #y75 #yGold: #gRemove #ga #gcard #gfrom #gyour #gdeck."
+                    .into(),
+                "[Leave]".into(),
+            ],
             "Living Wall" => {
                 let mut opts = vec![
                     "[Forget] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into(),
@@ -4253,14 +5114,55 @@ impl Game {
                 let heal = (self.player.max_hp as f32 * 0.25) as i32;
                 data = vec![heal];
                 vec![
-                    "[Fight]".into(),
+                    "[Stomp] #rAnger #rthe #rMushrooms.".into(),
                     format!("[Eat] #gHeal #g{heal} #gHP. #rBecome #rCursed #r- #rParasite."),
                 ]
             }
             "Masked Bandits" => vec![
-                "[Pay] #rLose #rALL #rGold.".into(),
-                "[Fight] #gObtain #gRed #gMask.".into(),
+                "[Pay] #rLose #rALL of your #yGold.".into(),
+                "[Fight!]".into(),
             ],
+            "The Mausoleum" => vec![
+                "[Open Coffin] #gObtain #ga #gRelic. #r100%: #rBecome #rCursed #r- #rWrithe."
+                    .into(),
+                "[Leave]".into(),
+            ],
+            "Mysterious Sphere" => vec![
+                "[Open Sphere] #rFight. #gReward: #gRare #gRelic.".into(),
+                "[Leave]".into(),
+            ],
+            "Tomb of Lord Red Mask" => {
+                if self.player.has_relic(RelicId::Red_Mask) {
+                    vec![
+                        "[Don the Red Mask] #gGain #g222 #gGold.".into(),
+                        "[Leave]".into(),
+                    ]
+                } else {
+                    vec![
+                        format!(
+                            "[Offer: {} Gold] #rLose #rall #rGold. #gObtain #ga #gRelic.",
+                            self.player.gold
+                        ),
+                        "[Leave]".into(),
+                    ]
+                }
+            }
+            "Vampires" => {
+                let max_hp_loss = ((self.player.max_hp as f32) * 0.3).ceil() as i32;
+                let max_hp_loss = max_hp_loss.min(self.player.max_hp - 1);
+                data = vec![max_hp_loss];
+                let mut opts = vec![format!(
+                    "[Accept] #gRemove #gall Strikes. #gReceive #g5 Bites. #rLose #r{max_hp_loss} #rMax #rHP."
+                )];
+                if self.player.has_relic(RelicId::Blood_Vial) {
+                    opts.push(
+                        "[Lose Blood Vial] #gRemove #gall Strikes. #gReceive #g5 Bites."
+                            .into(),
+                    );
+                }
+                opts.push("[Refuse]".into());
+                opts
+            }
             "Addict" => {
                 let can_pay = self.player.gold >= 85;
                 data = vec![i32::from(can_pay)];
@@ -4284,6 +5186,27 @@ impl Game {
                 // choices are installed only after that button is pressed.
                 data = vec![6, 6, 6, 6];
                 vec!["[Continue]".into()]
+            }
+            "N'loth" => {
+                // Nloth copies the player's relic list, then shuffles it with
+                // a java.util.Random seeded by one miscRng.randomLong().
+                let mut choices: Vec<usize> = (0..self.player.relics.len()).collect();
+                let shuffle_seed = self.rng.misc.random_long();
+                shuffle_java(&mut choices, shuffle_seed);
+                let first = choices.first().copied().unwrap_or(0);
+                let second = choices.get(1).copied().unwrap_or(first);
+                data = vec![first as i32, second as i32];
+                vec![
+                    format!(
+                        "[Offer: {}] #rLose #rthis #rrelic. #gObtain #ga #gspecial #grelic.",
+                        self.player.relics[first].id.sts_id()
+                    ),
+                    format!(
+                        "[Offer: {}] #rLose #rthis #rrelic. #gObtain #ga #gspecial #grelic.",
+                        self.player.relics[second].id.sts_id()
+                    ),
+                    "[Leave]".into(),
+                ]
             }
             "The Joust" => {
                 // betFor and ownerWins are populated on the following screens.
@@ -4629,6 +5552,18 @@ impl Game {
         self.player.deck.push(card);
     }
 
+    fn replace_starter_strikes_with_bites(&mut self) {
+        self.player.deck.retain(|card| {
+            !matches!(
+                card.id,
+                CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P
+            )
+        });
+        for _ in 0..5 {
+            self.obtain_master_deck_card(CardId::Bite);
+        }
+    }
+
     /// FaceTrader.getRandomFace: shuffle missing face relics with `miscRng.randomLong()`.
     fn face_trader_random_face(&mut self) -> Option<RelicId> {
         let mut ids = Vec::new();
@@ -4669,9 +5604,9 @@ impl Game {
         let mut opts = Vec::new();
         if self.player.gold >= adj && upgradable {
             if upg_one {
-                opts.push(format!("[Adjust] #y{adj} #yGold: #gUpgrade #g1 #gcard."));
+                opts.push(format!("[Adjustments] #y{adj} #yGold: #gUpgrade #g1 #gcard."));
             } else {
-                opts.push(format!("[Adjust] #y{adj} #yGold: #gUpgrade #g2 #grandom #gcards."));
+                opts.push(format!("[Adjustments] #y{adj} #yGold: #gUpgrade #g2 #grandom #gcards."));
             }
         }
         if rem_cards {
@@ -4958,6 +5893,38 @@ impl Game {
             }
             return;
         }
+        if id == "Vampires" {
+            if screen == 0 {
+                let chosen = self
+                    .event
+                    .as_ref()
+                    .and_then(|event| event.options.get(*index))
+                    .cloned()
+                    .unwrap_or_default();
+                if chosen.contains("Accept") {
+                    let loss = self
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.data.first().copied())
+                        .unwrap_or(0);
+                    self.player.max_hp = (self.player.max_hp - loss).max(1);
+                    self.player.hp = self.player.hp.min(self.player.max_hp);
+                    self.replace_starter_strikes_with_bites();
+                } else if chosen.contains("Blood Vial") {
+                    self.player
+                        .relics
+                        .retain(|relic| relic.id != RelicId::Blood_Vial);
+                    self.replace_starter_strikes_with_bites();
+                }
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Leave]".into()];
+                }
+            } else {
+                self.open_map();
+            }
+            return;
+        }
         if id == "Addict" {
             if screen == 0 {
                 let can_pay = self
@@ -5053,11 +6020,11 @@ impl Game {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            "[Drink] #rLose #r6 #rHP. #gObtain #ga #gPotion.".into(),
-                            "[Gold] #gGain #g90 #gGold. #rLose #r6 #rHP.".into(),
-                            "[Knowledge] #rLose #r6 #rHP. #gObtain #ga #gColorless #gCard."
+                            "[A Pick Me Up?] #gGet #ga #gPotion. #rLose #r6 #rHP.".into(),
+                            "[Riches?] #gGain #g90 #gGold. #rLose #r6 #rHP.".into(),
+                            "[Success?] #gGet #ga #gColorless #gCard. #rLose #r6 #rHP."
                                 .into(),
-                            "[Leave] #rLose #r6 #rHP.".into(),
+                            "[How do I leave?] #rLose #r6 #rHP.".into(),
                         ];
                     }
                 }
@@ -5210,7 +6177,44 @@ impl Game {
             }
             return;
         }
-        if label.as_deref().is_some_and(|l| l.contains("[Leave]") || l == "Leave") {
+        if id == "The Moai Head" {
+            if screen == 0 {
+                let chosen = self
+                    .event
+                    .as_ref()
+                    .and_then(|event| event.options.get(*index))
+                    .cloned()
+                    .unwrap_or_default();
+                if chosen.contains("Jump Inside") {
+                    let loss = self
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.data.first().copied())
+                        .unwrap_or_else(|| {
+                            crate::rewards::gdx_round(self.player.max_hp as f32 * 0.18)
+                        });
+                    self.player.max_hp = (self.player.max_hp - loss).max(1);
+                    self.player.hp = self.player.hp.min(self.player.max_hp);
+                    self.heal_player(self.player.max_hp);
+                } else if chosen.contains("Golden Idol") {
+                    self.player.relics.retain(|relic| relic.id != RelicId::Golden_Idol);
+                    if !self.player.has_relic(RelicId::Ectoplasm) {
+                        self.player.gold += 333;
+                    }
+                }
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Leave]".into()];
+                }
+            } else {
+                self.open_map();
+            }
+            return;
+        }
+        if label.as_deref().is_some_and(|l| l.contains("[Leave]") || l == "Leave")
+            && id != "Woman in Blue"
+            && id != "The Woman in Blue"
+        {
             // Tomb INTRO Leave opens the map; Mausoleum/Scrap Ooze-style Leave goes to RESULT first.
             if id == "Tomb of Lord Red Mask" || screen > 0 || option_count == 1 {
                 self.open_map();
@@ -5459,6 +6463,147 @@ impl Game {
             }
             return;
         }
+        if id == "Golden Wing" {
+            match screen {
+                0 => {
+                    let chosen = self
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.options.get(*index))
+                        .cloned()
+                        .unwrap_or_default();
+                    if chosen.contains("Pray") {
+                        let damage = self
+                            .event
+                            .as_ref()
+                            .and_then(|event| event.data.first().copied())
+                            .unwrap_or(7);
+                        let damage = combat::on_lose_hp_last(&self.player, damage);
+                        self.player.hp = (self.player.hp - damage).max(0);
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 1;
+                            event.options = vec!["[Continue]".into()];
+                        }
+                    } else if chosen.contains("Destroy") {
+                        let gold = self.rng.misc.random_range(50, 80);
+                        if !self.player.has_relic(RelicId::Ectoplasm) {
+                            self.player.gold += gold;
+                        }
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 2;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                    } else if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                1 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                    self.open_grid(GridKind::Purge, 1, true);
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Liars Game" {
+            match screen {
+                0 if *index == 0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec!["[Continue]".into()];
+                    }
+                }
+                0 => {
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 2;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                1 => {
+                    let gold = self
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.data.first().copied())
+                        .unwrap_or(if self.ascension >= 15 { 150 } else { 175 });
+                    self.obtain_master_deck_card(CardId::Doubt);
+                    if !self.player.has_relic(RelicId::Ectoplasm) {
+                        self.player.gold += gold;
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 3;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if id == "Accursed Blacksmith" {
+            match screen {
+                0 => {
+                    let chosen = self
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.options.get(*index))
+                        .cloned()
+                        .unwrap_or_default();
+                    if chosen.contains("Forge") {
+                        if let Some(event) = self.event.as_mut() {
+                            event.screen = 1;
+                            event.options = vec!["[Leave]".into()];
+                        }
+                        self.open_grid(GridKind::Upgrade, 1, true);
+                        return;
+                    }
+                    if chosen.contains("Rummage") {
+                        self.obtain_master_deck_card(CardId::Pain);
+                        if let Some(relic) = RelicId::from_sts_id("WarpedTongs") {
+                            self.gain_relic(relic);
+                        }
+                    }
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                }
+                _ => self.open_map(),
+            }
+            return;
+        }
+        if matches!(id.as_str(), "Purifier" | "Transmorgrifier" | "Upgrade Shrine") {
+            if screen == 0 {
+                let chosen = self
+                    .event
+                    .as_ref()
+                    .and_then(|event| event.options.get(*index))
+                    .cloned()
+                    .unwrap_or_default();
+                if chosen.contains("Pray") {
+                    let kind = match id.as_str() {
+                        "Purifier" => GridKind::Purge,
+                        "Transmorgrifier" => GridKind::Transform,
+                        _ => GridKind::Upgrade,
+                    };
+                    if let Some(event) = self.event.as_mut() {
+                        event.screen = 1;
+                        event.options = vec!["[Leave]".into()];
+                    }
+                    self.open_grid(kind, 1, true);
+                    return;
+                }
+                if let Some(event) = self.event.as_mut() {
+                    event.screen = 1;
+                    event.options = vec!["[Leave]".into()];
+                }
+            } else {
+                self.open_map();
+            }
+            return;
+        }
         if id == "World of Goop" {
             if screen == 0 {
                 match *index {
@@ -5642,6 +6787,7 @@ impl Game {
                         if self.player.deck.iter().any(|c| purgeable_card(c) && !c.in_bottle) {
                             self.open_grid(GridKind::Purge, 1, true);
                             if let Some(g) = self.grid.as_mut() {
+                                g.can_cancel = true;
                                 g.immediate = true;
                             }
                         }
@@ -5908,6 +7054,7 @@ impl Game {
                         return_event: true,
                         return_shop: false,
                         return_screen: None,
+                        can_cancel: false,
                         immediate: false,
                     });
                     self.screen = Screen::Grid;
@@ -5924,7 +7071,14 @@ impl Game {
             "The Library" => {
                 if *index == 1 || matches!(action, Action::Choose { label: Some(l), .. } if l.contains("Sleep"))
                 {
-                    let heal = (self.player.max_hp as f32 * 0.33 + 0.5).floor() as i32;
+                    let heal = self
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.data.first().copied())
+                        .unwrap_or_else(|| {
+                            let pct = if self.ascension >= 15 { 0.2 } else { 0.33 };
+                            crate::rewards::gdx_round(self.player.max_hp as f32 * pct)
+                        });
                     self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
                 } else {
                     self.open_library_grid();
@@ -5994,6 +7148,7 @@ impl Game {
             return_event: false,
             return_shop: false,
             return_screen: None,
+            can_cancel: true,
             immediate: false,
         });
         self.screen = Screen::Grid;
@@ -6046,6 +7201,7 @@ impl Game {
             return_event: false,
             return_shop: false,
             return_screen: None,
+            can_cancel: true,
             immediate: false,
         });
         self.screen = Screen::Grid;
@@ -6075,6 +7231,7 @@ impl Game {
             return_event: false,
             return_shop: false,
             return_screen: None,
+            can_cancel: true,
             immediate: false,
         });
         self.screen = Screen::Grid;
@@ -6197,6 +7354,10 @@ impl Game {
     fn step_hand_select(&mut self, action: &Action) {
         match action {
             Action::Choose { index, label, .. } => {
+                let thinking_ahead_requires_one = self.put_on_deck_select
+                    && self.combat.as_ref().is_some_and(|combat| {
+                        combat.need_put_on_deck && !combat.need_forethought
+                    });
                 let by_name = label.as_ref().and_then(|name| {
                     self.player
                         .hand
@@ -6210,6 +7371,14 @@ impl Game {
                         card.upgrade();
                     }
                     self.pending_cards.push(card);
+                }
+                if thinking_ahead_requires_one && !self.pending_cards.is_empty() {
+                    let pending = std::mem::take(&mut self.pending_cards);
+                    for card in pending {
+                        self.put_card_from_forethought_or_top(card);
+                    }
+                    self.player.hand.append(&mut self.hand_held);
+                    self.finish_put_on_deck();
                 }
             }
             Action::Proceed => {
@@ -6315,7 +7484,9 @@ impl Game {
                 | RelicId::Nunchaku
                 | RelicId::Incense_Burner
                 | RelicId::Sundial
-                | RelicId::Inserter => 0,
+                | RelicId::Inserter
+                | RelicId::Girya => 0,
+                RelicId::WingedGreaves => 3,
                 RelicId::Matryoshka | RelicId::Omamori => 2,
                 RelicId::NlothsMask => 1,
                 _ => -1,

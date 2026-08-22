@@ -1160,7 +1160,13 @@ fn hp_range(id: MonsterId, ascension: i32) -> (i32, i32) {
                 (42, 56)
             }
         }
-        MonsterId::Exploder => (30, 30),
+        MonsterId::Exploder => {
+            if a7 {
+                (30, 35)
+            } else {
+                (30, 30)
+            }
+        }
         MonsterId::Repulsor => {
             if a7 {
                 (31, 38)
@@ -1760,7 +1766,12 @@ impl Monster {
             MonsterId::Exploder => {
                 // extra = turnCount, incremented in take_turn.
                 if self.extra < 2 {
-                    self.set_move(1, Intent::Attack, 9, 1);
+                    self.set_move(
+                        1,
+                        Intent::Attack,
+                        if self.ascension >= 2 { 11 } else { 9 },
+                        1,
+                    );
                 } else {
                     self.set_move(2, Intent::Unknown, 0, 1);
                 }
@@ -2062,7 +2073,7 @@ impl Monster {
                     self.first_move = false;
                     self.set_move(3, Intent::Buff, 0, 1);
                 } else if self.ascension >= 18 {
-                    if !self.last_move(2) {
+                    if !self.last_move(2) && !self.last_move_before(2) {
                         self.set_move(2, Intent::AttackDebuff, bash, 1);
                     } else if self.last_two(1) {
                         self.set_move(2, Intent::AttackDebuff, bash, 1);
@@ -3099,7 +3110,8 @@ impl Monster {
             }
             (MonsterId::Exploder, 1) => {
                 self.extra += 1;
-                let _ = hit_player(player, self, rng, 9, 1);
+                let damage = if ascension >= 2 { 11 } else { 9 };
+                let _ = hit_player(player, self, rng, damage, 1);
             }
             (MonsterId::Exploder, 2) => {
                 self.extra += 1;

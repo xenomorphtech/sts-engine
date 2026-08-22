@@ -2,7 +2,7 @@ use sts_engine::action::{Action, PotionOp};
 use sts_engine::card::Card;
 use sts_engine::combat::{self, Combat};
 use sts_engine::creature::{Player, RelicInstance};
-use sts_engine::game::{Game, NeowKind, NeowOption, Screen};
+use sts_engine::game::{Game, NeowDrawback, NeowKind, NeowOption, Screen};
 use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PotionId, PowerId, RelicId, RoomType};
 use sts_engine::rng::RngSet;
 use sts_engine::Unlocks;
@@ -18,6 +18,151 @@ fn potion_discard_remains_legal_on_card_reward_screen() {
         slot: 0,
         target_index: None,
     }));
+}
+
+#[test]
+fn smoke_bomb_can_be_discarded_but_not_used_in_a_boss_fight() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.current_room = RoomType::Boss;
+    game.player.potions[0].id = PotionId::SmokeBomb;
+    game.combat = Some(Combat::start(
+        EncounterId::TimeEater,
+        &mut game.player,
+        &mut game.rng,
+        50,
+        game.seed,
+        20,
+    ));
+    game.screen = Screen::Combat;
+
+    let actions = game.legal_actions();
+    assert!(!actions.contains(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 0,
+        target_index: None,
+    }));
+    assert!(actions.contains(&Action::Potion {
+        action: PotionOp::Discard,
+        slot: 0,
+        target_index: None,
+    }));
+}
+
+#[test]
+fn normality_disables_every_card_after_three_cards_are_played() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        1,
+        game.seed,
+        20,
+    ));
+    game.player.hand = vec![Card::new(CardId::Normality), Card::new(CardId::Defend_B)];
+    game.player.energy = 3;
+    game.combat.as_mut().unwrap().cards_played_this_turn = 3;
+    game.screen = Screen::Combat;
+
+    let actions = game.legal_actions();
+    assert!(!actions.iter().any(|action| matches!(action, Action::Play { .. })));
+    assert!(actions.contains(&Action::EndTurn));
+}
+
+#[test]
+fn thinking_ahead_requires_one_hand_choice_and_finishes_without_confirm() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        1,
+        game.seed,
+        20,
+    ));
+    game.player.hand = vec![
+        Card::new(CardId::Thinking_Ahead),
+        Card::new(CardId::Defend_B),
+        Card::new(CardId::Strike_B),
+    ];
+    game.player.draw.clear();
+    game.player.discard.clear();
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: None,
+    });
+    assert_eq!(game.screen, Screen::HandSelect);
+    assert!(!game.legal_actions().contains(&Action::Proceed));
+
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("Defend_B".into()),
+        x: None,
+        y: None,
+        room: None,
+    });
+    assert_eq!(game.screen, Screen::Combat);
+    assert_eq!(game.player.hand.iter().map(|card| card.id).collect::<Vec<_>>(), [CardId::Strike_B]);
+    assert_eq!(game.player.draw.iter().map(|card| card.id).collect::<Vec<_>>(), [CardId::Defend_B]);
+}
+
+#[test]
+fn fruit_juice_and_entropic_brew_are_usable_out_of_combat() {
+    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    game.player.potions[0].id = PotionId::FruitJuice;
+    game.player.potions[1].id = PotionId::EntropicBrew;
+    game.screen = Screen::CombatReward;
+
+    let actions = game.legal_actions();
+    for slot in 0..=1 {
+        assert!(actions.contains(&Action::Potion {
+            action: PotionOp::Use,
+            slot,
+            target_index: None,
+        }));
+    }
+}
+
+#[test]
+fn explosive_potion_is_one_untargeted_action_against_multiple_monsters() {
+    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    game.player.potions[0].id = PotionId::Explosive;
+    let seed = game.seed;
+    game.combat = Some(Combat::start(
+        EncounterId::ThreeShapes,
+        &mut game.player,
+        &mut game.rng,
+        40,
+        seed,
+        20,
+    ));
+    game.screen = Screen::Combat;
+
+    let uses: Vec<_> = game
+        .legal_actions()
+        .into_iter()
+        .filter(|action| {
+            matches!(
+                action,
+                Action::Potion {
+                    action: PotionOp::Use,
+                    slot: 0,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(
+        uses,
+        [Action::Potion {
+            action: PotionOp::Use,
+            slot: 0,
+            target_index: None,
+        }]
+    );
 }
 
 #[test]
@@ -50,12 +195,121 @@ fn map_legal_actions_do_not_duplicate_a_destination() {
 }
 
 #[test]
+fn winged_greaves_exposes_the_next_row_and_spends_only_on_a_jump() {
+    use std::collections::HashSet;
+
+    let mut game = Game::new(2877855328497827070, Character::Defect, 20, Unlocks::fixture());
+    game.dungeon.first_room_chosen = true;
+    game.screen = Screen::Map;
+    game.player.relics.push(RelicInstance {
+        id: RelicId::WingedGreaves,
+        counter: 3,
+        used_up: false,
+    });
+
+    let mut fixture = None;
+    for y in 0..13 {
+        for x in 0..7 {
+            let node = game.dungeon.map.node(x, y);
+            let Some(next_y) = node.edges.first().map(|edge| edge.dst_y) else {
+                continue;
+            };
+            let normal: HashSet<_> = node
+                .edges
+                .iter()
+                .map(|edge| (edge.dst_x, edge.dst_y))
+                .collect();
+            let all: Vec<_> = game.dungeon.map.nodes[next_y as usize]
+                .iter()
+                .filter(|dest| dest.has_edges())
+                .map(|dest| (dest.x, dest.y))
+                .collect();
+            if let Some(&jump) = all.iter().find(|dest| !normal.contains(dest)) {
+                fixture = Some((x, y, all, jump));
+                break;
+            }
+        }
+        if fixture.is_some() {
+            break;
+        }
+    }
+    let (x, y, expected, jump) = fixture.expect("map with a wing-only next-row node");
+    game.current_x = x;
+    game.current_y = y;
+
+    let actions = game.legal_actions();
+    let destinations: Vec<_> = actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Choose { x: Some(x), y: Some(y), .. } => Some((*x, *y)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(destinations, expected);
+    let action = actions
+        .into_iter()
+        .find(|action| {
+            matches!(
+                action,
+                Action::Choose {
+                    x: Some(x),
+                    y: Some(y),
+                    ..
+                } if (*x, *y) == jump
+            )
+        })
+        .expect("wing-only action");
+    game.step(&action);
+
+    assert_eq!(
+        game.player
+            .relics
+            .iter()
+            .find(|relic| relic.id == RelicId::WingedGreaves)
+            .map(|relic| relic.counter),
+        Some(2)
+    );
+}
+
+#[test]
+fn first_room_of_a_new_act_ignores_the_previous_boss_coordinate() {
+    let mut game = Game::new(2877855328497827070, Character::Defect, 20, Unlocks::fixture());
+    game.dungeon.first_room_chosen = false;
+    game.current_x = -1;
+    game.current_y = 15;
+    game.screen = Screen::Map;
+    game.player.relics.push(RelicInstance {
+        id: RelicId::WingedGreaves,
+        counter: 3,
+        used_up: false,
+    });
+    let first_room = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| matches!(action, Action::Choose { .. }))
+        .expect("first-row map action");
+
+    game.step(&first_room);
+
+    assert_eq!(game.current_y, 0);
+    assert_eq!(
+        game.player
+            .relics
+            .iter()
+            .find(|relic| relic.id == RelicId::WingedGreaves)
+            .map(|relic| relic.counter),
+        Some(3)
+    );
+}
+
+#[test]
 fn skip_on_grid_confirmation_cancels_the_preview() {
     let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
     game.neow_screen = 3;
     game.neow_options = vec![NeowOption {
         label: "Remove a card".into(),
         kind: NeowKind::RemoveCard,
+        drawback: NeowDrawback::None,
     }];
     game.step(&Action::Choose {
         index: 0,
@@ -84,6 +338,142 @@ fn skip_on_grid_confirmation_cancels_the_preview() {
         .iter()
         .any(|action| matches!(action, Action::Choose { .. })));
     assert!(!game.legal_actions().contains(&Action::Proceed));
+}
+
+fn action_choose(index: usize) -> Action {
+    Action::Choose {
+        index,
+        label: None,
+        x: None,
+        y: None,
+        room: None,
+    }
+}
+
+#[test]
+fn neow_applies_curse_before_twenty_percent_max_hp_reward() {
+    let mut game = Game::new(2696771490991422653, Character::Defect, 20, Unlocks::fixture());
+    game.step(&action_choose(0));
+    game.step(&action_choose(2));
+
+    assert_eq!(game.player.hp, 78);
+    assert_eq!(game.player.max_hp, 85);
+    assert_eq!(game.player.deck.last().map(|card| card.id), Some(CardId::Regret));
+    assert_eq!(game.rng.card.counter, 1);
+}
+
+#[test]
+fn neow_applies_curse_before_two_hundred_fifty_gold_reward() {
+    let mut game = Game::new(6999307915985924753, Character::Defect, 20, Unlocks::fixture());
+    game.step(&action_choose(0));
+    game.step(&action_choose(2));
+
+    assert_eq!(game.player.gold, 349);
+    assert_eq!(game.player.deck.last().map(|card| card.id), Some(CardId::Clumsy));
+    assert_eq!(game.rng.card.counter, 1);
+}
+
+#[test]
+fn neow_percent_damage_drawback_uses_thirty_percent_of_current_hp() {
+    let mut game = Game::new(2419708263384732054, Character::Defect, 20, Unlocks::fixture());
+    game.step(&action_choose(0));
+    game.step(&action_choose(2));
+
+    assert_eq!(game.player.hp, 46);
+}
+
+#[test]
+fn neow_defers_curse_until_after_rare_card_reward_opens() {
+    let mut game = Game::new(3696180478129188597, Character::Defect, 20, Unlocks::fixture());
+    game.step(&action_choose(0));
+    game.step(&action_choose(2));
+
+    assert_eq!(game.screen, Screen::CardReward);
+    assert_eq!(game.player.deck.len(), 11);
+    assert_eq!(game.rng.card.counter, 0);
+    assert_eq!(
+        game.card_reward.iter().copied().map(Card::sts_id).collect::<Vec<_>>(),
+        ["Creative AI", "Biased Cognition", "Rainbow"]
+    );
+
+    game.step(&action_choose(1));
+    assert_eq!(game.screen, Screen::Neow);
+    assert_eq!(game.rng.card.counter, 1);
+    assert_eq!(
+        game.player.deck.iter().copied().map(Card::sts_id).collect::<Vec<_>>().split_off(11),
+        ["Clumsy", "Biased Cognition"]
+    );
+}
+
+#[test]
+fn neow_defers_curse_until_transform_two_grid_closes() {
+    let mut game = Game::new(46, Character::Defect, 20, Unlocks::fixture());
+    game.step(&action_choose(0));
+    game.step(&action_choose(2));
+
+    assert_eq!(game.screen, Screen::Grid);
+    assert_eq!(game.player.deck.len(), 11);
+    assert_eq!(game.rng.card.counter, 0);
+    let choices: Vec<_> = game
+        .legal_actions()
+        .into_iter()
+        .filter(|action| matches!(action, Action::Choose { .. }))
+        .collect();
+    assert_eq!(choices.len(), 10);
+
+    game.step(&choices[0]);
+    assert_eq!(game.player.deck.len(), 11);
+    assert_eq!(game.rng.card.counter, 0);
+    assert_eq!(game.legal_actions(), choices);
+
+    game.step(&choices[1]);
+    assert_eq!(game.screen, Screen::Neow);
+    assert_eq!(game.rng.card.counter, 1);
+    assert_eq!(
+        game.player.deck.iter().copied().map(Card::sts_id).collect::<Vec<_>>().split_off(9),
+        ["BootSequence", "Sweeping Beam", "Shame"]
+    );
+}
+
+#[test]
+fn unopened_treasure_exposes_proceed_without_rolling_chest_rewards() {
+    let mut game = Game::new(1924666432788095156, Character::Defect, 20, Unlocks::fixture());
+    game.screen = Screen::Treasure;
+    game.current_room = RoomType::Treasure;
+    let treasure_counter = game.rng.treasure.counter;
+    let relic_counter = game.rng.relic.counter;
+
+    assert!(game.legal_actions().contains(&Action::Proceed));
+    game.step(&Action::Proceed);
+
+    assert_eq!(game.screen, Screen::Map);
+    assert!(game.rewards.is_empty());
+    assert_eq!(game.rng.treasure.counter, treasure_counter);
+    assert_eq!(game.rng.relic.counter, relic_counter);
+}
+
+#[test]
+fn a18_gremlin_nob_does_not_skull_bash_within_two_moves() {
+    let mut player = Player::for_character(Character::Defect);
+    player.hp = 200;
+    player.max_hp = 200;
+    let mut rng = RngSet::generate_seeds(2696771490991422653);
+    let mut combat = Combat::start(
+        EncounterId::GremlinNob,
+        &mut player,
+        &mut rng,
+        7,
+        2696771490991422653,
+        20,
+    );
+
+    assert_eq!(combat.monsters[0].next_move, 3);
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+    assert_eq!(combat.monsters[0].next_move, 2);
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+    assert_eq!(combat.monsters[0].next_move, 1);
+    combat::end_turn(&mut player, &mut combat, &mut rng, None);
+    assert_eq!(combat.monsters[0].next_move, 1);
 }
 
 #[test]
@@ -574,6 +964,32 @@ fn a20_hp_tiers_cover_late_hallways_elites_and_heart() {
     let mut rng = RngSet::generate_seeds(59);
     assert_eq!(combat::spawn_monster(MonsterId::GiantHead, &mut rng, 20).hp, 520);
     assert_eq!(combat::spawn_monster(MonsterId::CorruptHeart, &mut rng, 20).hp, 800);
+}
+
+#[test]
+fn a20_exploder_uses_its_ascension_seven_hp_roll_and_ascension_two_damage() {
+    let seed = 8_159_705_357_625_746_691;
+    let mut rng = RngSet::generate_seeds(seed);
+    let mut player = Player::defect();
+    let mut combat = Combat::start(
+        EncounterId::ThreeShapes,
+        &mut player,
+        &mut rng,
+        35,
+        seed,
+        20,
+    );
+    let exploder = combat
+        .monsters
+        .iter_mut()
+        .find(|monster| monster.id == MonsterId::Exploder)
+        .expect("seeded ancient-shape encounter should contain an Exploder");
+
+    assert_eq!(exploder.hp, 34);
+    assert_eq!(exploder.intent_damage, 11);
+    let hp_before = player.hp;
+    exploder.take_turn(&mut player, &mut rng, 20, None);
+    assert_eq!(player.hp, hp_before - 11);
 }
 
 #[test]

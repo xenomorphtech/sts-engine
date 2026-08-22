@@ -2,6 +2,7 @@
 
 use sts_engine::action::Action;
 use sts_engine::combat::Combat;
+use sts_engine::creature::RelicInstance;
 use sts_engine::game::{Game, Screen};
 use sts_engine::htn::HtnAgent;
 use sts_engine::ids::{Act, Character, EncounterId, MonsterId, RelicId, RoomType};
@@ -81,18 +82,45 @@ fn ending_smith_exposes_upgrade_then_completes_campfire() {
 
     let upgrades = game.legal_actions();
     assert!(!upgrades.is_empty());
-    assert!(upgrades.iter().all(|action| matches!(action, Action::Choose { .. })));
-    game.step(&upgrades[0]);
-    assert_eq!(game.player.deck.iter().filter(|card| card.upgraded).count(), 1);
-    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
+    assert!(upgrades.contains(&Action::Skip));
+    let upgrade = upgrades
+        .iter()
+        .find(|action| matches!(action, Action::Choose { .. }))
+        .expect("an upgradeable card")
+        .clone();
+    game.step(&upgrade);
+    assert_eq!(game.player.deck.iter().filter(|card| card.upgraded).count(), 0);
+    assert_eq!(game.legal_actions(), vec![Action::Proceed, Action::Skip]);
 
     // The first Proceed confirms the upgrade grid; the second leaves the
     // completed RestRoom, matching CampfireSmithEffect's two stable states.
     game.step(&Action::Proceed);
+    assert_eq!(game.player.deck.iter().filter(|card| card.upgraded).count(), 1);
     assert_eq!(game.screen, Screen::Rest);
     assert_eq!(game.legal_actions(), vec![Action::Proceed]);
     game.step(&Action::Proceed);
     assert_eq!(game.screen, Screen::Map);
+}
+
+#[test]
+fn fusion_hammer_disables_smith_at_campfires() {
+    let mut game = ending_game();
+    game.player.relics.push(RelicInstance {
+        id: RelicId::Fusion_Hammer,
+        counter: -1,
+        used_up: false,
+    });
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("map node".into()),
+        x: Some(3),
+        y: Some(0),
+        room: Some("RestRoom".into()),
+    });
+
+    assert!(!game.legal_actions().iter().any(
+        |action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Smith")
+    ));
 }
 
 #[test]
@@ -120,7 +148,7 @@ fn smith_exposes_upgrade_cards_then_returns_to_map() {
         .expect("an upgradeable starter card");
     game.step(&upgrade);
 
-    assert!(matches!(game.legal_actions().as_slice(), [Action::Proceed]));
+    assert_eq!(game.legal_actions(), vec![Action::Proceed, Action::Skip]);
     game.step(&Action::Proceed);
     assert_eq!(game.screen, Screen::Rest);
     assert!(matches!(game.legal_actions().as_slice(), [Action::Proceed]));
@@ -129,7 +157,7 @@ fn smith_exposes_upgrade_cards_then_returns_to_map() {
 }
 
 #[test]
-fn multi_card_grid_does_not_offer_already_picked_cards() {
+fn multi_card_grid_keeps_already_picked_cards_as_java_noop_actions() {
     let mut game = ending_game();
     game.screen = Screen::BossRelic;
     game.boss_relics = vec![RelicId::Astrolabe];
@@ -142,19 +170,24 @@ fn multi_card_grid_does_not_offer_already_picked_cards() {
     });
     assert_eq!(game.screen, Screen::Grid);
 
-    let mut picked_indices = Vec::new();
-    for _ in 0..3 {
-        let action = game
-            .legal_actions()
-            .into_iter()
-            .find(|action| matches!(action, Action::Choose { .. }))
-            .expect("another Astrolabe selection");
-        if let Action::Choose { index, .. } = action {
-            assert!(!picked_indices.contains(&index));
-            picked_indices.push(index);
-        }
-        game.step(&action);
-    }
+    let choices: Vec<_> = game
+        .legal_actions()
+        .into_iter()
+        .filter(|action| matches!(action, Action::Choose { .. }))
+        .collect();
+    game.step(&choices[0]);
+    assert_eq!(game.legal_actions(), choices);
+    let mut agent = HtnAgent::new();
+    assert_ne!(agent.decide(&game), choices[0]);
+
+    // ChoiceDriver/GridCardSelectScreen keeps a selected card executor-valid,
+    // but selecting it again is a no-op.
+    game.step(&choices[0]);
+    assert_eq!(game.screen, Screen::Grid);
+    assert_eq!(game.legal_actions(), choices);
+
+    game.step(&choices[1]);
+    game.step(&choices[2]);
     assert_eq!(game.screen, Screen::BossRelic);
 }
 
@@ -209,7 +242,8 @@ fn ending_shop_exposes_purchases_to_htn() {
         .filter(|action| matches!(action, Action::Choose { .. }))
         .count();
     assert_eq!(purchases, 14, "purge plus every generated shop offer");
-    assert!(legal.iter().any(|action| matches!(action, Action::Proceed)));
+    assert!(legal.iter().any(|action| matches!(action, Action::Skip)));
+    assert!(!legal.iter().any(|action| matches!(action, Action::Proceed)));
 
     let purchase = agent.decide(&game);
     assert!(matches!(
@@ -222,6 +256,40 @@ fn ending_shop_exposes_purchases_to_htn() {
     let gold_before = game.player.gold;
     game.step(&purchase);
     assert!(game.screen == Screen::Grid || game.player.gold < gold_before);
+}
+
+#[test]
+fn shop_purge_grid_can_cancel_back_to_shop() {
+    let mut game = ending_game();
+    game.player.gold = 1_000;
+    game.dungeon.first_room_chosen = true;
+    game.current_x = 3;
+    game.current_y = 0;
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("map node".into()),
+        x: Some(3),
+        y: Some(1),
+        room: Some("ShopRoom".into()),
+    });
+    game.step(&Action::Choose {
+        index: 0,
+        label: Some("shop".into()),
+        x: None,
+        y: None,
+        room: None,
+    });
+    let purge = game
+        .legal_actions()
+        .into_iter()
+        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "purge"))
+        .expect("affordable purge");
+    game.step(&purge);
+
+    assert_eq!(game.screen, Screen::Grid);
+    assert!(game.legal_actions().contains(&Action::Skip));
+    game.step(&Action::Skip);
+    assert_eq!(game.screen, Screen::Shop);
 }
 
 #[test]
