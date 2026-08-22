@@ -119,3 +119,70 @@ gen 101 top=689.5 median=663.8 sigma=0.60
 gen 102 top=690.8 median=656.3 sigma=0.60
   validate [[555, 42.01], [584, 42.11]]
 gen 103 top=687.1 median=661.8 sigma=0.60
+gen 104 top=664.5 median=643.4 sigma=0.60
+gen 105 top=708.6 median=676.9 sigma=0.60
+gen 106 top=673.4 median=654.7 sigma=0.60
+gen 107 top=719.4 median=708.8 sigma=0.60
+gen 108 top=707.1 median=685.1 sigma=0.60
+  validate [[593, 42.72], [587, 42.38]]
+gen 109 top=706.3 median=689.7 sigma=0.60
+gen 110 top=688.6 median=641.5 sigma=0.60
+gen 111 top=709.0 median=670.0 sigma=0.60
+gen 112 top=723.9 median=683.7 sigma=0.60
+gen 113 top=715.9 median=691.3 sigma=0.60
+gen 114 top=711.3 median=686.3 sigma=0.60
+  validate [[583, 42.5], [597, 42.18]]
+gen 115 top=693.6 median=674.5 sigma=0.60
+gen 116 top=713.9 median=675.0 sigma=0.60
+gen 117 top=702.5 median=661.5 sigma=0.60
+gen 118 top=696.9 median=678.8 sigma=0.60
+gen 119 top=730.8 median=691.0 sigma=0.60
+gen 120 top=723.4 median=702.7 sigma=0.60
+  validate [[609, 42.61], [579, 42.14]]
+gen 121 top=705.3 median=691.7 sigma=0.60
+gen 122 top=709.9 median=670.0 sigma=0.60
+gen 123 top=709.8 median=691.0 sigma=0.60
+gen 124 top=752.3 median=701.8 sigma=0.60
+gen 125 top=730.0 median=706.2 sigma=0.60
+gen 126 top=738.2 median=715.9 sigma=0.60
+  validate [[603, 42.93], [612, 42.88]]
+gen 127 top=714.8 median=703.2 sigma=0.60
+gen 128 top=717.8 median=682.6 sigma=0.60
+gen 129 top=733.3 median=724.7 sigma=0.60
+gen 130 top=718.9 median=680.9 sigma=0.60
+gen 131 top=740.3 median=705.3 sigma=0.60
+gen 132 top=747.5 median=723.2 sigma=0.60
+  validate [[610, 42.92], [605, 42.53]]
+gen 133 top=732.4 median=701.5 sigma=0.60
+gen 134 top=721.0 median=687.8 sigma=0.60
+gen 135 top=724.9 median=705.0 sigma=0.60
+gen 136 top=740.6 median=724.7 sigma=0.60
+gen 137 top=746.4 median=726.4 sigma=0.60
+gen 138 top=743.4 median=721.1 sigma=0.60
+  validate [[597, 42.27], [614, 42.35]]
+gen 139 top=726.3 median=685.5 sigma=0.60
+gen 140 top=739.8 median=696.7 sigma=0.60
+gen 141 top=732.1 median=695.2 sigma=0.60
+gen 142 top=724.2 median=708.1 sigma=0.60
+gen 143 top=722.0 median=706.1 sigma=0.60
+gen 144 top=717.8 median=693.9 sigma=0.60
+  validate [[627, 42.82], [635, 42.97]]
+gen 145 top=740.1 median=717.4 sigma=0.60
+gen 146 top=698.3 median=661.7 sigma=0.60
+gen 147 top=765.6 median=747.1 sigma=0.60
+gen 148 top=738.2 median=720.2 sigma=0.60
+gen 149 top=735.3 median=692.0 sigma=0.60
+gen 150 top=773.0 median=739.8 sigma=0.60
+  validate [[621, 42.97], [616, 42.86]]
+gen 151 top=757.1 median=732.3 sigma=0.60
+gen 152 top=736.5 median=714.3 sigma=0.60
+gen 153 top=728.2 median=705.6 sigma=0.60
+gen 154 top=731.6 median=698.8 sigma=0.60
+gen 155 top=747.9 median=722.5 sigma=0.60
+gen 156 top=742.4 median=712.9 sigma=0.60
+  validate [[638, 42.86], [618, 42.94]]
+gen 157 top=759.1 median=715.0 sigma=0.60
+gen 158 top=744.3 median=706.4 sigma=0.60
+gen 159 top=732.1 median=701.7 sigma=0.60
+gen 160 top=742.9 median=715.9 sigma=0.60
+done
