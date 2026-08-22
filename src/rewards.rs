@@ -526,6 +526,35 @@ pub fn preview_obtain(player: &Player, card: &mut Card) {
     }
 }
 
+/// CardObtainTransition.execute: consume Omamori for a curse, run relic
+/// onObtainCard hooks, then add the resulting card to the master deck.
+pub fn obtain_master_deck_card(player: &mut Player, id: CardId) {
+    let mut card = Card::new(id);
+    if card.card_type() == CardType::CURSE {
+        if let Some(omamori) = player.relics.iter_mut().find(|relic| relic.id == RelicId::Omamori) {
+            if omamori.counter != 0 {
+                omamori.counter -= 1;
+                if omamori.counter == 0 {
+                    omamori.used_up = true;
+                }
+                return;
+            }
+        }
+    }
+
+    preview_obtain(player, &mut card);
+    if card.card_type() == CardType::CURSE && player.has_relic(RelicId::Darkstone_Periapt) {
+        player.max_hp += 6;
+        if !player.has_relic(RelicId::Mark_of_the_Bloom) {
+            player.hp = (player.hp + 6).min(player.max_hp);
+        }
+    }
+    if player.has_relic(RelicId::CeramicFish) && !player.has_relic(RelicId::Ectoplasm) {
+        player.gold += 9;
+    }
+    player.deck.push(card);
+}
+
 fn card_base_price(rarity: CardRarity) -> i32 {
     match rarity {
         CardRarity::COMMON => 50,

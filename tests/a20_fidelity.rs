@@ -1688,6 +1688,43 @@ fn awakened_one_rebirth_resolves_during_the_monster_phase() {
 }
 
 #[test]
+fn lethal_go_for_the_eyes_does_not_weaken_awakened_rebirth() {
+    let mut game = Game::new(2101361640945465339, Character::Defect, 20, Unlocks::fixture());
+    game.screen = Screen::Combat;
+    game.combat = Some(Combat::start(
+        EncounterId::AwakenedOne,
+        &mut game.player,
+        &mut game.rng,
+        50,
+        game.seed,
+        20,
+    ));
+    let awakened_index = game
+        .combat
+        .as_ref()
+        .unwrap()
+        .monsters
+        .iter()
+        .position(|monster| monster.id == MonsterId::AwakenedOne)
+        .unwrap();
+    let awakened = &mut game.combat.as_mut().unwrap().monsters[awakened_index];
+    awakened.hp = 1;
+    awakened.next_move = 5;
+    awakened.intent_base_damage = 40;
+    awakened.intent_damage = 40;
+
+    let mut go_for_the_eyes = Card::new(CardId::Go_for_the_Eyes);
+    go_for_the_eyes.free_to_play_once = true;
+    game.player.hand.insert(0, go_for_the_eyes);
+    game.step(&Action::Play { hand_index: 0, target_index: Some(awakened_index) });
+
+    let awakened = &game.combat.as_ref().unwrap().monsters[awakened_index];
+    assert!(awakened.half_dead);
+    assert_eq!(awakened.hp, 0);
+    assert_eq!(awakened.power_amount(PowerId::Weak), 0);
+}
+
+#[test]
 fn time_warp_forces_turn_after_twelve_cards_and_grants_strength() {
     let mut game = Game::new(11, Character::Defect, 20, Unlocks::fixture());
     game.current_room = RoomType::Boss;
@@ -1888,6 +1925,11 @@ fn writhing_mass_has_a20_stats_and_rerolls_after_a_nonlethal_attack() {
 #[test]
 fn writhing_mass_implant_adds_a_permanent_parasite() {
     let mut game = Game::new(41, Character::Defect, 20, Unlocks::fixture());
+    game.player.relics.push(RelicInstance {
+        id: RelicId::Darkstone_Periapt,
+        counter: -1,
+        used_up: false,
+    });
     game.screen = Screen::Combat;
     game.combat = Some(Combat::start(
         EncounterId::WrithingMass,
@@ -1898,6 +1940,7 @@ fn writhing_mass_implant_adds_a_permanent_parasite() {
         20,
     ));
     game.player.hp = 500;
+    game.player.max_hp = 500;
     let monster = &mut game.combat.as_mut().unwrap().monsters[0];
     monster.next_move = 4;
     monster.intent_damage = 0;
@@ -1905,6 +1948,8 @@ fn writhing_mass_implant_adds_a_permanent_parasite() {
     game.step(&Action::EndTurn);
 
     assert_eq!(game.player.deck.iter().filter(|card| card.id == CardId::Parasite).count(), 1);
+    assert_eq!(game.player.max_hp, 506);
+    assert_eq!(game.player.hp, 506);
 }
 
 #[test]

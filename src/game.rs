@@ -5878,34 +5878,7 @@ impl Game {
     /// `ShowCardAndObtainEffect` after the match waitTimer: `makeCopy`, then
     /// Omamori / `onObtainCard` / `souls.obtain` before the next snapshot.
     fn obtain_master_deck_card(&mut self, id: CardId) {
-        let mut card = Card::new(id);
-        if card.card_type() == crate::ids::CardType::CURSE {
-            if let Some(oma) = self
-                .player
-                .relics
-                .iter_mut()
-                .find(|r| r.id == RelicId::Omamori)
-            {
-                if oma.counter != 0 {
-                    oma.counter -= 1;
-                    if oma.counter == 0 {
-                        oma.used_up = true;
-                    }
-                    return;
-                }
-            }
-        }
-        crate::rewards::preview_obtain(&self.player, &mut card);
-        if card.card_type() == crate::ids::CardType::CURSE
-            && self.player.has_relic(RelicId::Darkstone_Periapt)
-        {
-            self.increase_max_hp(6);
-        }
-        if self.player.has_relic(RelicId::CeramicFish) && !self.player.has_relic(RelicId::Ectoplasm)
-        {
-            self.player.gold += 9;
-        }
-        self.player.deck.push(card);
+        crate::rewards::obtain_master_deck_card(&mut self.player, id);
     }
 
     fn replace_starter_strikes_with_bites(&mut self) {

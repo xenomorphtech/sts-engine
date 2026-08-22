@@ -3387,7 +3387,7 @@ impl Monster {
             }
             (MonsterId::WrithingMass, 4) => {
                 self.split_triggered = true;
-                player.deck.push(Card::new(CardId::Parasite));
+                crate::rewards::obtain_master_deck_card(player, CardId::Parasite);
             }
             (MonsterId::CorruptHeart, 3) => {
                 player.add_power_from_monster(PowerId::Vulnerable, 2);
@@ -4421,7 +4421,10 @@ pub fn apply_player_power_to_monster(
     id: PowerId,
     amount: i32,
 ) {
-    if !monster.alive() {
+    // ApplyPowerAction is done when its target is dead or escaped. Half-dead
+    // monsters have zero HP and are likewise not valid power targets even
+    // though they keep the encounter open for rebirth/regrowth.
+    if !monster.alive() || monster.half_dead {
         return;
     }
     let sadistic = if id != PowerId::Shackled
