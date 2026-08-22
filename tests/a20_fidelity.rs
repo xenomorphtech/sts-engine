@@ -54,6 +54,50 @@ fn smoke_bomb_can_be_discarded_but_not_used_in_a_boss_fight() {
 }
 
 #[test]
+fn smoke_bomb_suppresses_rewards_when_a_card_kills_before_escape() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.current_room = RoomType::Monster;
+    game.player.potions[0].id = PotionId::SmokeBomb;
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        1,
+        game.seed,
+        20,
+    ));
+    let combat = game.combat.as_mut().expect("combat");
+    for monster in &mut combat.monsters {
+        monster.hp = 0;
+        monster.dead = true;
+    }
+    combat.monsters[0].hp = 1;
+    combat.monsters[0].dead = false;
+    game.player.hand = vec![Card::new(CardId::Strike_B)];
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Potion {
+        action: PotionOp::Use,
+        slot: 0,
+        target_index: None,
+    });
+    assert!(game.combat.as_ref().is_some_and(|combat| combat.smoked));
+    let card_rng_before = game.rng.card.counter;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: Some(0),
+    });
+
+    assert_eq!(game.screen, Screen::CombatReward);
+    assert!(game.rewards.is_empty());
+    assert!(game.card_reward.is_empty());
+    assert_eq!(game.rng.card.counter, card_rng_before);
+    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
+}
+
+#[test]
 fn normality_disables_every_card_after_three_cards_are_played() {
     let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
     game.combat = Some(Combat::start(

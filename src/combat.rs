@@ -10,6 +10,10 @@ use crate::rng::RngSet;
 pub struct Combat {
     pub encounter: EncounterId,
     pub monsters: Vec<Monster>,
+    /// AbstractRoom.smoked: Smoke Bomb was used during this combat.
+    /// The flag suppresses the visible combat rewards even when the last
+    /// monster dies before the player's escape animation completes.
+    pub smoked: bool,
     pub turn: i32,
     pub cards_played_this_turn: i32,
     /// TimeWarpPower.callEndTurnEarlySequence after the twelfth card.
@@ -310,6 +314,7 @@ impl Combat {
         let mut combat = Self {
             encounter,
             monsters,
+            smoked: false,
             turn: 1,
             cards_played_this_turn: 0,
             skills_this_turn: 0,

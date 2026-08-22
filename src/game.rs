@@ -3307,6 +3307,19 @@ impl Game {
                 PotionId::LiquidMemories => {
                     self.begin_memories_select();
                 }
+                PotionId::SmokeBomb => {
+                    // SmokeBomb.use marks AbstractRoom.smoked immediately;
+                    // the escape animation can still leave enough time for a
+                    // queued/accepted card to kill the final monster. Java
+                    // then opens the smoked CombatRewardScreen without
+                    // setupItemReward, so no rewards are claimable and card
+                    // reward RNG is not consumed (rank 46).
+                    if let Some(combat) = self.combat.as_mut() {
+                        combat.smoked = true;
+                    } else {
+                        return;
+                    }
+                }
                 PotionId::Attack => {
                     self.begin_potion_discovery(Some(crate::ids::CardType::ATTACK), false);
                     self.player.potions[slot] = PotionInstance {
@@ -3463,6 +3476,7 @@ impl Game {
                     .sum()
             })
             .unwrap_or(0);
+        let smoked = self.combat.as_ref().is_some_and(|combat| combat.smoked);
         if self
             .combat
             .as_ref()
@@ -3595,7 +3609,7 @@ impl Game {
         // AbstractRoom.update skips opening CombatRewardScreen entirely for
         // final bosses in TheBeyond/TheEnding. Since setupItemReward is what
         // creates the card reward, these fights must not roll reward cards.
-        if skip_combat_rewards {
+        if skip_combat_rewards || smoked {
             self.card_reward.clear();
         } else {
             self.rewards.push(Reward {
@@ -3605,6 +3619,12 @@ impl Game {
                 card_options: None,
             });
             self.generate_card_reward();
+        }
+        if smoked {
+            // The room still rolls gold, elite relics, and a potion before
+            // CombatRewardScreen.openCombat(..., true), preserving those RNG
+            // advances. The smoked screen does not expose any of the items.
+            self.rewards.clear();
         }
         self.combat = None;
         self.screen = Screen::CombatReward;
