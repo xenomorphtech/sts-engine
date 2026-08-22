@@ -190,6 +190,17 @@ impl Combat {
         if player.has_relic(RelicId::Vajra) {
             player.add_power(PowerId::Strength, 1);
         }
+        // Girya.atBattleStart grants Strength equal to the number of lifts
+        // stored in its counter (rank 83 Beam Cell 4 vs 3).
+        let girya_strength = player
+            .relics
+            .iter()
+            .find(|relic| relic.id == RelicId::Girya)
+            .map(|relic| relic.counter)
+            .unwrap_or(0);
+        if girya_strength > 0 {
+            player.add_power(PowerId::Strength, girya_strength);
+        }
         // Sling.atBattleStart: eliteTrigger grants Strength 2 for the fight.
         if player.has_relic(RelicId::Sling) && is_elite_encounter(encounter) {
             player.add_power(PowerId::Strength, 2);

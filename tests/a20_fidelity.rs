@@ -870,6 +870,28 @@ fn sling_of_courage_grants_strength_only_in_elite_combat() {
 }
 
 #[test]
+fn girya_lifts_grant_strength_at_battle_start() {
+    let mut player = Player::for_character(Character::Defect);
+    player.relics.push(RelicInstance {
+        id: RelicId::Girya,
+        counter: 2,
+        used_up: false,
+    });
+    let mut rng = RngSet::generate_seeds(8960835100198667916);
+
+    let _combat = Combat::start(
+        EncounterId::JawWorm,
+        &mut player,
+        &mut rng,
+        41,
+        8960835100198667916,
+        20,
+    );
+
+    assert_eq!(player.power_amount(PowerId::Strength), 2);
+}
+
+#[test]
 fn fruit_juice_and_entropic_brew_are_usable_out_of_combat() {
     let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
     game.player.potions[0].id = PotionId::FruitJuice;
