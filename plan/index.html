@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTN A20 Improvement Plan</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>HTN Defect — A20 improvement plan</h1>
+<p class="sub">Condensed from 8 parallel deep-analysis reports (2026-08-22). Current state: A0 honest 61.6% (baked) / ~63.4% in-training; <strong>A20 with the same policy: 11.0%</strong> — and that number is inflated by engine fidelity gaps. Legend: <span class="tag det">DET</span> deterministic strategy &nbsp;<span class="tag rl">ES/RL</span> optimizer dimension &nbsp;<span class="tag eng">ENGINE</span> engine work.</p>
+
+<h2>The documents</h2>
+<div class="grid">
+<div class="card"><a href="a20-mechanics.html"><strong>A20 mechanics delta</strong></a><br>Ascension modifier inventory vs engine support; measured A20 death profile; the double-boss / A11 / Act-4 gaps.</div>
+<div class="card"><a href="combat-search.html"><strong>Combat turn-planning</strong></a><br>Frost-aware pruning, frontier dedup, exact lethal, next-turn exposure, the correct multi-turn formulation.</div>
+<div class="card"><a href="boss-playbooks.html"><strong>Boss &amp; elite playbooks</strong></a><br>Per-fight rules with code hooks; the scripted-spike table that covers 6 loss buckets; missing-monster inventory.</div>
+<div class="card"><a href="archetypes.html"><strong>Archetype deck-building</strong></a><br>Six overlay archetypes, continuous commitment, need-decay and off-plan penalties; 34 ES dims.</div>
+<div class="card"><a href="map-pathing.html"><strong>Map pathing &amp; risk</strong></a><br>Deck-power-conditional elite affordance; forward DP over (node, HP, gold, keys); rest/shop/key policies.</div>
+<div class="card"><a href="potions-relics.html"><strong>Potion &amp; relic economy</strong></a><br>A11 slots, discard-swap slot management, boss-relic downside pricing, defensive shop relics.</div>
+<div class="card"><a href="events.html"><strong>Event playbook</strong></a><br>Complete per-event table; 7 live bugs (Drug Dealer ingests J.A.X.!); 17 engine stubs; ES thresholds.</div>
+<div class="card"><a href="rl-roadmap.html"><strong>RL &amp; optimization roadmap</strong></a><br>ES v4 (SNES sigmas, rank utilities), staged vector growth, boss-gauntlet curriculum, neural go/no-go, eval hygiene.</div>
+</div>
+
+<h2>Cross-cutting findings</h2>
+<ul>
+<li><span class="tag warn">Fidelity</span> <strong>The engine does not yet play real A20.</strong> Missing: A20 double boss, A11 two potion slots, Time Eater / Nemesis / Reptomancer / Spire Growth / Writhing Mass (silently replaced by Hexaghost / Gremlin Nob / Cultist), several A4/A7/A8/A9/A19 HP-and-moveset tiers. <strong>Act 4 is unreachable</strong> (win = Act 3), so all key-chasing is live dead weight.</li>
+<li><strong>A20 death profile (500 seeds):</strong> Act 1 boss 32% of runs (Hexaghost 15%!), Act 2 boss 21%, hallways/elites ~27%. The A0-tuned policy under-blocks scripted spikes and enters bosses too poor.</li>
+<li><strong>Two shared mechanisms cover most combat losses:</strong> the <em>scripted-spike table</em> (Hexaghost Divider, Automaton beam, Heart cycle, Giant Head, Collector debuff, Awakened echo) and the <em>status-gain penalty</em> (Wounds/Dazed/Burns invisible today).</li>
+<li><strong>Structure by hand, magnitudes by ES.</strong> Every report converged on the same doctrine, backed by the ledger: hand-set values regress, hard gates fail, but hand-written <em>structure</em> (affinities, spike schedules, DP shape) with near-neutral defaults + ES-tuned scales wins. All additions must be default-preserving.</li>
+<li><strong>Eval hygiene:</strong> the current best-selection argmaxes repeated fixed validation cohorts (~1.5–2pp inflation). Switch to tail-averaged bakes, fresh per-checkpoint sources, McNemar-paired accepts, 10k honest cohorts.</li>
+</ul>
+
+<h2>Recommended sequence</h2>
+<div class="tablewrap"><table>
+<tr><th>Phase</th><th>Work</th><th>Type</th><th>Why now</th></tr>
+<tr><td><strong>0. Eval + ES v4</strong></td><td>Tail-average bake, fresh validation sources, McNemar pairing, 10k honest; SNES per-dim sigmas, full-λ utilities, λ=20×300 CRN</td><td><span class="tag rl">ES/RL</span></td><td>0.5–1 day; +3–6pp at A0 and every later phase measures honestly</td></tr>
+<tr><td><strong>1. A20 fidelity</strong></td><td>Double boss; A11 potion slots; Act-4 entry decision (or gate key-chasing); missing Act 3 monsters; ascension HP/moveset audit</td><td><span class="tag eng">ENGINE</span></td><td>Prerequisite — tuning against phantom encounters is wasted compute</td></tr>
+<tr><td><strong>2. Combat structure</strong></td><td>Frost-aware mid-turn block (D1) + frontier dedup (D2) → next-turn exposure (E1) → exact lethal (D3) → spike table + status penalty + dynamic targeting + Lagavulin wake guard</td><td><span class="tag det">DET</span> + <span class="tag rl">ES</span></td><td>Attacks the measured A20 walls (Act 1/2 bosses); each lands default-preserving, paired-validated</td></tr>
+<tr><td><strong>3. Vector growth</strong></td><td>Deckplan task coefficients (batch A) → archetype commitment block → per-boss overrides + event/Neow thresholds (B+C) → potion/relic dims</td><td><span class="tag rl">ES/RL</span></td><td>Staged behind ES v4; keep live dims &lt; 300</td></tr>
+<tr><td><strong>4. Event &amp; economy fixes</strong></td><td>7 event bugs (Golden Idol, Drug Dealer, Woman in Blue, Goop, Falling, Scrap Ooze, Match&amp;Keep); potion discard-swap; boss-relic interaction params; shop routing</td><td><span class="tag det">DET</span></td><td>Cheap, immediate, independently testable</td></tr>
+<tr><td><strong>5. A20 campaign</strong></td><td>Warm-start ES from A0 mean (<code>params_a20.json</code>), sigma 1.0, high floor weight; boss-weighted cohorts; then boss-gauntlet EM loop; map DP + elite affordance opened to the ES</td><td><span class="tag rl">ES/RL</span></td><td>A20 evals are <em>cheaper</em> than A0 (runs die earlier); expect rest/elite/danger dims to move far</td></tr>
+<tr><td><strong>6. Later</strong></td><td>Multi-machine fan-out (multiplies everything); value-net probe; PPO/AZ-lite only if the probe shows headroom</td><td>—</td><td>Neural path strictly dominated on pp/day until ES flattens</td></tr>
+</table></div>
+
+<h2>Named-parameter inventory (new ES dims by source)</h2>
+<p>Combat: <code>spike_danger</code>, <code>spike_horizon</code>, <code>next_exposure_weight</code>, <code>next_block_tax</code>, <code>threat_focus_weight</code>, <code>pipeline_weight</code>, <code>status_gain_penalty</code>, <code>horizon_blend</code>, <code>laga_wake_*</code>, <code>guardian_flip_bonus</code>, <code>champ_holdback_frac</code>, <code>donu/deca_priority</code>, <code>enemy_armor_penalty</code>, <code>heart_weak_value</code>, <code>slow_stack_value</code> …<br>
+Archetypes: <code>arch.*</code> (34) · Map: <code>elite_relic_value</code>, <code>elite_decay</code>, <code>elite_mit_*</code>, <code>w_*</code>, DP terminal weights, <code>rest_hp_preboss3</code>, <code>shop_route_gold_min</code> … · Potions/relics: <code>potion_swap_margin</code>, <code>potion_boss_dump_*</code>, <code>dripper_*</code>, <code>hammer_smith_penalty</code>, <code>cursed_key_treasure_penalty</code>, <code>shop_{tungsten,torii,incense,icecream}_bonus</code> … · Events: <code>ev_*</code> (~18) + <code>neow_rank.*</code> (19) · Deckplan: <code>task.*</code> (~30) · Per-boss: <code>boss.&lt;id&gt;.*</code> (~18).</p>
+
+<p class="sub">Sources: eight agent reports (A20 delta, combat search, archetypes, boss playbooks, map pathing, potions/relics, events, RL methodology), 2026-08-22. Session landmarks: A0 10.1% → 61.6% honest via hand policies + three ES phases; ledger in <code>HTN_EXPERIMENTS.md</code>.</p>
+</body>
+</html>

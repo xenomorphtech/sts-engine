@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event Playbook</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="crumb"><a href="index.html">&larr; A20 improvement plan</a></nav>
+<h1>Per-event playbook (A20 Defect)</h1>
+<p class="sub">Status legend: <strong>OK</strong> current code correct (sometimes by fallback luck) · <span class="tag warn">BUG</span> losing line today · <strong>STUB</strong> engine no-op (both options do nothing) · <span class="tag eng">GAP</span> engine mechanics missing.</p>
+
+<div class="card">
+<p><strong>Engine-wide facts:</strong> (1) Any event id without an explicit branch gets <code>[Continue]/[Leave]</code> options that <em>both do nothing</em>. 17 events are stubs: Vampires, Cursed Tome, Dead Adventurer, Golden Wing, Liars Game, Mausoleum, Moai Head, Mysterious Sphere, Tomb of Red Mask, N'loth, Fountain, Accursed Blacksmith, Beggar, Purifier, Upgrade Shrine, Transmorgrifier, Duplicator. (2) <strong>Ghosts is implemented as pure downside</strong> — Accept costs 50% max HP and grants nothing (no Apparition card exists). Refuse is engine-forced; flip to Accept only after Apparitions are implemented (then it's elite-tier for frost Defect).</p>
+</div>
+
+<h2>Highest-impact fixes (ranked)</h2>
+<div class="tablewrap"><table>
+<tr><th>#</th><th>Event</th><th>Today</th><th>Fix</th></tr>
+<tr><td>1</td><td><strong>Golden Idol</strong></td><td><span class="tag warn">BUG</span> SAFE matches [Leave] — skips a top-tier relic every Act 1</td><td>Take → Outrun (Injury; frost decks barely attack, curse removable) or Hide at low maxHP risk; never Smash below ~40% HP</td></tr>
+<tr><td>2</td><td><strong>Drug Dealer</strong></td><td><span class="tag warn">BUG</span> policy's <code>pick("leave")</code> matches nothing (options: Ingest/Study/Inject) → falls to choices[0] = <strong>ingests J.A.X.</strong></td><td>Study (transform 2 worst — free value; grid already picks worst)</td></tr>
+<tr><td>3</td><td><strong>The Woman in Blue</strong></td><td><span class="tag warn">BUG</span> leaves — pays 5% maxHP (A15+) and forfeits potions</td><td>Buy <code>min(empty_slots, gold/20)</code> potions, ≥1 if gold ≥ 20</td></tr>
+<tr><td>4</td><td><strong>World of Goop</strong></td><td><span class="tag warn">BUG</span> leaves — pays 35–75g to avoid 11 HP</td><td>Gather (+75g, −11 HP) unless <code>hp ≤ 14</code>; ~130g swing per occurrence</td></tr>
+<tr><td>5</td><td><strong>Falling</strong> (Act 3)</td><td><span class="tag warn">BUG</span> choices[0] = always deletes a random <em>skill</em> (can be Glacier/Seek)</td><td>Read the 3 candidate cards from <code>event.data</code>; surrender max <code>removal_score</code> (usually the attack); never a scaling power</td></tr>
+<tr><td>6</td><td><strong>Scrap Ooze</strong></td><td><span class="tag warn">BUG</span> never digs</td><td>Dig while <code>hp &gt; ~60%</code>; expected ~16 HP for a guaranteed relic</td></tr>
+<tr><td>7</td><td><strong>Match and Keep!</strong></td><td><span class="tag warn">BUG</span> random flips; can match curse pairs <em>into the deck</em></td><td>Memory-aware matcher (<code>match_cards[i].revealed</code> is exposed); prioritize rare/uncommon; never complete curse pairs</td></tr>
+<tr><td>8</td><td>Big Fish / Bonfire</td><td>partial</td><td>Donut at high HP; Bonfire: offer a redundant <em>uncommon</em> for full heal when HP low (worst-card offer otherwise correct — removal is the prize)</td></tr>
+<tr><td>9</td><td>Designer</td><td>choices[0] = Adjust</td><td>Prefer removal: Full Service (gold ≥ 110) &gt; Clean Up &gt; Adjust</td></tr>
+<tr><td>10</td><td>MindBloom / SensoryStone / Knowing Skull</td><td>right by fallback ordering</td><td>Pin explicitly (War / Recall 1 / Leave) — the alternatives are engine no-ops that would loop</td></tr>
+</table></div>
+
+<h2>Confirmed-correct current behavior</h2>
+<p>Cleric (thresholds fine, expose to ES), Living Wall (Forget + worst-card grid), Mushrooms (Fight), Shining Light (0.7 gate; add ≥4 upgradable-non-basics condition), Library (0.65 read gate), Addict (pay ≥150), Back to Basics (Elegance), Forgotten Altar, Winding Halls (Retrace), Golden Shrine (Pray), Masked Bandits (Fight — add HP/gold guard), Nest (Smash), FaceTrader (Leave; Touch branch optional), NoteForYourself (Leave), The Joust (minor: Owner bet has better EV at gold ≥ 100), WeMeetAgain (Give Potion — should check potion value and the doomed card via <code>event.data[1]</code>; Attack is a free no-op exit).</p>
+
+<h2>Engine gaps worth implementing before further tuning</h2>
+<ul>
+<li><span class="tag eng">GAP</span> <strong>Ghosts/Apparitions</strong> — top-tier at A20 frost Defect once real; until then keep Refuse.</li>
+<li><span class="tag eng">GAP</span> The 17 stubs — especially Purifier / Upgrade Shrine / Fountain (free value walked past) and Vampires (then archetype rule: refuse when Strike-light/frost; accept only with Blood Vial and ≥4 Strikes).</li>
+<li><span class="tag eng">GAP</span> Colosseum second fight, Knowing Skull rewards.</li>
+<li><strong>Duplicator caution:</strong> when implemented, its grid must map to <em>best</em>-card semantics (like Library), not the purge grid's worst-card.</li>
+</ul>
+
+<h2>Neow at A20</h2>
+<p>The engine applies <strong>no drawbacks</strong> (the drawback roll only prunes cat-2 options), so category-2 blessings are pure upside and the current ranking (RemoveTwo &gt; TransformTwo &gt; RareRelic &gt; ThreeRareCards &gt; 250g) stays right. Boss-relic swap removes Cracked Core and rolls blind — rank stays low. TenHp is actually +10% maxHP. Neow's Lament (ThreeEnemyKill) is rank 25 <em>because</em> the map policy doesn't elite-rush floors 1–3 — if elite-hunting lands (map doc), raise to ~75. All 19 ranks → ES dims.</p>
+
+<h2>ES-tunable thresholds</h2>
+<p><code>ev_bigfish_heal_hp</code> (0.60) · <code>ev_cleric_heal_hp</code> (0.55) · <code>ev_cleric_purify_gold</code> (110) · <code>ev_goop_min_hp</code> (14) · <code>ev_scrap_ooze_hp</code> (0.60) · <code>ev_shining_light_hp</code> (0.70) · <code>ev_shining_light_min_upgradable</code> (4) · <code>ev_library_read_hp</code> (0.65) · <code>ev_addict_pay_gold</code> (150) · <code>ev_altar_sacrifice_hp_num</code> (30) · <code>ev_bandits_fight_hp</code> (0.30) · <code>ev_bonfire_heal_hp</code> (0.50) · <code>ev_facetrader_touch_hp/gold</code> (0.80/100) · <code>ev_joust_owner_gold</code> (100) · <code>ev_wemeet_gold_floor</code> (150) · <code>ev_womaninblue_max_buy</code> (3) · <code>ev_designer_removal_pref</code> (1.0) · <code>neow_rank.*</code> map (19 ints) · future: <code>ev_ghosts_accept_maxhp</code> (35), <code>ev_vampires_max_strikes</code> (3).</p>
+<p class="sub">Fixed rules, do <em>not</em> tune: Golden Idol Take, Drug Dealer Study, MindBloom War, SensoryStone Recall 1, Knowing Skull Leave, Ghosts Refuse (until Apparition exists), Golden Shrine Pray, Falling worst-card. Methodology: Goop/Woman-in-Blue/Scrap-Ooze/Golden-Idol shift the gold/HP economy the baked map scalars were tuned around — validate each on fresh cohorts and expect the ES to want a re-run after.</p>
+</body>
+</html>

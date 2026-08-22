@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL &amp; Optimization Roadmap</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="crumb"><a href="index.html">&larr; A20 improvement plan</a></nav>
+<h1>RL &amp; optimization roadmap</h1>
+<p class="sub">From the phase-3 ES (~63% A0, still +1pp/20 gens) to 70%+ A0 and an A20 campaign. Keep what phase 3 got right: common random numbers within a generation, mirrored sampling, pure recombination, fresh cohort per generation.</p>
+
+<h2>ES v4 design</h2>
+<ol>
+<li><strong>Per-dimension step sizes (SNES-style, not full CMA).</strong> Full-λ signed rank utilities (bottom half negative) instead of top-4-only; mean update via utilities; log-σ update <code>log σ_d += η_σ · Σ u_i (ε²_{i,d} − 1)</code> with η_σ ≈ 0.06. Replaces frozen hand-set SPEC sigmas — the ~1pp/20gens crawl is the classic signature of per-dim scale mismatch under one global multiplier.</li>
+<li><strong>Global sigma schedule:</strong> validation-slope controller (hold while 12-gen moving average rises ≥ ~8 wins/2000; step 0.6 → 0.45 → 0.3 on stall; floor ~0.25 where eval noise dominates).</li>
+<li><strong>Anneal the floor weight:</strong> <code>FLOOR_WEIGHT = max(0.5, 6·(1 − winrate))</code> — nearly redundant at 62% wins, crucial at &lt;15% (the A20 warm start), where floor carries most of the gradient. Optional dense term: mean boss-entry HP fraction (the measured win/loss discriminator) at weight ~0.3.</li>
+<li><strong>Shift budget from seeds to directions:</strong> λ=20 (10 mirrored pairs) × 300 seeds = same 6,000 sims/gen. Paired-difference variance scales with the seed-flip rate, not binomial win-count variance — 300 shared seeds lose little ranking fidelity while ~doubling direction coverage. Floor: ~250 seeds.</li>
+<li><strong>Bake protocol: average the last k=8 generation means, never argmax over validations</strong> (the current <code>best</code> argmax over ~27 noisy fixed-cohort validations inflates ~1.5–2pp — the live trap). Honest number from a never-touched cohort at bake time.</li>
+<li><strong>A20: warm-start from A0 params</strong> (hundreds of gens of transferable knowledge), reset sigma to 1.0 for ~30 gens, high floor weight. Two baked files selected by ascension (<code>params_default.json</code> / <code>params_a20.json</code>); do <em>not</em> multi-objective A0+A20 into one vector.</li>
+</ol>
+
+<h2>Vector extensions (staged)</h2>
+<div class="tablewrap"><table>
+<tr><th>Batch</th><th>Dims</th><th>Content</th></tr>
+<tr><td><strong>A</strong> (highest value)</td><td>~30</td><td><code>deckplan.rs::task_card_value</code> coefficients — <code>task.frost_per_source</code>, <code>task.orbslot_value</code>, <code>task.claw_per</code>, clamp caps, activation thresholds. <strong>The per-archetype conditional table done right:</strong> tune the ~30 interaction coefficients that already modulate pick scores by deck state, not a 450-dim card×archetype table. Low-rank beats full table at this eval budget.</td></tr>
+<tr><td><strong>B</strong></td><td>~25</td><td><code>boss_card_value</code> prep table (~10) + per-boss overrides <code>boss.&lt;id&gt;.fl</code> / <code>.danger_mult</code> (~18) — continuous per-boss dims let ES find which boss-specific rules pay (hand-written ones were hit-or-miss).</td></tr>
+<tr><td><strong>C</strong></td><td>~15</td><td>Event thresholds + hp-guard margin + 19 Neow ranks (see events doc).</td></tr>
+<tr><td><strong>D</strong></td><td>~8</td><td>Per-potion-class values, purge value, shop relic coefficients.</td></tr>
+</table></div>
+<p>Cost: ~30–60 extra gens per 30-dim batch. Stage them (A, then B+C after A's slope flattens); SNES per-dim sigmas make converged dims self-shrink. Keep total live dims under ~300.</p>
+
+<h2>Curriculum design</h2>
+<ol>
+<li><strong>Tier 1 — boss-weighted cohorts (no engine changes):</strong> tabulate conditional win rate by boss from 10k-seed fixtures; build generation cohorts over-weighting the worst boss ~2×. Structural (fixed property of the seed), hence stationary — no cohort adaptation.</li>
+<li><strong>Tier 2 — boss-gauntlet fitness (snapshot harness):</strong> run the incumbent to a boss-entry predicate, snapshot the <code>Game</code>, evaluate candidate <em>combat</em> params on the fight alone (win + HP retained). ~10× cheaper and far less noisy → an order of magnitude more signal for combat dims. <strong>Staged EM loop:</strong> freeze draft/map dims → tune combat on the gauntlet → re-freeze → tune draft/map on full runs → regenerate fixtures from the new incumbent (prevents adaptation to stale decks).</li>
+<li><strong>Tier 3:</strong> same harness for elite fights and Act 3 hallway spikes; plus one campaign with <code>elite_value/penalty</code> sigma ×3 to probe the elite-heavy basin the ES declined.</li>
+</ol>
+
+<h2>Neural combat policy: go/no-go</h2>
+<div class="card">
+<p><strong>Verdict: NO-GO now.</strong> ES delivers 1–2pp/day of pure compute; RL must beat a 63%+ tuned beam search end-to-end. <code>env.rs</code> needs a rewrite anyway (reset hardcodes Ironclad; obs is 8 floats; reward pays +1 <em>every step</em> once act ≥ 2). Inference placement is the killer: the eval runs 10²–10³ times per decision — a net inside the loop is 50–100× slower eval, breaking outer-loop ES entirely. No GPU.</p>
+<p><strong>Bounded probe worth doing (2 days) after ES saturates:</strong> supervised value net V(combat state) → fight outcome from 10–50k logged runs (~800–1200-float obs: pile multisets, hand slots, orbs, player scalars, enemy intents; 2–3 layer MLP). Measure where V's ranking of beam candidates disagrees with the parametric eval on lost runs. If it sees little — RL is closed out cheaply. If a lot — <strong>distill structure, not weights</strong>: turn the disagreements into new eval features/params and let ES tune them, keeping the fast eval. Full PPO/AZ-lite: 3–4 weeks, +0–8pp with wide error bars; rank last.</p>
+</div>
+
+<h2>Evaluation protocol</h2>
+<ul>
+<li>Binomial se at p≈0.62: 500 seeds ±4.3pp (95%), 1k ±3.0, 2k ±2.1, 10k ±0.95. Unpaired detection of +2pp needs ~9k seeds/arm; +1pp ~37k.</li>
+<li><strong>Always pair on identical cohorts and score per-seed flips (McNemar)</strong> from fixture files — 3–6× cheaper than unpaired for the same power.</li>
+<li><strong>Honest number = one 10k never-touched cohort at bake time</strong> (~3–4 min; ±0.95pp). "Honest 1k" (±3pp) cannot certify 70%.</li>
+<li>Validate checkpoints on <em>fresh</em> per-checkpoint sources; select bakes by tail-averaged mean (see ES v4 §5). Capped seeds are bugs. No mid-campaign builds unless default-preserving.</li>
+</ul>
+
+<h2>Parallelization</h2>
+<p>Single box: evals saturate cores; the λ/seeds rebalance is the only free win. <strong>Multi-machine fan-out is the highest-leverage change and nearly free</strong>: one static binary + one params JSON + one summary line per eval — SSH task farm; K boxes = K× generations/day; async ES tolerates stragglers. One extra machine doubles compute yield and funds the A20 campaign in parallel.</p>
+
+<h2>Ranked roadmap (win-rate per engineering-day)</h2>
+<div class="tablewrap"><table>
+<tr><th>#</th><th>Item</th><th>Cost</th><th>Expected</th></tr>
+<tr><td>1</td><td>ES v4 core (utilities + SNES σ + schedule + tail-average bake + fresh validation)</td><td>0.5–1 d</td><td>+3–6pp A0</td></tr>
+<tr><td>2</td><td>Vector batch A: deckplan task coefficients</td><td>0.5–1 d</td><td>+2–5pp</td></tr>
+<tr><td>3</td><td>λ/seeds rebalance (20×300 CRN)</td><td>0.1 d</td><td>+1–2pp rate</td></tr>
+<tr><td>4</td><td>Multi-machine fan-out</td><td>1 d</td><td>multiplies all compute gains</td></tr>
+<tr><td>5</td><td>A20 warm-start campaign (per-ascension baked file)</td><td>0.5 d + compute</td><td>the A20 objective</td></tr>
+<tr><td>6</td><td>Boss telemetry + weighted cohorts</td><td>1 d</td><td>+1–3pp</td></tr>
+<tr><td>7</td><td>Vector batches B+C</td><td>1 d</td><td>+1–3pp</td></tr>
+<tr><td>8</td><td>Boss-gauntlet harness + staged EM optimization</td><td>2–3 d</td><td>+2–4pp</td></tr>
+<tr><td>9</td><td>Evaluation upgrades (McNemar, 10k honest)</td><td>0.5 d</td><td>prevents phantom pp; certifies 70%</td></tr>
+<tr><td>10</td><td>Value-net probe</td><td>2 d</td><td>information only</td></tr>
+<tr><td>11</td><td>PPO/AZ-lite combat policy</td><td>3–4 wk</td><td>+0–8pp, high variance — last</td></tr>
+</table></div>
+<p class="sub"><strong>Bottom line:</strong> 70% at A0 is plausibly reachable with items 1–3 + 6–7 alone, on the current box, in days of compute — no neural network required. A20 is a warm-start compute campaign once the engine fidelity gaps are fixed, not a research project.</p>
+</body>
+</html>

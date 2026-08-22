@@ -1,0 +1,44 @@
+:root {
+  --bg: #ffffff; --fg: #1a1d21; --muted: #5b6470; --accent: #0b66c3;
+  --card: #f5f7fa; --border: #d8dee6; --det: #0a7d33; --rl: #8a4bb8;
+  --warn: #b3261e; --code-bg: #eef1f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b; --fg: #e6e9ed; --muted: #9aa4b0; --accent: #5aa2e8;
+    --card: #1d2127; --border: #333a43; --det: #4fc06f; --rl: #b98fd6;
+    --warn: #e5736c; --code-bg: #232830;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  max-width: 1080px; margin: 0 auto; padding: 2rem 1.2rem 4rem;
+}
+h1 { font-size: 1.7rem; margin: 0 0 .3rem; }
+h2 { font-size: 1.25rem; margin: 2rem 0 .6rem; border-bottom: 1px solid var(--border); padding-bottom: .25rem; }
+h3 { font-size: 1.05rem; margin: 1.3rem 0 .4rem; }
+p, li { max-width: 75ch; }
+.sub { color: var(--muted); margin: 0 0 1.2rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .92rem; }
+.tablewrap { overflow-x: auto; }
+th, td { border: 1px solid var(--border); padding: .35rem .55rem; text-align: left; vertical-align: top; }
+th { background: var(--card); }
+code { background: var(--code-bg); padding: .1rem .3rem; border-radius: 4px; font-size: .88em; }
+pre { background: var(--code-bg); padding: .8rem; border-radius: 8px; overflow-x: auto; font-size: .85rem; line-height: 1.4; }
+pre code { background: none; padding: 0; }
+.tag { display: inline-block; font-size: .75rem; font-weight: 600; padding: .05rem .45rem; border-radius: 10px; margin-right: .3rem; }
+.det  { background: color-mix(in srgb, var(--det) 15%, transparent); color: var(--det); }
+.rl   { background: color-mix(in srgb, var(--rl) 15%, transparent); color: var(--rl); }
+.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.eng  { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1rem 1.2rem; margin: 1rem 0;
+}
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+nav.crumb { font-size: .85rem; margin-bottom: 1.5rem; color: var(--muted); }
+.rank { font-weight: 700; color: var(--accent); }

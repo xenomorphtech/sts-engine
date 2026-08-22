@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map Pathing &amp; Risk Management</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="crumb"><a href="index.html">&larr; A20 improvement plan</a></nav>
+<h1>Map pathing &amp; risk management</h1>
+<p class="sub">Correction to the working assumption: the baked <code>elite_afford_hp</code> is 0.574 (0.674 at A20 via the +asc/200 term); the real elite-avoidance mechanism is the <strong>strength gate</strong> (~12.5 in Act 1, ~17 in Act 2 with slope 4.59) plus penalty −56 vs value +18. That's what produces 1.3 elites/run.</p>
+
+<h2>Why "avoid elites, smith everything" breaks at A20</h2>
+<ol>
+<li><strong>Hallway fights stop being free (A2/A7/A17).</strong> The elite decision is a ratio: (elite HP cost − normal HP cost) vs a permanent, compounding relic. At A20 the marginal HP price shrinks while the payoff is unchanged.</li>
+<li><strong>All non-elite income is taxed</strong> (A12 fewer upgrades, A13 −25% boss gold, A16 +10% shops, A14 −maxHP, A10 Bane eats a removal). Smithing is the one untaxed channel — which is why the A0 ES leaned on it — but A20's damage checks aren't upgrade checks:</li>
+<li><strong>The A20 double boss is a scaling check.</strong> Two boss fights, one HP pool, no campfire between. A "barely beats one boss" smith-only deck loses fight two; relic scaling is what turns fight one from 65% HP cost into 30%.</li>
+<li><strong>A final-act win requires one elite anyway</strong> (emerald key on the burning elite) — zero-elites isn't a legal winning strategy once Act 4 exists.</li>
+</ol>
+<p><strong>Conditional consensus:</strong> "2–3 elites by mid-Act-2" holds when relics are your scaling plan. Defect frost is the exception — its scaling is card-driven — but the skip is only right when the engine is already online, the elite is a bad matchup (A18 Nob +3 Str per skill = frost Defect's worst enemy), or HP/potions can't cover. When the engine <em>hasn't</em> materialized by floor ~10, elites are <em>more</em> necessary. And a strong frost engine cuts both ways: elites become cheap. The optimum is "fight because it's cheap," not "skip because it's unnecessary" — except vs Nob.</p>
+
+<h2>Deck-power-conditional elite affordance <span class="tag det">DET</span>+<span class="tag rl">ES</span></h2>
+<pre><code>engine_power = w_frost·frost + w_focus·focus + w_upg·upgrades + w_aoe·aoe + w_big·big_attacks
+expected_elite_loss = fl_a{act}_elite × clamp(1 − elite_mit_slope·engine_power, elite_mit_floor, 1)
+afford = hp − expected_loss·max_hp/75 &gt; elite_hp_reserve·max_hp     // HP as budget, not a flat gate
+value  = elite_relic_value·elite_decay^elites_fought + gold + matchup − expected_loss·hp_loss_weight</code></pre>
+<p>A 90%-HP weak deck is correctly denied; a 55%-HP frost machine is correctly allowed. The <code>elite_decay</code> counter is what lets the optimizer find "2–3, then stop" instead of all-or-nothing.</p>
+
+<h2>Elite matchup extensions <span class="tag det">DET</span> (magnitudes <span class="tag rl">ES</span>)</h2>
+<div class="tablewrap"><table>
+<tr><th>Elite</th><th>Extension</th></tr>
+<tr><td>Gremlin Nob</td><td>Penalize by skill share: A18 = +3 Str per skill. <code>−nob_skill_pen × (block_cards + frost_src)</code>. Frost Defect should almost never take Nob first.</td></tr>
+<tr><td>Lagavulin</td><td>A18 Siphon −2/−2 hits the focus engine; bonus for burst-by-turn-3, small penalty to focus decks without Artifact.</td></tr>
+<tr><td>Book of Stabbing</td><td>Count <code>frost_src×2</code> toward the block requirement — frost <em>is</em> Defect's block.</td></tr>
+<tr><td>Slavers <span class="tag warn">missing arm</span></td><td>aoe≥1 → +10 else −20.</td></tr>
+<tr><td>Giant Head <span class="tag warn">missing arm</span></td><td>Deadline fight: requires <code>scaling≥2 or big_attacks≥2</code> else −50. Pure frost stall <em>loses</em> — the anti-turtle elite.</td></tr>
+<tr><td>Nemesis <span class="tag warn">missing arm</span></td><td>Intangible caps hits at 1: favor few-big-hits, penalize Claw/multi-hit decks.</td></tr>
+<tr><td>Reptomancer</td><td>A18 spawns 2 daggers: raise the requirement to aoe≥2 or Electrodynamics.</td></tr>
+<tr><td>Burning elite</td><td>Flat <code>burning_elite_extra_loss</code> ×1.35 on expected loss.</td></tr>
+</table></div>
+
+<h2>Path planning redesign: forward DP over survivor state</h2>
+<div class="card">
+<p><strong>Defect of the current recursion:</strong> <code>node_value</code> is a full max-path DP but with <em>frozen state</em> — HP/gold/strength evaluated at today's values for every future node. It cannot represent "monster → rest → elite" as a plan; <code>rest_preboss_value</code> and the y≥14 hack are patches over the missing "state at arrival" concept.</p>
+<p><strong>Proposal:</strong> forward DP over (node, hp-bucket ×10, gold-bucket ×6, key-bits ×8):</p>
+<pre><code>for each row y, node n, state s with value v:
+    (dv, s2) = apply_room(n.room, s)      // reward + state transition using fl_* params,
+    relax children with (v + dv, s2)      // gold EVs, upgrade EVs
+terminal at boss row: boss_hp_weight·hp(s) + key bonuses [+ act3: second-boss reserve]
+return first edge of argmax path</code></pre>
+<ul>
+<li><strong>Rest is a decision node inside the DP</strong> — max(rest: +30% HP, smith: upgrade EV, recall: key bit). "Smith now because a rest sits before the boss" becomes emergent.</li>
+<li>~50k states × 3 edges ≈ 150k trivial relaxations → <strong>&lt;1 ms</strong>, ≤16 calls/act. Opposite regime from the failed 2-turn combat lookahead (cheap closed-form EVs vs noisy 5× rollouts); replans every floor so model error self-corrects.</li>
+<li>Migration: land with room-EVs initialized to reproduce current orderings (default-preserving), validate neutrality, then open the dims to the ES. Never ship DP + retuned params as one bundle.</li>
+</ul>
+</div>
+
+<h2>Rest / shop / key policies</h2>
+<ul>
+<li><strong>Rest:</strong> correct threshold is path-conditional: <code>rest iff hp &lt; planned_loss_to_next_rest + reserve</code> — the DP computes it natively. Until then: <code>rest_hp_preboss3</code> ≈ 0.9 for the double boss; first Act-2 campfire rests only if an elite is planned within <code>rest_lookahead_floors</code>; both global threshold shifts already failed at A0 — conditioning on the path is the whole point.</li>
+<li><strong>Shops (A16):</strong> removal ≈ 82+ rising, so raise routing gate <code>shop_route_gold_min</code> 120→140; add need-conditional routing bonus (no AoE by Act 2, zero focus sources, Bane still in deck, empty potion slots). Purchase logic is deck-aware; <em>routing</em> is deck-blind today — the bot buys well but arrives poor.</li>
+<li><strong>Keys:</strong> emerald preferably in Act 2 (an elite you wanted anyway); ruby = spend the lowest-value campfire (DP: recall branch where opportunity cost is minimal); sapphire at the least-valued treasure. <span class="tag warn">All of this is moot until Act 4 entry is fixed — see the A20 mechanics doc.</span></li>
+<li><strong>Act 4:</strong> fixed 3-node map; rest unless hp ≥ <code>act4_rest_hp</code> (0.85); Act-3 terminal reserves HP when keys complete.</li>
+</ul>
+
+<h2>New ES dimensions</h2>
+<p><strong>Elite affordance:</strong> <code>elite_relic_value</code> (55, 0–150, per-act variants), <code>elite_decay</code> (0.65, 0.3–1), <code>elite_mit_slope</code> (0.04, 0–0.15), <code>elite_mit_floor</code> (0.35, 0.1–1), <code>elite_hp_reserve</code> (0.25, 0.1–0.5), <code>w_frost/w_focus/w_upg/w_aoe/w_big</code>, <code>hp_loss_weight</code> (1.2, 0–4), <code>burning_elite_extra_loss</code> (1.35, 1–2).<br>
+<strong>Matchups:</strong> <code>nob_skill_pen</code> (3, 0–8), <code>giant_head_stall_pen</code> (−50), <code>nemesis_smallhit_pen</code> (−20), <code>slavers_noaoe_pen</code> (−20), <code>repto_aoe_req</code> (2).<br>
+<strong>DP:</strong> <code>boss_hp_weight</code> (1.5, 0–5), <code>key_missing_terminal_pen</code> (−300), <code>act3_second_boss_reserve</code> (0.35), <code>event_expected_loss</code> (4), <code>monster_gold_ev</code> (15), <code>elite_gold_ev</code> (30), <code>dp_upgrade_ev</code> (55 — this single param <em>is</em> the smith-vs-rest equilibrium knob).<br>
+<strong>Rest/shop/keys:</strong> <code>rest_hp_preboss3</code> (0.90), <code>rest_elite_ahead_boost</code> (0.12), <code>rest_lookahead_floors</code> (3), <code>act4_rest_hp</code> (0.85), <code>act4_hp_reserve_weight</code> (2), <code>shop_route_gold_min</code> (140), <code>shop_need_bonus</code> (25), <code>shop_curse_purge_bonus</code> (20), <code>sapphire_min_act</code> (2).</p>
+
+<h2>Ranking</h2>
+<ol>
+<li>Deck-power-conditional elite affordance + relic payoff with decay — attacks the measured discriminator (wins 2.0 vs losses 0.5 elites), lets ES <em>find</em> the equilibrium.</li>
+<li>State-evolving path DP — unlocks rest-before-elite / arrive-rich / key routing as emergent plans; near-zero runtime.</li>
+<li>Path-conditional rest thresholds (pre-double-boss reserve, elite-ahead boost) — boss-entry HP was the other measured discriminator (63% vs 45%).</li>
+<li>Matchup extensions (asymmetric payoff: prevents catastrophic fights).</li>
+<li>Shop routing; key/Act-4 refinements (mostly free under the DP).</li>
+</ol>
+<p class="sub"><strong>Warning from the ledger:</strong> every claim here is an A20 claim. Search on A20 cohorts (after the engine fidelity fixes) or the ES will simply re-learn elite avoidance — correctly — for the wrong ascension.</p>
+</body>
+</html>

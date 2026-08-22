@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Combat Turn-Planning Improvements</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="crumb"><a href="index.html">&larr; A20 improvement plan</a></nav>
+<h1>Combat turn-planning improvements</h1>
+<p class="sub">Fixing the beam search's structural blind spots in <code>src/htn/turnplan.rs</code>. Legend:
+<span class="tag det">DET</span> deterministic logic &nbsp;<span class="tag rl">ES</span> tunable weight for the optimizer.</p>
+
+<h2>Diagnosis of current weaknesses</h2>
+<ol>
+<li><strong>Mid-turn pruning uses wrong block arithmetic.</strong> The beam ranks unfinished nodes with <code>unblocked = incoming − block</code>, ignoring Frost-orb passives (2+Focus each, applied before enemy hits), Metallicize, Plated Armor, Orichalcum. Frost-wall lines look "unblocked" and get pruned before an ended final can prove them out. Worst exactly at A20 multi-hit elites.</li>
+<li><strong>Beam width wasted on permutations.</strong> A-then-B and B-then-A reach identical states and occupy two frontier slots; effective width can collapse from ~13 to ~4 distinct states.</li>
+<li><strong>No lethal guarantee.</strong> Kill lines can be pruned when intermediate states look bad (damage is heavily down-weighted post-ES: <code>dmg_base ≈ 2.45</code>). Missing exact lethal at A20 = eating one extra boss turn (40+ damage).</li>
+<li><strong>Ended states ignore the next turn they can already see.</strong> <code>end_turn</code> resolves the whole enemy turn deterministically from cloned RNG — ended nodes are post-enemy-turn states with next intents <em>rolled and visible</em>, but the eval never scores next-turn exposure.</li>
+<li><strong>Static target priority.</strong> 10 damage into a 12-HP dagger that hits for 25 scores the same as 10 into the boss. No threat/EHP arithmetic.</li>
+<li><strong>Why 2-turn lookahead regressed</strong> (ledger): (a) comparability violation — nodes at different turn parities shared one frontier with an eval whose semantics flip on <code>turn_advanced</code>; (b) draw decorrelation — branches compared on different realized turn-2 hands, one sample each, no averaging; (c) weights were 1-turn-calibrated. It was a formulation failure, <em>not</em> evidence against lookahead.</li>
+<li><strong>Planning cost re-paid per decision:</strong> a turn of L plays costs L× a full beam; A20 fights are longest where they're hardest.</li>
+</ol>
+
+<h2>Deterministic additions (ranked)</h2>
+
+<h3><span class="rank">D1</span> Effective end-of-turn block in the mid-turn eval <span class="tag det">DET</span></h3>
+<p>Replace <code>after.player.block</code> in the <code>!turn_advanced</code> branch of <code>score_state</code> with:</p>
+<pre><code>fn end_of_turn_block(g: &amp;Game) -&gt; i32 {
+    let frost: i32 = frost_orbs × (2 + focus);
+    g.player.block + frost + Metallicize + PlatedArmor
+        + (Orichalcum &amp;&amp; block == 0 ? 6 : 0)
+}</code></pre>
+<p>Stops pruning Frost-wall lines and stops stacking Defends on an already-sufficient wall. Highest impact, nearly free.</p>
+
+<h3><span class="rank">D2</span> Frontier deduplication <span class="tag det">DET</span></h3>
+<p>Hash (energy, block, hp, hand, orbs, monster hp/block, powers) after sorting, <code>retain</code> first occurrence before <code>truncate(width)</code>. Effectively doubles width for free in big-hand turns.</p>
+
+<h3><span class="rank">D3</span> Exact-lethal DFS with admissible pruning <span class="tag det">DET</span></h3>
+<p>Before the beam: if <code>optimistic_damage(game) ≥ Σ(hp+block)</code> over living monsters, run a DFS over attack plays with a ~20k-step budget (≈7 ms at measured engine speed); return the first proven kill line's first action. The optimistic gate makes it a no-op almost always.</p>
+
+<h3><span class="rank">D4</span> Turn-plan caching <span class="tag det">DET</span></h3>
+<p>Store the best final's action prefix; next decision, if the observed state hash matches the predicted hash, pop the next action without re-searching. Cuts per-turn planning cost ~L-fold; pays for D3 and the rollout below.</p>
+
+<h3><span class="rank">D5</span> Powers-first ordering — <em>not needed</em></h3>
+<p>Already emergent from full-turn completion scoring + <code>focus/strength_weight × turns_left</code>. Fix width starvation (D2) instead.</p>
+
+<h2>New ES-tunable eval terms (ranked)</h2>
+
+<h3><span class="rank">E1</span> Next-turn exposure on ended states <span class="tag rl">ES</span></h3>
+<p>The safe half of 2-turn lookahead. On <code>turn_advanced</code> states, the next turn's <em>rolled, real</em> intents are already computed and discarded. Add:</p>
+<pre><code>let wall = end_of_turn_block(after);           // retained block + frost + metallicize
+let hand_block = cheap_hand_block(after);      // greedy affordable block in the drawn hand
+value -= (incoming − wall − hand_block).max(0) × next_exposure_weight × danger_scale;
+value -= min(hand_block, (incoming − wall).max(0)) × next_block_tax;  // energy taxed into defense</code></pre>
+<p>Biggest single eval win at A20: stops shaving 2 HP off a boss while standing naked in front of a 12×4 multi-attack.</p>
+
+<h3><span class="rank">E2</span> Threat-per-EHP damage concentration <span class="tag rl">ES</span></h3>
+<p><code>focus_mult = 1 + threat_focus_weight × threat / (hp+block)</code> in the <code>dealt</code> loop — rewards finishing low-EHP high-threat enemies even when the kill lands outside the horizon. Static table stays as prior.</p>
+
+<h3><span class="rank">E3</span> Orb-pipeline readiness <span class="tag rl">ES</span></h3>
+<p>Slot-fill fraction term plus front-orb ordering: front-Frost bonus scaled by next incoming, front-Lightning/Dark scaled by remaining EHP. Gives Dualcast-vs-channel and evoke sequencing a gradient.</p>
+
+<h3><span class="rank">E4</span> Next-hand quality <span class="tag rl">ES</span> — weight-capped, expect ES to keep near 0 (draw-luck-chasing term that helped sink the 2-turn experiment; include only because testing is free).</h3>
+
+<h3><span class="rank">E5</span> Status/curse-injection penalty <span class="tag rl">ES</span></h3>
+<p><code>−status_gain_weight × (statuses in piles − origin)</code>. Burns/Dazed/Wounds currently invisible; matters vs Hexaghost, Book of Stabbing, Sentries, Deca, Time Eater.</p>
+
+<h2>Multi-turn search: the correct formulation</h2>
+<div class="card">
+<p><strong>Key fact:</strong> rollouts in this sim are <em>exact</em>, not stochastic — <code>end_turn</code> rolls enemy moves and the next draw from cloned RNG. Expectimax is unnecessary; the 2-turn failure was formulation, not concept.</p>
+<ol>
+<li><strong>Terminal-only, fixed-horizon comparison.</strong> Per candidate first action: finish turn T with the current beam → take its single best ended final → roll turn T+1 greedily (width ≤ 3) → end it → score <em>only</em> at that common horizon.</li>
+<li><strong>Blend, and let the ES decide:</strong> <code>score = horizon_blend × score(terminal_T+1) + (1−blend) × score(ended_T)</code> with <code>horizon_blend</code> starting at 0 (exactly today's policy) in the ES vector. If lookahead truly helps at A20, ES pushes it up; if draw noise dominates, it stays 0 at zero cost.</li>
+<li><strong>Variance control:</strong> exclude hand-dependent terms at the T+1 terminal (compare durable quantities: EHP removed, HP, orbs, powers, retained block); optionally rollout only the top-K≈3 candidates and require a margin to overturn the 1-turn winner.</li>
+</ol>
+<p>Cost: ~+20–30% over today (vs 5× for the failed full-beam version); D4 pays for it.</p>
+</div>
+
+<h2>Implementation order</h2>
+<ol>
+<li>D1 + D2 (few lines; fixes the pruning that gates everything else)</li>
+<li>E1 (largest A20 eval gain; reuses D1's helper and the already-computed incoming)</li>
+<li>D3 (lethal guarantee)</li>
+<li>D4, then blended rollout with <code>horizon_blend</code> handed to ES</li>
+<li>E2, E3, E5 as cheap ES-vector extensions; E4 last</li>
+</ol>
+<p class="sub">All new weights ship with defaults ≈ 0 / current behavior, per the default-preserving pattern; every landing goes through paired fixed-then-fresh cohorts. Re-run the ES on A20 cohorts before judging any A20 claim.</p>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Opportunistic Archetype Deck-Building</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="crumb"><a href="index.html">&larr; A20 improvement plan</a></nav>
+<h1>Opportunistic archetype deck-building</h1>
+<p class="sub">Commit to what the run offers: overlay archetypes, continuous commitment, structure by hand, magnitudes by ES. Design constraints from the ledger: hand-applied tier recalibrations regressed; hard gates failed; soft package bonuses succeeded — so everything here is a <em>continuous modulation with defaults that reproduce current behavior</em>.</p>
+
+<h2>Archetype definitions &amp; A20 viability</h2>
+<p>Archetypes are <strong>overlays, not exclusive buckets</strong> — a run can be 0.9 Frost + 0.5 Lightning.</p>
+<div class="tablewrap"><table>
+<tr><th>#</th><th>Archetype</th><th>Commitment signals</th><th>A20 viability</th></tr>
+<tr><td>1</td><td><strong>FrostFocus</strong> (staple)</td><td>Glacier, Coolheaded, Cold Snap, Chill, Defragment, Biased Cognition, Loop, Capacitor; Frozen Core, Data Disk, Runic Capacitor, Inserter</td><td>The A20 default: scaling block outpaces Act 3/Heart damage. Blizzard big-orb is a sub-plan (keys off frost ≥ 4 + slots). Must NOT suppress Act 1 attack picks (see act ramp).</td></tr>
+<tr><td>2</td><td><strong>LightningAoE</strong></td><td>Electrodynamics, Ball Lightning, Thunder Strike, Sunder, Storm; Gold-Plated Cables</td><td>Hallway-speed overlay on Frost; rarely standalone vs bosses — mild off-plan penalty, coexists with Frost.</td></tr>
+<tr><td>3</td><td><strong>PowerEcho</strong></td><td>Echo Form, Creative AI, Storm, Heatsinks, Amplify, Machine Learning; Mummified Hand, Bird-Faced Urn</td><td>Real but conditional: driven by <em>owned payoffs</em> (Echo Form in deck ≈ 10× "two powers in deck") + 4 energy.</td></tr>
+<tr><td>4</td><td><strong>DarkBurst</strong></td><td>Darkness, Doom and Gloom, Hologram; Symbiotic Virus, Cables</td><td>Finisher module, not a shell: needs Darkness+ and a frost shell to stall behind. Low prior, high conditional payoff — exists so the bot collects support when Darkness+/Virus appears.</td></tr>
+<tr><td>5</td><td><strong>ClawZero</strong></td><td>Claw (Gash), All For One, Scrape, Go for the Eyes, Beam Cell, Rebound; Kunai, Shuriken, Fan, Nunchaku, Unceasing Top</td><td>Needs density (3+ Claws by mid-Act-1, thin deck). Commit only on exceptional Act 1. Highest off-plan penalty when committed, lowest prior.</td></tr>
+<tr><td>6</td><td><strong>SneckoBig</strong></td><td>cost ≥ 2 cards; Snecko Eye, Nuclear Battery</td><td>Purely relic-triggered; archetype frame adds ramping + removal economics (thin fast, penalize 0-costs).</td></tr>
+</table></div>
+
+<h2>Commitment scoring</h2>
+<div class="card">
+<p><strong>Affinity matrix — fixed structure, NOT ES dims.</strong> <code>fn affinity(id, archetype) → tier 0–3</code> (0 unrelated, 1 filler, 2 core, 3 defining payoff), same for relics. ~120 nonzero entries. Card×archetype as ES dims would add ~450 low-SNR dims to an ES that stalled at 155; the structure is domain knowledge, the <em>magnitudes</em> are what the ES tunes.</p>
+<pre><code>raw_a    = Σ_deck tier(card,a) · (1 + 0.5·upgraded) + relic_mult · Σ_relics tier(relic,a)
+commit_a = clamp((raw_a − floor_a) / ramp_a, 0, 1)
+act_ramp = min(1.0, floor / arch_act_ramp_floor)   // A20-critical: generic Act-1 damage shaping
+                                                   // keeps dominating until the deck can specialize</code></pre>
+<p><strong>Modulation</strong> (added inside <code>DeckPlan::card_adjustment</code>, so rewards, shops, Neow, library grids inherit it):</p>
+<pre><code>arch_adj = Σ_a commit_a · act_ramp · onplan_gain_a · tier(card,a) · need_a(card)
+         − offplan_pen · act_ramp · max_commit² · offplan(card)</code></pre>
+<ul>
+<li><code>need_a</code>: saturation via existing <code>DeckProfile</code> counters — a frost deck at 9 frost sources stops over-paying for a 10th and starts valuing Defragment/energy (dilution control on the bonus side).</li>
+<li><code>max_commit²</code>: quadratic off-plan penalty — cheap exploration early, committed decks effectively raise their pick threshold for unrelated filler (the community "A20 decks skip most rewards" behavior). Cards on <em>any</em> live plan (commit &gt; 0.3) are never penalized — hybrids breathe.</li>
+<li>Never a gate; additive to the ES-tuned table; <code>pick_threshold</code> stays the only decision boundary.</li>
+<li>Same <code>commit_a</code> feeds <code>shop_relic_value</code> and boss-relic ranks (Frozen Core over Pyramid at high frost commit; Snecko Eye rescued when SneckoBig payoffs owned). Energy-first +40 override stays on top.</li>
+</ul>
+</div>
+
+<h2>Upgrade priorities per archetype</h2>
+<p>Extend <code>upgrade_score</code> with <code>+ Σ_a commit_a · upgrade_gain_a · upgrade_tier(card,a)</code>. The defining example: <strong>Darkness+ is tier 3 for DarkBurst</strong> (auto-triggers growth on all dark orbs) but mediocre globally — exactly what a flat table cannot express. Others: Glacier+/Loop+/Skim+ (Frost), Electrodynamics+ (Lightning), Echo Form+ (PowerEcho), All For One+ (Claw).</p>
+
+<h2>Strike/Defend removal economics at A20</h2>
+<div class="tablewrap"><table>
+<tr><th>Committed archetype</th><th>Strike removal</th><th>Defend removal</th><th>Why</th></tr>
+<tr><td>ClawZero</td><td>maximal</td><td><strong>high — remove Defends too</strong></td><td>Density is the engine; thin-deck beats relic buys</td></tr>
+<tr><td>PowerEcho</td><td>high</td><td>medium-high</td><td>Consistency scaling: see Echo Form turn 1–2</td></tr>
+<tr><td>SneckoBig</td><td>high</td><td>high</td><td>Snecko makes 1-cost basics strictly bad</td></tr>
+<tr><td>FrostFocus</td><td>high (existing gate)</td><td>medium, gated on <code>focus ≥ 2 &amp;&amp; frost ≥ 3</code></td><td>Frost outblocks Defends only once the engine runs; premature removal is an A20 Act-1 death cause</td></tr>
+<tr><td>Uncommitted</td><td>baseline</td><td>low</td><td>A20 Act 1 Strikes still kill Louses</td></tr>
+</table></div>
+
+<h2>Integration sketch</h2>
+<pre><code>// src/htn/archetype.rs (~250 lines)
+pub enum Archetype { FrostFocus, LightningAoe, PowerEcho, DarkBurst, ClawZero, SneckoBig }
+pub struct Commitments { c: [f32; 6], act_ramp: f32 }
+impl Commitments {
+    pub fn from_game(game) -&gt; Self;          // one pass, folded into DeckProfile walk
+    pub fn pick_adjustment(&amp;self, card) -&gt; i32;
+    pub fn upgrade_adjustment(&amp;self, id) -&gt; i32;
+    pub fn purge_adjustment(&amp;self, card) -&gt; i32;
+    pub fn relic_adjustment(&amp;self, id) -&gt; i32;
+}</code></pre>
+<p>Params: a fourth flat map <code>archetype: HashMap&lt;String,f32&gt;</code> with keys like <code>frost.onplan</code>; a <code>p.arch(key, default)</code> helper returns code defaults when absent — <strong>an empty map reproduces today's baked policy bit-for-bit</strong> (safe mid-campaign builds, clean A/B). One prefix-dict entry puts the block into the ES vector.</p>
+
+<h2>New ES dimensions (34)</h2>
+<div class="tablewrap"><table>
+<tr><th>Tier</th><th>Dims</th><th>Defaults / ranges</th></tr>
+<tr><td>1 — global modulation (5)</td><td><code>arch.onplan_scale</code>, <code>arch.offplan_penalty</code>, <code>arch.act_ramp_floor</code>, <code>arch.relic_mult</code>, <code>arch.need_decay</code></td><td>15 (0–80), 15 (0–120), 12 (4–20), 2.0 (0.5–4), 0.3 (0–1)</td></tr>
+<tr><td>2 — commitment shape (12)</td><td><code>arch.{a}.floor</code> / <code>.ramp</code> per archetype</td><td>floors 4–6 (1–14), ramps 5–8 (2–16). Pushing <code>dark.floor</code> to 14 disables DarkBurst — measurement can veto priors.</td></tr>
+<tr><td>3 — per-archetype gains (12)</td><td><code>arch.{a}.onplan</code>, <code>arch.{a}.upgrade</code></td><td>1.0 (0–3); 20 (0–120), Dark default 60 (seeds the Darkness+ insight)</td></tr>
+<tr><td>4 — removal economics (5)</td><td><code>arch.{claw,echo,snecko,frost}.purge</code>, <code>arch.defend_removal</code></td><td>40/30/30/20 (0–150); 30 (0–200)</td></tr>
+</table></div>
+
+<h2>Expected impact ordering</h2>
+<ol>
+<li>Off-plan penalty under Frost commitment — converts the mid-game reward stream to community-style A20 skipping (largest behavioral gap vs strong humans).</li>
+<li>Commitment-scaled Frost on-plan gains with need-decay (dilution control).</li>
+<li>Per-archetype Defend/Strike removal economics.</li>
+<li>Archetype-conditional upgrades (Darkness+, Echo Form+).</li>
+<li>Conditional Claw/Dark/Snecko opportunism — rare per-run, but exactly the "commit to what the run offers" ask.</li>
+</ol>
+<p class="sub">Rollout per the ledger's methodology: ship structure with near-neutral defaults, observe on the fixed cohort, let a phase-3+ ES own the magnitudes, accept only on paired fresh cohorts. Magnitudes will legitimately differ between A0 and A20 — that's why they're ES dims.</p>
+</body>
+</html>
