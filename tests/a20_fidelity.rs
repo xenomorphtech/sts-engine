@@ -362,6 +362,51 @@ fn lethal_compile_driver_cancels_queued_draw_and_abacus_shuffle() {
 }
 
 #[test]
+fn lethal_attack_resets_nunchaku_without_granting_queued_energy() {
+    let mut game = Game::new(17, Character::Defect, 20, Unlocks::fixture());
+    game.player.relics.push(RelicInstance {
+        id: RelicId::Nunchaku,
+        counter: 9,
+        used_up: false,
+    });
+    game.combat = Some(Combat::start(
+        EncounterId::TwoLouse,
+        &mut game.player,
+        &mut game.rng,
+        1,
+        game.seed,
+        20,
+    ));
+    let combat = game.combat.as_mut().expect("combat");
+    for monster in &mut combat.monsters {
+        monster.hp = 0;
+        monster.dead = true;
+    }
+    combat.monsters[0].hp = 1;
+    combat.monsters[0].dead = false;
+    game.player.hand = vec![Card::new(CardId::Strike_B)];
+    game.player.energy = 3;
+    game.screen = Screen::Combat;
+
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: Some(0),
+    });
+
+    assert_eq!(game.screen, Screen::CombatReward);
+    assert_eq!(game.player.energy, 2);
+    assert_eq!(
+        game.player
+            .relics
+            .iter()
+            .find(|relic| relic.id == RelicId::Nunchaku)
+            .expect("Nunchaku")
+            .counter,
+        0
+    );
+}
+
+#[test]
 fn gremlin_horn_draws_when_exploder_dies_during_its_monster_turn() {
     let mut player = Player::defect();
     player.relics.push(RelicInstance {

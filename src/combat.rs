@@ -5160,7 +5160,13 @@ pub fn play_owned_card(
                 r.counter += 1;
                 if r.counter % 10 == 0 {
                     r.counter = 0;
-                    player.energy += 1;
+                    // Nunchaku queues GainEnergyAction behind the attack's
+                    // own actions. Lethal damage ends the battle and clears
+                    // that queued gain, while the counter has already reset
+                    // in onUseCard (rank 65).
+                    if !combat.all_dead() {
+                        player.energy += 1;
+                    }
                 }
             }
             if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
