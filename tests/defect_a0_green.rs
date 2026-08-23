@@ -928,7 +928,7 @@ fn hex_does_not_insert_dazed_on_cold_snap() {
     let mut player = Player::defect();
     player.energy = 3;
     player.max_orbs = 2;
-    player.orbs = vec![
+    *player.orbs = vec![
         Orb { kind: OrbKind::Frost, evoke: 9 },
         Orb { kind: OrbKind::Lightning, evoke: 12 },
     ];
@@ -940,12 +940,12 @@ fn hex_does_not_insert_dazed_on_cold_snap() {
         used_up: false,
     });
     let mut combat = Combat::start(EncounterId::Cultist, &mut player, &mut rng, 29, 213, 0);
-    player.orbs = vec![
+    *player.orbs = vec![
         Orb { kind: OrbKind::Frost, evoke: 9 },
         Orb { kind: OrbKind::Lightning, evoke: 12 },
     ];
     player.max_orbs = 2;
-    player.hand = vec![
+    *player.hand = vec![
         Card::new(CardId::Skim),
         Card::new(CardId::Capacitor),
         Card::new(CardId::Buffer),

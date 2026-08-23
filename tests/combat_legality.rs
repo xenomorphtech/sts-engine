@@ -20,7 +20,7 @@ fn unplayable_status_is_not_a_legal_play_without_medical_kit() {
     );
     game.combat = Some(combat);
     game.screen = Screen::Combat;
-    game.player.hand = vec![Card::new(CardId::Dazed)];
+    *game.player.hand = vec![Card::new(CardId::Dazed)];
 
     assert!(!game
         .legal_actions()
@@ -66,8 +66,8 @@ fn htn_ends_turn_instead_of_replaying_a_zero_progress_dazed_loop() {
     );
     game.combat = Some(combat);
     game.screen = Screen::Combat;
-    game.player.hand = vec![Card::new(CardId::Dazed)];
-    game.player.draw = vec![Card::new(CardId::Dazed)];
+    *game.player.hand = vec![Card::new(CardId::Dazed)];
+    *game.player.draw = vec![Card::new(CardId::Dazed)];
     game.player.discard.clear();
     game.player.relics.extend([
         RelicInstance {

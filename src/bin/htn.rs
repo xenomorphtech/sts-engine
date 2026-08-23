@@ -77,6 +77,18 @@ struct ActionLog {
     actions: Vec<Action>,
 }
 
+fn classify_outcome(game: &Game, capped: bool, fallback: Option<Outcome>) -> Outcome {
+    if game.is_victory() {
+        Outcome::Win
+    } else if game.player.hp <= 0 {
+        Outcome::Loss
+    } else if capped {
+        Outcome::Capped
+    } else {
+        fallback.unwrap_or(Outcome::Stopped)
+    }
+}
+
 fn load_action_log(path: &Path) -> Result<Vec<ActionLog>, String> {
     let input =
         BufReader::new(File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?);
@@ -314,13 +326,7 @@ fn replay_action_batch(
                         game.step(action);
                         steps += 1;
                     }
-                    let outcome = if game.done && game.player.hp > 0 && game.screen != Screen::Terminal {
-                            Outcome::Win
-                        } else if game.player.hp <= 0 {
-                            Outcome::Loss
-                        } else {
-                            log.outcome.unwrap_or(Outcome::Stopped)
-                        };
+                    let outcome = classify_outcome(&game, false, log.outcome);
                     let run = RunResult {
                         game,
                         steps,
@@ -794,15 +800,7 @@ fn run_seed(
         steps += 1;
     }
 
-    let outcome = if game.done && game.player.hp > 0 && game.screen != Screen::Terminal {
-        Outcome::Win
-    } else if game.player.hp <= 0 {
-        Outcome::Loss
-    } else if steps >= max_steps {
-        Outcome::Capped
-    } else {
-        Outcome::Stopped
-    };
+    let outcome = classify_outcome(&game, steps >= max_steps, None);
 
     RunResult {
         game,

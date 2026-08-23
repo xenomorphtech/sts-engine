@@ -2,7 +2,7 @@ use crate::action::{Action, PotionOp};
 use crate::card::Card;
 use crate::combat::{self, after_combat_relics, Combat};
 use crate::creature::{Player, PotionInstance, RelicInstance};
-use crate::dungeon::Dungeon;
+use crate::dungeon::{CowVec, Dungeon};
 use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, EventId, PotionId, RelicId, RelicTier, RoomType};
 use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
@@ -213,7 +213,7 @@ struct MatchCard {
     revealed: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum PendingPotionAction {
     Discovery {
         typ: Option<CardType>,
@@ -302,6 +302,213 @@ pub struct Game {
     /// owns a combat overlay (Discovery, GamblingChip, LiquidMemories).
     pending_potion_actions: Vec<PendingPotionAction>,
     toolbox_reward: bool,
+}
+
+/// Tactical engine state that may differ between active-combat search nodes.
+/// Vector-heavy members use structural sharing, so a node records only the
+/// collections detached by its transformation.
+#[derive(Clone, Debug)]
+pub(crate) struct CombatSearchState {
+    rng: RngSet,
+    player: Player,
+    screen: Screen,
+    combat: Option<Combat>,
+    hand_select: Vec<usize>,
+    pending_cards: Vec<Card>,
+    hand_held: Vec<Card>,
+    grid: Option<GridSelect>,
+    grid_confirm_disabled: bool,
+    exhaust_select: bool,
+    put_on_deck_select: bool,
+    gambling_select: bool,
+    memories_select: bool,
+    discovery_combat: bool,
+    discovery_skippable: bool,
+    discovery_typ: Option<CardType>,
+    discovery_colorless: bool,
+    discovery_copies: usize,
+    pending_potion_actions: Vec<PendingPotionAction>,
+}
+
+/// Root-only rollback values. Active combat card plays cannot change these;
+/// only terminal transformations such as winning the fight can. Keeping one
+/// copy per planning call avoids attaching them to every fact-table node.
+#[derive(Clone, Debug)]
+pub(crate) struct CombatSearchCheckpoint {
+    root: CombatSearchState,
+    dungeon: CombatDungeonState,
+    rewards: Vec<Reward>,
+    card_reward: Vec<Card>,
+    active_card_reward: Option<usize>,
+    event: Option<EventState>,
+    done: bool,
+    potion_blizzard: i32,
+    card_blizz: i32,
+    pending_room: Option<(i32, i32, RoomType)>,
+    pending_shop_purge: Option<usize>,
+    we_meet_again_room: bool,
+    toolbox_reward: bool,
+}
+
+/// Small collision bucket selector. It is not state identity: callers confirm
+/// every match with `CombatSearchState::exact_eq`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CombatSearchKey {
+    screen: u8,
+    hp: i32,
+    block: i32,
+    energy: i32,
+    hand_len: usize,
+    draw_len: usize,
+    discard_len: usize,
+    exhaust_len: usize,
+    turn: i32,
+    cards_played: i32,
+    monster_count: usize,
+    enemy_hp_and_block: i32,
+}
+
+/// Pools can be shuffled or consumed by combat transformations. Map topology
+/// and path history cannot change during a combat action and are omitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CombatDungeonState {
+    boss_list: CowVec<EncounterId>,
+    monster_list: CowVec<EncounterId>,
+    elite_list: CowVec<EncounterId>,
+    event_list: CowVec<EventId>,
+    shrine_list: CowVec<EventId>,
+    special_one_time: CowVec<EventId>,
+    common_relics: Arc<Vec<RelicId>>,
+    uncommon_relics: Arc<Vec<RelicId>>,
+    rare_relics: Arc<Vec<RelicId>>,
+    shop_relics: Arc<Vec<RelicId>>,
+    boss_relics: Arc<Vec<RelicId>>,
+    common_cards: Arc<Vec<CardId>>,
+    uncommon_cards: Arc<Vec<CardId>>,
+    rare_cards: Arc<Vec<CardId>>,
+    colorless_cards: Arc<Vec<CardId>>,
+    src_colorless_cards: Arc<Vec<CardId>>,
+    curse_cards: Arc<Vec<CardId>>,
+}
+
+impl CombatDungeonState {
+    fn capture(dungeon: &Dungeon) -> Self {
+        Self {
+            boss_list: dungeon.boss_list.clone(), monster_list: dungeon.monster_list.clone(),
+            elite_list: dungeon.elite_list.clone(), event_list: dungeon.event_list.clone(),
+            shrine_list: dungeon.shrine_list.clone(), special_one_time: dungeon.special_one_time.clone(),
+            common_relics: Arc::clone(&dungeon.common_relics), uncommon_relics: Arc::clone(&dungeon.uncommon_relics),
+            rare_relics: Arc::clone(&dungeon.rare_relics), shop_relics: Arc::clone(&dungeon.shop_relics),
+            boss_relics: Arc::clone(&dungeon.boss_relics), common_cards: Arc::clone(&dungeon.common_cards),
+            uncommon_cards: Arc::clone(&dungeon.uncommon_cards), rare_cards: Arc::clone(&dungeon.rare_cards),
+            colorless_cards: Arc::clone(&dungeon.colorless_cards), src_colorless_cards: Arc::clone(&dungeon.src_colorless_cards),
+            curse_cards: Arc::clone(&dungeon.curse_cards),
+        }
+    }
+
+    fn restore(&self, dungeon: &mut Dungeon) {
+        dungeon.boss_list = self.boss_list.clone(); dungeon.monster_list = self.monster_list.clone();
+        dungeon.elite_list = self.elite_list.clone(); dungeon.event_list = self.event_list.clone();
+        dungeon.shrine_list = self.shrine_list.clone(); dungeon.special_one_time = self.special_one_time.clone();
+        dungeon.common_relics = Arc::clone(&self.common_relics); dungeon.uncommon_relics = Arc::clone(&self.uncommon_relics);
+        dungeon.rare_relics = Arc::clone(&self.rare_relics); dungeon.shop_relics = Arc::clone(&self.shop_relics);
+        dungeon.boss_relics = Arc::clone(&self.boss_relics); dungeon.common_cards = Arc::clone(&self.common_cards);
+        dungeon.uncommon_cards = Arc::clone(&self.uncommon_cards); dungeon.rare_cards = Arc::clone(&self.rare_cards);
+        dungeon.colorless_cards = Arc::clone(&self.colorless_cards); dungeon.src_colorless_cards = Arc::clone(&self.src_colorless_cards);
+        dungeon.curse_cards = Arc::clone(&self.curse_cards);
+    }
+}
+
+impl CombatSearchState {
+    /// Complete equality for state that can affect another combat action.
+    /// Root-only rollback values are invariant within a planning call.
+    pub(crate) fn exact_eq(&self, other: &Self) -> bool {
+        self.rng == other.rng && self.player == other.player
+            && self.screen == other.screen && self.combat == other.combat
+            && self.hand_select == other.hand_select
+            && self.pending_cards == other.pending_cards && self.hand_held == other.hand_held
+            && self.grid == other.grid
+            && self.grid_confirm_disabled == other.grid_confirm_disabled
+            && self.exhaust_select == other.exhaust_select && self.put_on_deck_select == other.put_on_deck_select
+            && self.gambling_select == other.gambling_select && self.memories_select == other.memories_select
+            && self.discovery_combat == other.discovery_combat && self.discovery_skippable == other.discovery_skippable
+            && self.discovery_typ == other.discovery_typ && self.discovery_colorless == other.discovery_colorless
+            && self.discovery_copies == other.discovery_copies
+            && self.pending_potion_actions == other.pending_potion_actions
+    }
+
+    pub(crate) fn bucket_key(&self) -> CombatSearchKey {
+        let (turn, cards_played, monster_count, enemy_hp_and_block) = self.combat.as_ref().map(|combat| (
+            combat.turn, combat.cards_played_this_turn, combat.monsters.len(),
+            combat.monsters.iter().fold(0i32, |total, monster| total.saturating_add(monster.hp).saturating_add(monster.block)),
+        )).unwrap_or_default();
+        CombatSearchKey {
+            screen: self.screen as u8, hp: self.player.hp, block: self.player.block, energy: self.player.energy,
+            hand_len: self.player.hand.len(), draw_len: self.player.draw.len(), discard_len: self.player.discard.len(),
+            exhaust_len: self.player.exhaust.len(), turn, cards_played, monster_count, enemy_hp_and_block,
+        }
+    }
+}
+
+impl CombatSearchCheckpoint {
+    pub(crate) fn root(&self) -> &CombatSearchState { &self.root }
+}
+
+impl Game {
+    pub(crate) fn combat_search_state(&self) -> CombatSearchState {
+        CombatSearchState {
+            rng: self.rng.clone(), player: self.player.clone(), screen: self.screen,
+            combat: self.combat.clone(), hand_select: self.hand_select.clone(),
+            pending_cards: self.pending_cards.clone(), hand_held: self.hand_held.clone(),
+            grid: self.grid.clone(), grid_confirm_disabled: self.grid_confirm_disabled,
+            exhaust_select: self.exhaust_select, put_on_deck_select: self.put_on_deck_select,
+            gambling_select: self.gambling_select, memories_select: self.memories_select,
+            discovery_combat: self.discovery_combat, discovery_skippable: self.discovery_skippable,
+            discovery_typ: self.discovery_typ, discovery_colorless: self.discovery_colorless,
+            discovery_copies: self.discovery_copies, pending_potion_actions: self.pending_potion_actions.clone(),
+        }
+    }
+
+    pub(crate) fn combat_search_checkpoint(&self) -> CombatSearchCheckpoint {
+        CombatSearchCheckpoint {
+            root: self.combat_search_state(), dungeon: CombatDungeonState::capture(&self.dungeon),
+            rewards: self.rewards.clone(), card_reward: self.card_reward.clone(),
+            active_card_reward: self.active_card_reward, event: self.event.clone(), done: self.done,
+            potion_blizzard: self.potion_blizzard, card_blizz: self.card_blizz,
+            pending_room: self.pending_room, pending_shop_purge: self.pending_shop_purge,
+            we_meet_again_room: self.we_meet_again_room, toolbox_reward: self.toolbox_reward,
+        }
+    }
+
+    pub(crate) fn restore_combat_search_state(
+        &mut self,
+        checkpoint: &CombatSearchCheckpoint,
+        state: &CombatSearchState,
+    ) {
+        let restore_root_only = self.screen != Screen::Combat || self.done;
+        self.rng = state.rng.clone(); self.player = state.player.clone();
+        self.screen = state.screen; self.combat = state.combat.clone();
+        self.hand_select.clone_from(&state.hand_select);
+        self.pending_cards.clone_from(&state.pending_cards); self.hand_held.clone_from(&state.hand_held);
+        self.grid.clone_from(&state.grid);
+        self.grid_confirm_disabled = state.grid_confirm_disabled; self.exhaust_select = state.exhaust_select;
+        self.put_on_deck_select = state.put_on_deck_select; self.gambling_select = state.gambling_select;
+        self.memories_select = state.memories_select; self.discovery_combat = state.discovery_combat;
+        self.discovery_skippable = state.discovery_skippable; self.discovery_typ = state.discovery_typ;
+        self.discovery_colorless = state.discovery_colorless; self.discovery_copies = state.discovery_copies;
+        self.pending_potion_actions.clone_from(&state.pending_potion_actions);
+
+        if restore_root_only {
+            checkpoint.dungeon.restore(&mut self.dungeon);
+            self.rewards.clone_from(&checkpoint.rewards); self.card_reward.clone_from(&checkpoint.card_reward);
+            self.active_card_reward = checkpoint.active_card_reward; self.event.clone_from(&checkpoint.event);
+            self.done = checkpoint.done; self.potion_blizzard = checkpoint.potion_blizzard;
+            self.card_blizz = checkpoint.card_blizz; self.pending_room = checkpoint.pending_room;
+            self.pending_shop_purge = checkpoint.pending_shop_purge;
+            self.we_meet_again_room = checkpoint.we_meet_again_room;
+            self.toolbox_reward = checkpoint.toolbox_reward;
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -536,6 +743,15 @@ mod event_fidelity_tests {
             });
         }
         assert_eq!(event_options(&heart), [EventOption::Sleep]);
+        heart.current_room = RoomType::Victory;
+        heart.step(&Action::Choose {
+            index: 0,
+            x: None,
+            y: None,
+            room: None,
+        });
+        assert!(heart.is_victory());
+        assert_eq!(heart.screen, Screen::Terminal);
     }
 
     #[test]
@@ -884,7 +1100,7 @@ mod event_fidelity_tests {
     #[test]
     fn draw_pile_grid_labels_come_from_the_sorted_draw_pile_and_can_cancel() {
         let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
-        game.player.draw = vec![Card::new(CardId::Strike_B), Card::new(CardId::Strike_B)];
+        *game.player.draw = vec![Card::new(CardId::Strike_B), Card::new(CardId::Strike_B)];
         game.grid = Some(GridSelect {
             kind: GridKind::DrawPileToHand,
             needed: 1,
@@ -916,7 +1132,7 @@ mod event_fidelity_tests {
         let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
         let mut cold_snap = Card::new(CardId::Cold_Snap);
         cold_snap.upgrade();
-        game.player.draw = vec![cold_snap, Card::new(CardId::Conserve_Battery)];
+        *game.player.draw = vec![cold_snap, Card::new(CardId::Conserve_Battery)];
         game.grid = Some(GridSelect {
             kind: GridKind::DrawPileToHand,
             needed: 1,
@@ -1053,7 +1269,7 @@ pub enum GridKind {
     Library,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct GridSelect {
     kind: GridKind,
     needed: usize,
@@ -1169,6 +1385,21 @@ impl Game {
 
     pub fn final_act_available(&self) -> bool {
         self.final_act_available
+    }
+
+    /// The run completed the non-Act-4 victory path alive.
+    ///
+    /// Victory ends on `Screen::Terminal`, just like death and an explicit
+    /// quit, so callers must use the typed room/state transition rather than
+    /// treating every terminal screen alike.
+    pub fn is_victory(&self) -> bool {
+        self.done
+            && self.player.hp > 0
+            && self.current_room == RoomType::Victory
+            && self
+                .event
+                .as_ref()
+                .is_some_and(|event| event.id == EventId::SpireHeart && event.screen == 3)
     }
 
     pub fn legal_actions(&self) -> Vec<Action> {
@@ -2149,7 +2380,8 @@ impl Game {
                 .combat
                 .as_ref()
                 .map(|c| c.skill_from_deck.clone())
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .to_vec();
         }
         if kind == GridKind::Library {
             let n = self

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 /// Cheaply cloned vector with ordinary mutable-`Vec` ergonomics. Mutations
 /// detach only when a search branch still shares the previous value.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CowVec<T: Clone>(Arc<Vec<T>>);
 
 impl<T: Clone> Default for CowVec<T> {
@@ -40,6 +40,47 @@ impl<T: Clone> std::ops::DerefMut for CowVec<T> {
 impl<T: Clone> AsRef<Vec<T>> for CowVec<T> {
     fn as_ref(&self) -> &Vec<T> {
         &self.0
+    }
+}
+
+impl<T: Clone> From<Vec<T>> for CowVec<T> {
+    fn from(value: Vec<T>) -> Self {
+        Self(Arc::new(value))
+    }
+}
+
+impl<T: Clone> FromIterator<T> for CowVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl<T: Clone> IntoIterator for CowVec<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Arc::try_unwrap(self.0)
+            .unwrap_or_else(|shared| (*shared).clone())
+            .into_iter()
+    }
+}
+
+impl<'a, T: Clone> IntoIterator for &'a CowVec<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, T: Clone> IntoIterator for &'a mut CowVec<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 

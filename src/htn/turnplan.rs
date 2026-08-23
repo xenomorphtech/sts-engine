@@ -1,9 +1,10 @@
 use crate::action::Action;
 use crate::creature::{Monster, OrbKind, Player};
-use crate::game::{Game, Screen};
-use crate::ids::{Act, CardId, CardType, MonsterId, PotionId, PowerId, RelicId, RoomType};
-use std::collections::{HashSet, VecDeque};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use crate::game::{CombatSearchCheckpoint, CombatSearchKey, CombatSearchState, Game, Screen};
+use crate::ids::{Act, CardType, MonsterId, PotionId, PowerId, RelicId, RoomType};
+#[cfg(test)]
+use crate::ids::CardId;
+use std::collections::{HashMap, VecDeque};
 use std::ops::AddAssign;
 
 use super::params::params;
@@ -41,6 +42,34 @@ impl AddAssign for SearchStats {
     }
 }
 
+/// Arena-backed exact-state set. The compact key only selects a collision
+/// bucket; equality of the complete typed state decides deduplication.
+struct ExactStateSet {
+    states: Vec<CombatSearchState>,
+    buckets: HashMap<CombatSearchKey, Vec<usize>>,
+}
+
+impl ExactStateSet {
+    fn with_capacity(capacity: usize) -> Self {
+        Self { states: Vec::with_capacity(capacity), buckets: HashMap::with_capacity(capacity) }
+    }
+
+    fn insert(&mut self, state: CombatSearchState) -> Result<usize, usize> {
+        let key = state.bucket_key();
+        if let Some(indices) = self.buckets.get(&key) {
+            if let Some(index) = indices.iter().copied().find(|index| self.states[*index].exact_eq(&state)) {
+                return Err(index);
+            }
+        }
+        let index = self.states.len();
+        self.states.push(state);
+        self.buckets.entry(key).or_default().push(index);
+        Ok(index)
+    }
+
+    fn get(&self, index: usize) -> &CombatSearchState { &self.states[index] }
+}
+
 fn simulated_step(game: &mut Game, action: &Action, stats: &mut SearchStats) {
     game.step(action);
     stats.simulated_steps += 1;
@@ -48,11 +77,15 @@ fn simulated_step(game: &mut Game, action: &Action, stats: &mut SearchStats) {
 
 fn evaluated_score(before: &Game, after: &Game, stats: &mut SearchStats) -> f32 {
     stats.score_evaluations += 1;
-    score_state(before, after)
+    score_state(before, after) + setup_state_value(before, after)
 }
 
-/// Pick the combat command: try each legal play as a first move, then greedy
-/// the rest of the turn on a cloned `Game` (real engine rules, not a second sim).
+/// Pick the combat command with one shared search over the rest of the turn.
+///
+/// Newly reached exact states form the next frontier, while a search-wide fact
+/// table prevents equivalent card orders from being expanded more than once.
+/// Each state retains the first action that reached it so the winning branch
+/// can be returned without keeping a separate beam per first play.
 pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
     plan_turn_with_stats(game, legal).0
 }
@@ -77,39 +110,14 @@ pub fn plan_turn_with_stats(game: &Game, legal: &[Action]) -> (Action, SearchSta
             .unwrap_or_else(|| legal[0].clone());
         return (action, stats);
     }
-    if let Some(lethal) = exact_attack_lethal(game, legal, &mut stats) {
+    let checkpoint = game.combat_search_checkpoint();
+    let mut scratch = game.clone();
+    if let Some(lethal) = exact_attack_lethal(game, legal, &checkpoint, &mut scratch, &mut stats) {
         return (lethal, stats);
     }
-    let mut best_first: Option<&Action> = None;
-    let mut best_score = f32::MIN;
-    for first in &plays {
-        let mut clone = game.clone();
-        simulated_step(&mut clone, first, &mut stats);
-        resolve_grid_selects(&mut clone, &mut stats);
-        if non_progressing_status_play(game, &clone, first) {
-            continue;
-        }
-        let first_value = rebound_play_value(game, first) + setup_play_value(game, first);
-        let (clone, rest_value) = searched_rest(game, clone, &mut stats);
-        let score = evaluated_score(game, &clone, &mut stats) + first_value + rest_value;
-        if score > best_score {
-            best_score = score;
-            best_first = Some(*first);
-        }
-    }
-    // Also consider ending the turn immediately (full block / empty energy).
-    if let Some(end) = legal.iter().find(|a| matches!(a, Action::EndTurn)) {
-        let mut clone = game.clone();
-        simulated_step(&mut clone, end, &mut stats);
-        let score = evaluated_score(game, &clone, &mut stats);
-        if best_first.is_none() || score > best_score + 5.0 {
-            return (end.clone(), stats);
-        }
-    }
-    (
-        best_first.cloned().unwrap_or_else(|| plays[0].clone()),
-        stats,
-    )
+    let action = searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats)
+        .unwrap_or_else(|| plays[0].clone());
+    (action, stats)
 }
 
 const EXACT_LETHAL_NODE_BUDGET: usize = 20_000;
@@ -122,17 +130,20 @@ const EXACT_LETHAL_NODE_BUDGET: usize = 20_000;
 fn exact_attack_lethal(
     game: &Game,
     legal: &[Action],
+    checkpoint: &CombatSearchCheckpoint,
+    scratch: &mut Game,
     stats: &mut SearchStats,
 ) -> Option<Action> {
+    let root = checkpoint.root();
     let turn = game.combat.as_ref()?.turn;
     let target_ehp = living_enemy_ehp(game);
-    if target_ehp <= 0 || optimistic_attack_damage(game, legal, stats) < target_ehp {
+    if target_ehp <= 0 || optimistic_attack_damage(game, legal, checkpoint, scratch, stats) < target_ehp {
         return None;
     }
 
     let mut queue = VecDeque::new();
-    let mut seen = HashSet::with_capacity(EXACT_LETHAL_NODE_BUDGET.min(1024));
-    seen.insert(exact_turn_state_hash(game));
+    let mut seen = ExactStateSet::with_capacity(EXACT_LETHAL_NODE_BUDGET.min(1024));
+    seen.insert(root.clone()).expect("an empty exact-state arena accepts its root");
     let mut expanded = 0usize;
     for first in legal.iter().filter(|action| attack_play(game, action)) {
         if expanded >= EXACT_LETHAL_NODE_BUDGET {
@@ -140,43 +151,39 @@ fn exact_attack_lethal(
         }
         expanded += 1;
         stats.lethal_expansions += 1;
-        let mut after = game.clone();
-        simulated_step(&mut after, first, stats);
-        resolve_grid_selects(&mut after, stats);
-        if combat_won(&after) {
+        scratch.restore_combat_search_state(checkpoint, root);
+        simulated_step(scratch, first, stats);
+        resolve_grid_selects(scratch, stats);
+        if combat_won(scratch) {
             return Some(first.clone());
         }
-        if same_combat_turn(&after, turn) {
-            if seen.insert(exact_turn_state_hash(&after)) {
-                queue.push_back((after, first.clone()));
-            } else {
-                stats.dedup_hits += 1;
+        if same_combat_turn(scratch, turn) {
+            match seen.insert(scratch.combat_search_state()) {
+                Ok(index) => queue.push_back((index, first.clone())),
+                Err(_) => stats.dedup_hits += 1,
             }
         }
     }
 
-    while let Some((state, first)) = queue.pop_front() {
-        for action in state
-            .legal_actions()
-            .into_iter()
-            .filter(|action| attack_play(&state, action))
-        {
+    while let Some((state_index, first)) = queue.pop_front() {
+        scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+        let actions: Vec<_> = scratch.legal_actions().into_iter().filter(|action| attack_play(scratch, action)).collect();
+        for action in actions {
             if expanded >= EXACT_LETHAL_NODE_BUDGET {
                 return None;
             }
             expanded += 1;
             stats.lethal_expansions += 1;
-            let mut after = state.clone();
-            simulated_step(&mut after, &action, stats);
-            resolve_grid_selects(&mut after, stats);
-            if combat_won(&after) {
+            scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+            simulated_step(scratch, &action, stats);
+            resolve_grid_selects(scratch, stats);
+            if combat_won(scratch) {
                 return Some(first);
             }
-            if same_combat_turn(&after, turn) {
-                if seen.insert(exact_turn_state_hash(&after)) {
-                    queue.push_back((after, first.clone()));
-                } else {
-                    stats.dedup_hits += 1;
+            if same_combat_turn(scratch, turn) {
+                match seen.insert(scratch.combat_search_state()) {
+                    Ok(index) => queue.push_back((index, first.clone())),
+                    Err(_) => stats.dedup_hits += 1,
                 }
             }
         }
@@ -226,163 +233,143 @@ fn living_enemy_ehp(game: &Game) -> i32 {
 /// Cheap upper-biased gate for the exact search. Each distinct Attack is
 /// simulated once per legal target, then its best immediate damage is doubled
 /// to leave room for Vulnerable, strength scaling, and attack-draw chains.
-fn optimistic_attack_damage(game: &Game, legal: &[Action], stats: &mut SearchStats) -> i32 {
+fn optimistic_attack_damage(
+    game: &Game,
+    legal: &[Action],
+    checkpoint: &CombatSearchCheckpoint,
+    scratch: &mut Game,
+    stats: &mut SearchStats,
+) -> i32 {
+    let root = checkpoint.root();
     let before = living_enemy_ehp(game);
     let mut best_by_hand = vec![0; game.player.hand.len()];
     for action in legal.iter().filter(|action| attack_play(game, action)) {
         let Action::Play { hand_index, .. } = action else {
             continue;
         };
-        let mut after = game.clone();
-        simulated_step(&mut after, action, stats);
-        resolve_grid_selects(&mut after, stats);
-        let dealt = if combat_won(&after) {
+        scratch.restore_combat_search_state(checkpoint, root);
+        simulated_step(scratch, action, stats);
+        resolve_grid_selects(scratch, stats);
+        let dealt = if combat_won(scratch) {
             before
         } else {
-            before.saturating_sub(living_enemy_ehp(&after))
+            before.saturating_sub(living_enemy_ehp(scratch))
         };
         best_by_hand[*hand_index] = best_by_hand[*hand_index].max(dealt);
     }
     best_by_hand.into_iter().sum::<i32>().saturating_mul(2)
 }
 
-#[derive(Clone)]
-struct TurnSearchNode {
-    game: Game,
-    strategic_value: f32,
-}
-
-/// Fingerprint the mutable state relevant to the remainder of this turn.
-///
-/// Draw/discard/exhaust piles are intentionally excluded: order permutations
-/// put the same cards in those piles in a different order, which is the width
-/// waste this key is meant to collapse. The hand, RNG, relic counters, orbs,
-/// powers, and full Combat state keep genuinely different tactical branches
-/// distinct.
-fn turn_state_hash(game: &Game) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    std::mem::discriminant(&game.screen).hash(&mut hasher);
-    game.rng.hash(&mut hasher);
-    game.player.hp.hash(&mut hasher);
-    game.player.max_hp.hash(&mut hasher);
-    game.player.block.hash(&mut hasher);
-    game.player.energy.hash(&mut hasher);
-    game.player.energy_master.hash(&mut hasher);
-    game.player.relics.hash(&mut hasher);
-    game.player.powers.hash(&mut hasher);
-    game.player.hand.hash(&mut hasher);
-    game.player.duplication.hash(&mut hasher);
-    game.player.pending_static.hash(&mut hasher);
-    game.player.pending_evoke_lightning.hash(&mut hasher);
-    game.player.pending_evoke_frost.hash(&mut hasher);
-    game.player.pending_evoke_dark.hash(&mut hasher);
-    game.player.orbs.hash(&mut hasher);
-    game.player.max_orbs.hash(&mut hasher);
-    game.combat.hash(&mut hasher);
-    game.hand_select.hash(&mut hasher);
-    game.pending_cards.hash(&mut hasher);
-    game.potion_blizzard.hash(&mut hasher);
-    game.card_blizz.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Exact-lethal search may draw attacks, so unlike the beam dedup key it must
-/// preserve pile order as well as the rest of the turn state.
-fn exact_turn_state_hash(game: &Game) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    turn_state_hash(game).hash(&mut hasher);
-    game.player.draw.hash(&mut hasher);
-    game.player.discard.hash(&mut hasher);
-    game.player.exhaust.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn searched_rest(origin: &Game, start: Game, stats: &mut SearchStats) -> (Game, f32) {
+/// One semi-naive turn search. Reached states live in one global fact table;
+/// the frontier contains only newly admitted states, and provenance records
+/// which root action produced each fact.
+fn searched_turn(
+    origin: &Game,
+    root_legal: &[Action],
+    checkpoint: &CombatSearchCheckpoint,
+    scratch: &mut Game,
+    stats: &mut SearchStats,
+) -> Option<Action> {
+    let root = checkpoint.root();
     let width = params().search_width.round().max(1.0) as usize;
     let depth = params().search_depth.round().max(1.0) as usize;
+    let mut seen = ExactStateSet::with_capacity(width.saturating_mul(depth + 1).saturating_mul(12));
+    let root_index = seen.insert(root.clone()).expect("an empty turn fact table accepts its root");
+    debug_assert_eq!(root_index, 0);
+    let mut first_actions: Vec<Option<Action>> = vec![None];
+    let mut best_play: Option<(Action, f32)> = None;
 
-    let mut frontier = vec![TurnSearchNode {
-        game: start,
-        strategic_value: 0.0,
-    }];
-    let mut finals = Vec::new();
+    // Keep the historical small bias against ending a playable turn at the
+    // root. EndTurn descendants compete normally through their provenance.
+    let root_end = root_legal.iter().find(|action| matches!(action, Action::EndTurn)).map(|end| {
+        scratch.restore_combat_search_state(checkpoint, root);
+        simulated_step(scratch, end, stats);
+        (end.clone(), evaluated_score(origin, scratch, stats))
+    });
+
+    let mut frontier = Vec::new();
+    for first in root_legal.iter().filter(|action| matches!(action, Action::Play { .. })) {
+        scratch.restore_combat_search_state(checkpoint, root);
+        let status_baseline = StatusPlayBaseline::capture(scratch, first);
+        simulated_step(scratch, first, stats);
+        resolve_grid_selects(scratch, stats);
+        if status_baseline.is_non_progressing(scratch) { continue; }
+        if scratch.screen != Screen::Combat || scratch.player.hp <= 0
+            || scratch.combat.as_ref().is_some_and(|combat| combat.all_dead()) {
+            keep_best(&mut best_play, first, evaluated_score(origin, scratch, stats));
+            continue;
+        }
+        match seen.insert(scratch.combat_search_state()) {
+            Ok(index) => {
+                debug_assert_eq!(index, first_actions.len());
+                first_actions.push(Some(first.clone()));
+                let score = evaluated_score(origin, scratch, stats);
+                frontier.push((index, score));
+            }
+            Err(_) => stats.dedup_hits += 1,
+        }
+    }
+    frontier.sort_by(|(_, a_score), (_, b_score)| b_score.total_cmp(a_score));
+    frontier.truncate(width);
+
     for _ in 0..depth {
-        let mut next = Vec::new();
         let current = std::mem::take(&mut frontier);
-        for node in current {
+        let mut next = Vec::new();
+        for (state_index, _) in current {
             stats.expanded_nodes += 1;
-            if node.game.screen != Screen::Combat
-                || node.game.player.hp <= 0
-                || node
-                    .game
-                    .combat
-                    .as_ref()
-                    .is_some_and(|combat| combat.all_dead())
-            {
-                finals.push(node);
-                continue;
+            scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+            let first = first_actions[state_index].as_ref().expect("non-root facts have provenance").clone();
+            let legal = scratch.legal_actions();
+            if let Some(end) = legal.iter().find(|action| matches!(action, Action::EndTurn)) {
+                scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+                simulated_step(scratch, end, stats);
+                keep_best(&mut best_play, &first, evaluated_score(origin, scratch, stats));
             }
-            let legal = node.game.legal_actions();
-            if let Some(end) = legal
-                .iter()
-                .find(|action| matches!(action, Action::EndTurn))
-            {
-                let mut ended = node.clone();
-                simulated_step(&mut ended.game, end, stats);
-                finals.push(ended);
-            }
-            for play in legal
-                .iter()
-                .filter(|action| matches!(action, Action::Play { .. }))
-            {
-                let mut after = node.game.clone();
-                simulated_step(&mut after, play, stats);
-                resolve_grid_selects(&mut after, stats);
-                if non_progressing_status_play(&node.game, &after, play) {
+            for play in legal.iter().filter(|action| matches!(action, Action::Play { .. })) {
+                scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+                let status_baseline = StatusPlayBaseline::capture(scratch, play);
+                simulated_step(scratch, play, stats);
+                resolve_grid_selects(scratch, stats);
+                if status_baseline.is_non_progressing(scratch) { continue; }
+                if scratch.screen != Screen::Combat || scratch.player.hp <= 0
+                    || scratch.combat.as_ref().is_some_and(|combat| combat.all_dead()) {
+                    keep_best(&mut best_play, &first, evaluated_score(origin, scratch, stats));
                     continue;
                 }
-                next.push(TurnSearchNode {
-                    game: after,
-                    strategic_value: node.strategic_value
-                        + rebound_play_value(&node.game, play)
-                        + setup_play_value(&node.game, play),
-                });
+                match seen.insert(scratch.combat_search_state()) {
+                    Ok(index) => {
+                        debug_assert_eq!(index, first_actions.len());
+                        first_actions.push(Some(first.clone()));
+                        let score = evaluated_score(origin, scratch, stats);
+                        next.push((index, score));
+                    }
+                    Err(_) => stats.dedup_hits += 1,
+                }
             }
         }
-        if next.is_empty() {
-            break;
-        }
-        // Decorate once before sorting: comparator calls are O(n log n), while
-        // state scoring walks the full combat state.
-        let mut next: Vec<_> = next
-            .into_iter()
-            .map(|node| {
-                let score = evaluated_score(origin, &node.game, stats) + node.strategic_value;
-                (node, score)
-            })
-            .collect();
+        if next.is_empty() { break; }
         next.sort_by(|(_, a_score), (_, b_score)| b_score.total_cmp(a_score));
-        // Card-order permutations often reach the same state. Since the
-        // frontier is already best-first, retain the highest-value route to
-        // each state before spending the limited width on it.
-        let mut seen = HashSet::with_capacity(next.len());
-        let before_dedup = next.len();
-        next.retain(|(node, _)| seen.insert(turn_state_hash(&node.game)));
-        stats.dedup_hits += (before_dedup - next.len()) as u64;
         next.truncate(width);
-        frontier = next.into_iter().map(|(node, _)| node).collect();
+        frontier = next;
     }
-    finals.extend(frontier);
-    let best = finals
-        .into_iter()
-        .map(|node| {
-            let score = evaluated_score(origin, &node.game, stats) + node.strategic_value;
-            (node, score)
-        })
-        .max_by(|(_, a_score), (_, b_score)| a_score.total_cmp(b_score))
-        .map(|(node, _)| node)
-        .expect("turn search always has an end or continuation");
-    (best.game, best.strategic_value)
+
+    // The depth horizon is itself a valid continuation value.
+    for (state_index, score) in frontier {
+        let first = first_actions[state_index].as_ref().expect("frontier facts have provenance");
+        keep_best(&mut best_play, first, score);
+    }
+    match (best_play, root_end) {
+        (Some((play, play_score)), Some((end, end_score))) if end_score > play_score + 5.0 => Some(end),
+        (Some((play, _)), _) => Some(play),
+        (None, Some((end, _))) => Some(end),
+        (None, None) => None,
+    }
+}
+
+fn keep_best(best: &mut Option<(Action, f32)>, first: &Action, score: f32) {
+    if best.as_ref().is_none_or(|(_, best_score)| score > *best_score) {
+        *best = Some((first.clone(), score));
+    }
 }
 
 /// Step through in-combat grid selections (Hologram, Seek, Secret Technique)
@@ -402,40 +389,51 @@ fn resolve_grid_selects(game: &mut Game, stats: &mut SearchStats) {
     }
 }
 
-fn non_progressing_status_play(before: &Game, after: &Game, action: &Action) -> bool {
-    let Action::Play { hand_index, .. } = action else {
-        return false;
-    };
-    let Some(card) = before.player.hand.get(*hand_index) else {
-        return false;
-    };
-    if !matches!(card.card_type(), CardType::STATUS | CardType::CURSE) {
-        return false;
+struct StatusPlayBaseline {
+    is_status: bool,
+    player_hp: i32,
+    player_block: i32,
+    player_energy: i32,
+    hand: Vec<crate::card::Card>,
+    draw: Vec<crate::card::Card>,
+    discard: Vec<crate::card::Card>,
+    monsters: Vec<(i32, i32)>,
+}
+
+impl StatusPlayBaseline {
+    fn capture(game: &Game, action: &Action) -> Self {
+        let is_status = match action {
+            Action::Play { hand_index, .. } => game.player.hand.get(*hand_index)
+                .is_some_and(|card| matches!(card.card_type(), CardType::STATUS | CardType::CURSE)),
+            _ => false,
+        };
+        let (hand, draw, discard, monsters) = if is_status {
+            (game.player.hand.to_vec(), game.player.draw.to_vec(), game.player.discard.to_vec(),
+             game.combat.as_ref().map(|combat| combat.monsters.iter()
+                 .map(|monster| (monster.hp, monster.block)).collect()).unwrap_or_default())
+        } else {
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        };
+        Self { is_status, player_hp: game.player.hp, player_block: game.player.block,
+            player_energy: game.player.energy, hand, draw, discard, monsters }
     }
-    let same_monsters = before
-        .combat
-        .as_ref()
-        .zip(after.combat.as_ref())
-        .is_some_and(|(old, new)| {
-            old.monsters.len() == new.monsters.len()
-                && old
-                    .monsters
-                    .iter()
-                    .zip(&new.monsters)
-                    .all(|(old, new)| old.hp == new.hp && old.block == new.block)
+
+    fn is_non_progressing(&self, after: &Game) -> bool {
+        if !self.is_status { return false; }
+        let same_monsters = after.combat.as_ref().is_some_and(|combat| {
+            combat.monsters.len() == self.monsters.len()
+                && combat.monsters.iter().zip(&self.monsters)
+                    .all(|(monster, &(hp, block))| monster.hp == hp && monster.block == block)
         });
-    same_monsters
-        && before.player.hp == after.player.hp
-        && before.player.block == after.player.block
-        && before.player.energy == after.player.energy
-        && before.player.hand == after.player.hand
-        && before.player.draw == after.player.draw
-        && before.player.discard == after.player.discard
+        same_monsters && self.player_hp == after.player.hp && self.player_block == after.player.block
+            && self.player_energy == after.player.energy && self.hand == *after.player.hand
+            && self.draw == *after.player.draw && self.discard == *after.player.discard
+    }
 }
 
 /// Rebound makes the chosen non-Power card the next draw. Score that future
-/// draw while choosing the card immediately after Rebound; the cloned engine
-/// handles the actual pile movement.
+/// draw while choosing the card immediately after Rebound.
+#[cfg(test)]
 fn rebound_play_value(game: &Game, action: &Action) -> f32 {
     if game.player.power_amount(PowerId::Rebound) <= 0 {
         return 0.0;
@@ -467,8 +465,9 @@ fn rebound_play_value(game: &Game, action: &Action) -> f32 {
 }
 
 /// Value Self Repair's delayed heal while deciding whether to spend energy on
-/// it. The cloned engine cannot observe that payoff until combat ends, so the
-/// shallow turn search otherwise skips it for immediate chip damage.
+/// it. The search cannot observe that payoff until combat ends, so it otherwise
+/// skips the setup card for immediate chip damage.
+#[cfg(test)]
 fn setup_play_value(game: &Game, action: &Action) -> f32 {
     let Action::Play { hand_index, .. } = action else {
         return 0.0;
@@ -504,6 +503,28 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
         }
         _ => 0.0,
     }
+}
+
+/// Setup value belongs to the reached state, not the route used to reach it.
+fn setup_state_value(before: &Game, after: &Game) -> f32 {
+    let hp_frac = after.player.hp as f32 / after.player.max_hp.max(1) as f32;
+    let danger = (params().danger_base + params().danger_scale * (1.0 - hp_frac).powi(2))
+        * (1.0 + after.ascension as f32 / 50.0);
+    let turns_left = fight_length(fight_kind(after), after.dungeon.act);
+    let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
+    let repair = (after.player.power_amount(PowerId::SelfRepair) - before.player.power_amount(PowerId::SelfRepair)).max(0) as f32;
+    let draw = (after.player.power_amount(PowerId::DrawCard) - before.player.power_amount(PowerId::DrawCard)).max(0) as f32;
+    let echo = (after.player.power_amount(PowerId::EchoForm) - before.player.power_amount(PowerId::EchoForm)).max(0) as f32;
+    let mut value = repair * danger * 1.25;
+    value += draw * turns_left * damage_weight * 2.2;
+    value += echo * turns_left.max(1.0) * damage_weight * 12.0;
+    let bias_gain = after.player.power_amount(PowerId::Bias) - before.player.power_amount(PowerId::Bias);
+    if bias_gain > 0 && before.combat.as_ref().is_some_and(|combat| combat.monsters.iter().any(|monster| {
+        monster.id == MonsterId::Champ && !monster.split_triggered && monster.hp >= monster.max_hp / 2
+    })) {
+        value -= 2_000.0;
+    }
+    value
 }
 
 /// Block available before monsters act if the player ends the turn now.
@@ -1159,7 +1180,7 @@ mod tests {
         game.player.add_power(PowerId::Focus, 2);
         game.player.add_power(PowerId::Metallicize, 3);
         game.player.add_power(PowerId::PlatedArmor, 4);
-        game.player.orbs = vec![Orb {
+        *game.player.orbs = vec![Orb {
             kind: OrbKind::Frost,
             evoke: 5,
         }];
@@ -1200,25 +1221,122 @@ mod tests {
     }
 
     #[test]
-    fn turn_state_hash_tracks_combat_and_rng_state() {
+    fn exact_combat_state_tracks_piles_combat_and_rng() {
         let game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         let same = game.clone();
-        assert_eq!(turn_state_hash(&game), turn_state_hash(&same));
+        assert!(game.combat_search_state().exact_eq(&same.combat_search_state()));
 
         let mut different_energy = game.clone();
         different_energy.player.energy += 1;
-        assert_ne!(turn_state_hash(&game), turn_state_hash(&different_energy));
+        assert!(!game.combat_search_state().exact_eq(&different_energy.combat_search_state()));
 
         let mut different_rng = game.clone();
         let _ = different_rng.rng.card.random_int(10);
-        assert_ne!(turn_state_hash(&game), turn_state_hash(&different_rng));
+        assert!(!game.combat_search_state().exact_eq(&different_rng.combat_search_state()));
+
+        let mut pile_order = game.clone();
+        *pile_order.player.discard = vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)];
+        let mut reversed = pile_order.clone();
+        reversed.player.discard.reverse();
+        assert!(!pile_order.combat_search_state().exact_eq(&reversed.combat_search_state()));
+    }
+
+    #[test]
+    fn combat_search_checkpoint_restores_after_a_play() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::Cultist,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            1,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 3;
+        *game.player.hand = vec![Card::new(CardId::Strike_B)];
+
+        let checkpoint = game.combat_search_checkpoint();
+        let root = checkpoint.root();
+        let root_legal = game.legal_actions();
+        let mut scratch = game.clone();
+        scratch.step(&Action::Play {
+            hand_index: 0,
+            target_index: Some(0),
+        });
+        assert!(!root.exact_eq(&scratch.combat_search_state()));
+
+        scratch.restore_combat_search_state(&checkpoint, root);
+        assert!(root.exact_eq(&scratch.combat_search_state()));
+        assert_eq!(scratch.legal_actions(), root_legal);
+    }
+
+    #[test]
+    fn combat_search_checkpoint_restores_after_a_winning_play() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::Cultist,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            1,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 3;
+        *game.player.hand = vec![Card::new(CardId::Strike_B)];
+        game.combat.as_mut().unwrap().monsters[0].hp = 1;
+
+        let checkpoint = game.combat_search_checkpoint();
+        let root = checkpoint.root();
+        let root_legal = game.legal_actions();
+        let mut scratch = game.clone();
+        scratch.step(&Action::Play {
+            hand_index: 0,
+            target_index: Some(0),
+        });
+        assert_ne!(scratch.screen, Screen::Combat);
+
+        scratch.restore_combat_search_state(&checkpoint, root);
+        assert!(root.exact_eq(&scratch.combat_search_state()));
+        assert_eq!(scratch.legal_actions(), root_legal);
+        assert!(scratch.rewards.is_empty());
+    }
+
+    #[test]
+    fn shared_search_deduplicates_equivalent_first_plays() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::Cultist,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            1,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 3;
+        *game.player.hand = vec![Card::new(CardId::Defend_B), Card::new(CardId::Defend_B)];
+
+        let legal = game.legal_actions();
+        let (_, stats) = plan_turn_with_stats(&game, &legal);
+        assert!(stats.dedup_hits > 0);
     }
 
     #[test]
     fn cheap_hand_block_respects_energy_and_x_costs() {
         let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         game.player.energy = 3;
-        game.player.hand = vec![
+        *game.player.hand = vec![
             Card::new(CardId::Defend_B),
             Card::new(CardId::Reinforced_Body),
         ];
@@ -1243,7 +1361,7 @@ mod tests {
     #[test]
     fn rebound_target_score_prefers_a_high_value_repeat() {
         let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
-        game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Glacier)];
+        *game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Glacier)];
         game.player.add_power(PowerId::Rebound, 1);
         let strike = Action::Play {
             hand_index: 0,
@@ -1275,7 +1393,7 @@ mod tests {
         game.screen = Screen::Combat;
         game.player.hp = 20;
         game.player.energy = 1;
-        game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Self_Repair)];
+        *game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Self_Repair)];
 
         let legal = game.legal_actions();
         assert_eq!(
@@ -1306,7 +1424,7 @@ mod tests {
         game.screen = Screen::Combat;
         game.player.energy = 3;
         game.combat.as_mut().unwrap().monsters[0].intent_damage = 0;
-        game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Echo_Form)];
+        *game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Echo_Form)];
 
         let legal = game.legal_actions();
         assert_eq!(
@@ -1334,15 +1452,17 @@ mod tests {
         ));
         game.screen = Screen::Combat;
         game.player.energy = 2;
-        game.player.hand = vec![Card::new(CardId::Beam_Cell), Card::new(CardId::Strike_B)];
+        *game.player.hand = vec![Card::new(CardId::Beam_Cell), Card::new(CardId::Strike_B)];
         let monster = &mut game.combat.as_mut().unwrap().monsters[0];
         monster.hp = 10;
         monster.block = 0;
 
         let legal = game.legal_actions();
         let mut stats = SearchStats::default();
+        let checkpoint = game.combat_search_checkpoint();
+        let mut scratch = game.clone();
         assert_eq!(
-            exact_attack_lethal(&game, &legal, &mut stats),
+            exact_attack_lethal(&game, &legal, &checkpoint, &mut scratch, &mut stats),
             Some(Action::Play {
                 hand_index: 0,
                 target_index: Some(0),
@@ -1520,7 +1640,7 @@ mod tests {
     fn persistent_block_bank_excludes_ordinary_block() {
         let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         game.player.block = 20;
-        game.player.orbs = vec![Orb {
+        *game.player.orbs = vec![Orb {
             kind: OrbKind::Frost,
             evoke: 5,
         }];
@@ -1572,7 +1692,7 @@ mod tests {
             0,
         ));
         game.screen = Screen::Combat;
-        game.player.hand = vec![Card::new(CardId::Biased_Cognition)];
+        *game.player.hand = vec![Card::new(CardId::Biased_Cognition)];
         let play = Action::Play {
             hand_index: 0,
             target_index: None,

@@ -1,7 +1,7 @@
 use crate::card::Card;
 use crate::content::encounter_monsters;
 use crate::creature::{power_is_debuff, Intent, Monster, Orb, OrbKind, Player};
-use crate::dungeon::Dungeon;
+use crate::dungeon::{CowVec, Dungeon};
 use crate::ids::{CardId, CardRarity, CardTarget, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId};
 use crate::java_util::shuffle_java;
 use crate::rng::RngSet;
@@ -9,7 +9,7 @@ use crate::rng::RngSet;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Combat {
     pub encounter: EncounterId,
-    pub monsters: Vec<Monster>,
+    pub monsters: CowVec<Monster>,
     /// AbstractRoom.smoked: Smoke Bomb was used during this combat.
     /// The flag suppresses the visible combat rewards even when the last
     /// monster dies before the player's escape animation completes.
@@ -35,7 +35,7 @@ pub struct Combat {
     /// SkillFromDeckToHandAction GRID (Secret Technique).
     pub need_skill_from_deck: bool,
     /// Draw-pile indices in addToRandomSpot order for that GRID.
-    pub skill_from_deck: Vec<usize>,
+    pub skill_from_deck: CowVec<usize>,
     pub pending_exhaust: Option<Card>,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
@@ -45,10 +45,10 @@ pub struct Combat {
     pub pending_letter_opener: i32,
     pub pending_hex_after_seek: i32,
     /// StasisPower.onDeath cards queued in monster death order.
-    pub pending_stasis_cards: Vec<Card>,
+    pub pending_stasis_cards: CowVec<Card>,
     pub ascension: i32,
     /// GameActionManager.orbsChanneledThisCombat (Blizzard / Thunder Strike).
-    pub orbs_channeled_this_combat: Vec<OrbKind>,
+    pub orbs_channeled_this_combat: CowVec<OrbKind>,
     /// AbstractCard.energyOnUse snapshotted at play. Duplication/Echo copies
     /// reuse this (CardQueueItem(tmp, m, card.energyOnUse)) even after the
     /// original spent the energy (seed 991 Tempest x2).
@@ -152,7 +152,7 @@ impl Combat {
                 rest.push(card);
             }
         }
-        player.draw = rest;
+        player.draw = rest.into();
         player.draw.append(&mut on_top);
         player.energy = player.energy_master;
         if player.has_relic(RelicId::Lantern) {
@@ -324,7 +324,7 @@ impl Combat {
 
         let mut combat = Self {
             encounter,
-            monsters,
+            monsters: monsters.into(),
             smoked: false,
             turn: 1,
             cards_played_this_turn: 0,
@@ -338,16 +338,16 @@ impl Combat {
             need_discovery: false,
             need_forethought: false,
             need_skill_from_deck: false,
-            skill_from_deck: Vec::new(),
+            skill_from_deck: CowVec::default(),
             pending_exhaust: None,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
             pending_ink_bottle: 0,
             pending_letter_opener: 0,
             pending_hex_after_seek: 0,
-            pending_stasis_cards: Vec::new(),
+            pending_stasis_cards: CowVec::default(),
             ascension,
-            orbs_channeled_this_combat: channeled,
+            orbs_channeled_this_combat: channeled.into(),
             energy_on_use: -1,
             slavers_collar_active,
             force_end_turn: false,
@@ -6032,6 +6032,11 @@ fn apply_card_effect(
         CardId::Machine_Learning => {
             player.add_power(PowerId::DrawCard, card.base_magic.max(1) as i32);
         }
+        CardId::Echo_Form => {
+            // Duplicated-card behavior is not modeled yet, but the power must
+            // still be represented in state identity and strategic scoring.
+            player.add_power(PowerId::EchoForm, card.base_magic.max(1) as i32);
+        }
         CardId::All_For_One => {
             if let Some(i) = target {
                 if let Some(m) = combat.monsters.get_mut(i) {
@@ -7062,7 +7067,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     }
     if keep_hand {
         kept.reverse();
-        player.hand = kept;
+        player.hand = kept.into();
     }
 
     if combat.all_dead() {

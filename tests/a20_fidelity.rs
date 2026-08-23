@@ -73,7 +73,7 @@ fn smoke_bomb_suppresses_rewards_when_a_card_kills_before_escape() {
     }
     combat.monsters[0].hp = 1;
     combat.monsters[0].dead = false;
-    game.player.hand = vec![Card::new(CardId::Strike_B)];
+    *game.player.hand = vec![Card::new(CardId::Strike_B)];
     game.player.energy = 3;
     game.screen = Screen::Combat;
 
@@ -144,7 +144,7 @@ fn normality_disables_every_card_after_three_cards_are_played() {
         game.seed,
         20,
     ));
-    game.player.hand = vec![Card::new(CardId::Normality), Card::new(CardId::Defend_B)];
+    *game.player.hand = vec![Card::new(CardId::Normality), Card::new(CardId::Defend_B)];
     game.player.energy = 3;
     game.combat.as_mut().unwrap().cards_played_this_turn = 3;
     game.screen = Screen::Combat;
@@ -172,11 +172,11 @@ fn letter_opener_mode_shift_block_resolves_before_end_turn_lightning() {
         used_up: false,
     });
     game.player.add_power(PowerId::Focus, 2);
-    game.player.orbs = vec![Orb {
+    *game.player.orbs = vec![Orb {
         kind: OrbKind::Lightning,
         evoke: 0,
     }];
-    game.player.hand = vec![Card::new(CardId::Defend_B)];
+    *game.player.hand = vec![Card::new(CardId::Defend_B)];
     game.player.draw.clear();
     game.player.discard.clear();
     game.player.energy = 3;
@@ -226,7 +226,7 @@ fn dualcast_letter_opener_resolves_before_mode_shift_queued_by_second_evoke() {
         counter: 2,
         used_up: false,
     });
-    game.player.orbs = vec![
+    *game.player.orbs = vec![
         Orb {
             kind: OrbKind::Lightning,
             evoke: 0,
@@ -240,7 +240,7 @@ fn dualcast_letter_opener_resolves_before_mode_shift_queued_by_second_evoke() {
             evoke: 0,
         },
     ];
-    game.player.hand = vec![Card::new(CardId::Dualcast)];
+    *game.player.hand = vec![Card::new(CardId::Dualcast)];
     game.player.draw.clear();
     game.player.discard.clear();
     game.player.energy = 1;
@@ -279,7 +279,7 @@ fn thinking_ahead_requires_one_hand_choice_then_confirm() {
         game.seed,
         20,
     ));
-    game.player.hand = vec![
+    *game.player.hand = vec![
         Card::new(CardId::Thinking_Ahead),
         Card::new(CardId::Defend_B),
         Card::new(CardId::Strike_B),
@@ -329,9 +329,9 @@ fn reboot_clears_mummified_hand_costs_when_moving_hand_to_draw() {
     discounted.cost_for_turn = 0;
     let mut discarded_discounted = Card::new(CardId::Compile_Driver);
     discarded_discounted.cost_for_turn = 0;
-    game.player.hand = vec![Card::new(CardId::Reboot), discounted];
+    *game.player.hand = vec![Card::new(CardId::Reboot), discounted];
     game.player.draw.clear();
-    game.player.discard = vec![discarded_discounted];
+    *game.player.discard = vec![discarded_discounted];
     game.player.energy = 3;
     game.screen = Screen::Combat;
 
@@ -375,13 +375,13 @@ fn lethal_compile_driver_cancels_queued_draw_and_abacus_shuffle() {
     }
     combat.monsters[0].hp = 1;
     combat.monsters[0].dead = false;
-    game.player.orbs = vec![Orb {
+    *game.player.orbs = vec![Orb {
         kind: OrbKind::Frost,
         evoke: 0,
     }];
-    game.player.hand = vec![Card::new(CardId::Compile_Driver)];
+    *game.player.hand = vec![Card::new(CardId::Compile_Driver)];
     game.player.draw.clear();
-    game.player.discard = vec![Card::new(CardId::Defend_B)];
+    *game.player.discard = vec![Card::new(CardId::Defend_B)];
     game.player.block = 0;
     game.player.energy = 3;
     game.screen = Screen::Combat;
@@ -419,7 +419,7 @@ fn lethal_attack_resets_nunchaku_without_granting_queued_energy() {
     }
     combat.monsters[0].hp = 1;
     combat.monsters[0].dead = false;
-    game.player.hand = vec![Card::new(CardId::Strike_B)];
+    *game.player.hand = vec![Card::new(CardId::Strike_B)];
     game.player.energy = 3;
     game.screen = Screen::Combat;
 
@@ -469,7 +469,7 @@ fn gremlin_horn_draws_when_exploder_dies_during_its_monster_turn() {
     combat.monsters[0].dead = false;
     combat.monsters[0].add_power(PowerId::Explosive, 1);
     player.hand.clear();
-    player.draw = vec![
+    *player.draw = vec![
         Card::new(CardId::Defend_B),
         Card::new(CardId::Zap),
         Card::new(CardId::Strike_B),
@@ -516,7 +516,7 @@ fn gremlin_horn_does_not_draw_for_large_slime_split_suicide() {
     combat.monsters[0].dead = false;
     combat.monsters[0].powers.clear();
     player.hand.clear();
-    player.draw = vec![
+    *player.draw = vec![
         Card::new(CardId::Defend_B),
         Card::new(CardId::Zap),
         Card::new(CardId::Strike_B),
@@ -557,7 +557,7 @@ fn ball_lightning_channels_before_gremlin_leader_minions_escape() {
         .expect("Gremlin Leader");
     combat.monsters[leader].hp = 1;
     combat.monsters[leader].block = 0;
-    game.player.orbs = vec![
+    *game.player.orbs = vec![
         Orb {
             kind: OrbKind::Frost,
             evoke: 0,
@@ -572,7 +572,7 @@ fn ball_lightning_channels_before_gremlin_leader_minions_escape() {
         },
     ];
     game.player.add_power(PowerId::Focus, 3);
-    game.player.hand = vec![Card::new(CardId::Ball_Lightning)];
+    *game.player.hand = vec![Card::new(CardId::Ball_Lightning)];
     game.player.block = 0;
     game.player.energy = 3;
     game.screen = Screen::Combat;
@@ -599,7 +599,7 @@ fn skipped_skill_potion_discovery_burns_the_unused_offer_rounds() {
         seed,
         20,
     ));
-    game.player.potions = vec![PotionInstance {
+    *game.player.potions = vec![PotionInstance {
         id: PotionId::Skill,
         slot: 0,
     }];
@@ -630,12 +630,12 @@ fn attack_potion_waits_for_gambling_brew_hand_selection() {
         game.seed,
         20,
     ));
-    game.player.hand = vec![
+    *game.player.hand = vec![
         Card::new(CardId::Defend_B),
         Card::new(CardId::Zap),
         Card::new(CardId::Ball_Lightning),
     ];
-    game.player.potions = vec![
+    *game.player.potions = vec![
         PotionInstance {
             id: PotionId::GamblersBrew,
             slot: 0,
@@ -691,7 +691,7 @@ fn fire_potion_waits_for_colorless_discovery_and_keeps_relic_action_order() {
         counter: -1,
         used_up: false,
     });
-    game.player.potions = vec![
+    *game.player.potions = vec![
         PotionInstance {
             id: PotionId::Colorless,
             slot: 0,
@@ -743,7 +743,7 @@ fn block_potion_waits_for_power_potion_discovery() {
         game.seed,
         20,
     ));
-    game.player.potions = vec![
+    *game.player.potions = vec![
         PotionInstance {
             id: PotionId::Power,
             slot: 0,
@@ -793,8 +793,8 @@ fn upgraded_seek_adds_selected_cards_to_hand_in_click_order() {
     ));
     let mut seek = Card::new(CardId::Seek);
     seek.upgrade();
-    game.player.hand = vec![seek];
-    game.player.draw = vec![
+    *game.player.hand = vec![seek];
+    *game.player.draw = vec![
         Card::new(CardId::Defragment),
         Card::new(CardId::Ball_Lightning),
         Card::new(CardId::Defend_B),
@@ -1358,7 +1358,7 @@ fn static_discharge_kills_maw_before_remaining_multiattack_hits() {
     player.add_power(PowerId::StaticDischarge, 1);
     player.add_power(PowerId::Electro, 1);
     player.max_orbs = 3;
-    player.orbs = vec![
+    *player.orbs = vec![
         Orb { kind: OrbKind::Lightning, evoke: 0 },
         Orb { kind: OrbKind::Lightning, evoke: 0 },
         Orb { kind: OrbKind::Lightning, evoke: 0 },
@@ -1497,7 +1497,7 @@ fn expiring_draw_reduction_still_reduces_the_already_queued_draw() {
     player.hand.clear();
     player.discard.clear();
     player.exhaust.clear();
-    player.draw = vec![Card::new(CardId::Defend_B); 6];
+    *player.draw = vec![Card::new(CardId::Defend_B); 6];
     player.add_power_from_monster(PowerId::DrawReduction, 1);
     player.powers.iter_mut().find(|power| power.id == PowerId::DrawReduction).unwrap().just_applied = false;
     combat.monsters[0].next_move = 3;
@@ -1534,8 +1534,8 @@ fn spheric_guardian_slam_resolves_abacus_after_both_damage_actions() {
     player.hp = 57;
     player.block = 10;
     player.hand.clear();
-    player.draw = vec![Card::new(CardId::Ball_Lightning)];
-    player.discard = vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)];
+    *player.draw = vec![Card::new(CardId::Ball_Lightning)];
+    *player.discard = vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)];
     player.relics.push(RelicInstance {
         id: RelicId::Centennial_Puzzle,
         counter: -1,
@@ -1599,7 +1599,7 @@ fn hourglass_returns_stasis_card_between_turn_draw_and_gremlin_horn_draw() {
     .map(Card::new)
     .collect();
 
-    combat.monsters = vec![
+    *combat.monsters = vec![
         combat::spawn_monster(MonsterId::BronzeOrb, &mut rng, 20),
         combat::spawn_monster(MonsterId::BronzeAutomaton, &mut rng, 20),
     ];

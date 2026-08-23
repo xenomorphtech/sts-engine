@@ -327,6 +327,7 @@ pub enum PowerId {
     Loop,
     Sadistic,
     SelfRepair,
+    EchoForm,
     Heatsink,
     CreativeAI,
     LockOn,

@@ -1,4 +1,5 @@
 use crate::ids::{MonsterId, PowerId};
+use crate::dungeon::CowVec;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Power {
@@ -46,14 +47,14 @@ pub struct Player {
     pub energy: i32,
     pub energy_master: i32,
     pub potion_slots: i32,
-    pub relics: Vec<RelicInstance>,
-    pub potions: Vec<PotionInstance>,
-    pub powers: Vec<Power>,
-    pub deck: Vec<crate::card::Card>,
-    pub draw: Vec<crate::card::Card>,
-    pub hand: Vec<crate::card::Card>,
-    pub discard: Vec<crate::card::Card>,
-    pub exhaust: Vec<crate::card::Card>,
+    pub relics: CowVec<RelicInstance>,
+    pub potions: CowVec<PotionInstance>,
+    pub powers: CowVec<Power>,
+    pub deck: CowVec<crate::card::Card>,
+    pub draw: CowVec<crate::card::Card>,
+    pub hand: CowVec<crate::card::Card>,
+    pub discard: CowVec<crate::card::Card>,
+    pub exhaust: CowVec<crate::card::Card>,
     pub duplication: i32,
     /// StaticDischargePower.onAttacked: Lightning channels queued during a hit.
     pub pending_static: i32,
@@ -61,10 +62,10 @@ pub struct Player {
     /// channels. A Frost following deferred Lightning in the same one-hit
     /// action is deferred too, preserving the ChannelAction queue order.
     /// Flushed after take_turn so `channel_orb` can borrow Combat.
-    pub pending_evoke_lightning: Vec<i32>,
-    pub pending_evoke_frost: Vec<i32>,
-    pub pending_evoke_dark: Vec<i32>,
-    pub orbs: Vec<Orb>,
+    pub pending_evoke_lightning: CowVec<i32>,
+    pub pending_evoke_frost: CowVec<i32>,
+    pub pending_evoke_dark: CowVec<i32>,
+    pub orbs: CowVec<Orb>,
     /// Combat orb slots (`AbstractPlayer.maxOrbs`). Reset from `master_max_orbs` in
     /// `preBattlePrep`; Capacitor / Consume mutate this only for the current fight.
     pub max_orbs: i32,
@@ -88,14 +89,14 @@ impl Player {
                 id: RelicId::Burning_Blood,
                 counter: -1,
                 used_up: false,
-            }],
+            }].into(),
             potions: (0..3)
                 .map(|slot| PotionInstance {
                     id: PotionId::Slot,
                     slot,
                 })
                 .collect(),
-            powers: Vec::new(),
+            powers: CowVec::default(),
             deck: vec![
                 Card::new(CardId::Strike_R),
                 Card::new(CardId::Strike_R),
@@ -107,17 +108,17 @@ impl Player {
                 Card::new(CardId::Defend_R),
                 Card::new(CardId::Defend_R),
                 Card::new(CardId::Bash),
-            ],
-            draw: Vec::new(),
-            hand: Vec::new(),
-            discard: Vec::new(),
-            exhaust: Vec::new(),
+            ].into(),
+            draw: CowVec::default(),
+            hand: CowVec::default(),
+            discard: CowVec::default(),
+            exhaust: CowVec::default(),
             duplication: 0,
             pending_static: 0,
-            pending_evoke_lightning: Vec::new(),
-            pending_evoke_frost: Vec::new(),
-            pending_evoke_dark: Vec::new(),
-            orbs: Vec::new(),
+            pending_evoke_lightning: CowVec::default(),
+            pending_evoke_frost: CowVec::default(),
+            pending_evoke_dark: CowVec::default(),
+            orbs: CowVec::default(),
             max_orbs: 0,
             master_max_orbs: 0,
         }
@@ -138,14 +139,14 @@ impl Player {
                 id: RelicId::Cracked_Core,
                 counter: -1,
                 used_up: false,
-            }],
+            }].into(),
             potions: (0..3)
                 .map(|slot| PotionInstance {
                     id: PotionId::Slot,
                     slot,
                 })
                 .collect(),
-            powers: Vec::new(),
+            powers: CowVec::default(),
             deck: vec![
                 Card::new(CardId::Strike_B),
                 Card::new(CardId::Strike_B),
@@ -157,17 +158,17 @@ impl Player {
                 Card::new(CardId::Defend_B),
                 Card::new(CardId::Zap),
                 Card::new(CardId::Dualcast),
-            ],
-            draw: Vec::new(),
-            hand: Vec::new(),
-            discard: Vec::new(),
-            exhaust: Vec::new(),
+            ].into(),
+            draw: CowVec::default(),
+            hand: CowVec::default(),
+            discard: CowVec::default(),
+            exhaust: CowVec::default(),
             duplication: 0,
             pending_static: 0,
-            pending_evoke_lightning: Vec::new(),
-            pending_evoke_frost: Vec::new(),
-            pending_evoke_dark: Vec::new(),
-            orbs: Vec::new(),
+            pending_evoke_lightning: CowVec::default(),
+            pending_evoke_frost: CowVec::default(),
+            pending_evoke_dark: CowVec::default(),
+            orbs: CowVec::default(),
             max_orbs: 3,
             master_max_orbs: 3,
         }
