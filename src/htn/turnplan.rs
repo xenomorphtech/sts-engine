@@ -4,6 +4,7 @@ use crate::game::{Game, Screen};
 use crate::ids::{Act, CardId, CardType, MonsterId, PotionId, PowerId, RelicId, RoomType};
 use std::collections::{HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::ops::AddAssign;
 
 use super::params::params;
 
@@ -14,38 +15,83 @@ enum FightKind {
     Boss,
 }
 
+/// Deterministic work performed while choosing combat actions.
+///
+/// These counters deliberately live on the caller's stack. They do not use
+/// atomics or locks in the search hot path and can be aggregated after a seed
+/// finishes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchStats {
+    pub plan_calls: u64,
+    pub simulated_steps: u64,
+    pub expanded_nodes: u64,
+    pub score_evaluations: u64,
+    pub lethal_expansions: u64,
+    pub dedup_hits: u64,
+}
+
+impl AddAssign for SearchStats {
+    fn add_assign(&mut self, rhs: Self) {
+        self.plan_calls += rhs.plan_calls;
+        self.simulated_steps += rhs.simulated_steps;
+        self.expanded_nodes += rhs.expanded_nodes;
+        self.score_evaluations += rhs.score_evaluations;
+        self.lethal_expansions += rhs.lethal_expansions;
+        self.dedup_hits += rhs.dedup_hits;
+    }
+}
+
+fn simulated_step(game: &mut Game, action: &Action, stats: &mut SearchStats) {
+    game.step(action);
+    stats.simulated_steps += 1;
+}
+
+fn evaluated_score(before: &Game, after: &Game, stats: &mut SearchStats) -> f32 {
+    stats.score_evaluations += 1;
+    score_state(before, after)
+}
+
 /// Pick the combat command: try each legal play as a first move, then greedy
 /// the rest of the turn on a cloned `Game` (real engine rules, not a second sim).
 pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
+    plan_turn_with_stats(game, legal).0
+}
+
+pub fn plan_turn_with_stats(game: &Game, legal: &[Action]) -> (Action, SearchStats) {
+    let mut stats = SearchStats {
+        plan_calls: 1,
+        ..SearchStats::default()
+    };
     if let Some(potion) = potion_policy(game, legal) {
-        return potion;
+        return (potion, stats);
     }
     let plays: Vec<&Action> = legal
         .iter()
         .filter(|a| matches!(a, Action::Play { .. }))
         .collect();
     if plays.is_empty() {
-        return legal
+        let action = legal
             .iter()
             .find(|a| matches!(a, Action::EndTurn))
             .cloned()
             .unwrap_or_else(|| legal[0].clone());
+        return (action, stats);
     }
-    if let Some(lethal) = exact_attack_lethal(game, legal) {
-        return lethal;
+    if let Some(lethal) = exact_attack_lethal(game, legal, &mut stats) {
+        return (lethal, stats);
     }
     let mut best_first: Option<&Action> = None;
     let mut best_score = f32::MIN;
     for first in &plays {
         let mut clone = game.clone();
-        clone.step(first);
-        resolve_grid_selects(&mut clone);
+        simulated_step(&mut clone, first, &mut stats);
+        resolve_grid_selects(&mut clone, &mut stats);
         if non_progressing_status_play(game, &clone, first) {
             continue;
         }
         let first_value = rebound_play_value(game, first) + setup_play_value(game, first);
-        let (clone, rest_value) = searched_rest(game, clone);
-        let score = score_state(game, &clone) + first_value + rest_value;
+        let (clone, rest_value) = searched_rest(game, clone, &mut stats);
+        let score = evaluated_score(game, &clone, &mut stats) + first_value + rest_value;
         if score > best_score {
             best_score = score;
             best_first = Some(*first);
@@ -54,13 +100,16 @@ pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
     // Also consider ending the turn immediately (full block / empty energy).
     if let Some(end) = legal.iter().find(|a| matches!(a, Action::EndTurn)) {
         let mut clone = game.clone();
-        clone.step(end);
-        let score = score_state(game, &clone);
+        simulated_step(&mut clone, end, &mut stats);
+        let score = evaluated_score(game, &clone, &mut stats);
         if best_first.is_none() || score > best_score + 5.0 {
-            return end.clone();
+            return (end.clone(), stats);
         }
     }
-    best_first.cloned().unwrap_or_else(|| plays[0].clone())
+    (
+        best_first.cloned().unwrap_or_else(|| plays[0].clone()),
+        stats,
+    )
 }
 
 const EXACT_LETHAL_NODE_BUDGET: usize = 20_000;
@@ -70,28 +119,39 @@ const EXACT_LETHAL_NODE_BUDGET: usize = 20_000;
 /// This deliberately searches only Attack plays. That keeps the branch factor
 /// small enough for a hard per-decision budget, while covering the common case
 /// where card order, Vulnerable, or target order separates lethal from a miss.
-fn exact_attack_lethal(game: &Game, legal: &[Action]) -> Option<Action> {
+fn exact_attack_lethal(
+    game: &Game,
+    legal: &[Action],
+    stats: &mut SearchStats,
+) -> Option<Action> {
     let turn = game.combat.as_ref()?.turn;
     let target_ehp = living_enemy_ehp(game);
-    if target_ehp <= 0 || optimistic_attack_damage(game, legal) < target_ehp {
+    if target_ehp <= 0 || optimistic_attack_damage(game, legal, stats) < target_ehp {
         return None;
     }
 
     let mut queue = VecDeque::new();
+    let mut seen = HashSet::with_capacity(EXACT_LETHAL_NODE_BUDGET.min(1024));
+    seen.insert(exact_turn_state_hash(game));
     let mut expanded = 0usize;
     for first in legal.iter().filter(|action| attack_play(game, action)) {
         if expanded >= EXACT_LETHAL_NODE_BUDGET {
             break;
         }
         expanded += 1;
+        stats.lethal_expansions += 1;
         let mut after = game.clone();
-        after.step(first);
-        resolve_grid_selects(&mut after);
+        simulated_step(&mut after, first, stats);
+        resolve_grid_selects(&mut after, stats);
         if combat_won(&after) {
             return Some(first.clone());
         }
         if same_combat_turn(&after, turn) {
-            queue.push_back((after, first.clone()));
+            if seen.insert(exact_turn_state_hash(&after)) {
+                queue.push_back((after, first.clone()));
+            } else {
+                stats.dedup_hits += 1;
+            }
         }
     }
 
@@ -105,14 +165,19 @@ fn exact_attack_lethal(game: &Game, legal: &[Action]) -> Option<Action> {
                 return None;
             }
             expanded += 1;
+            stats.lethal_expansions += 1;
             let mut after = state.clone();
-            after.step(&action);
-            resolve_grid_selects(&mut after);
+            simulated_step(&mut after, &action, stats);
+            resolve_grid_selects(&mut after, stats);
             if combat_won(&after) {
                 return Some(first);
             }
             if same_combat_turn(&after, turn) {
-                queue.push_back((after, first.clone()));
+                if seen.insert(exact_turn_state_hash(&after)) {
+                    queue.push_back((after, first.clone()));
+                } else {
+                    stats.dedup_hits += 1;
+                }
             }
         }
     }
@@ -161,7 +226,7 @@ fn living_enemy_ehp(game: &Game) -> i32 {
 /// Cheap upper-biased gate for the exact search. Each distinct Attack is
 /// simulated once per legal target, then its best immediate damage is doubled
 /// to leave room for Vulnerable, strength scaling, and attack-draw chains.
-fn optimistic_attack_damage(game: &Game, legal: &[Action]) -> i32 {
+fn optimistic_attack_damage(game: &Game, legal: &[Action], stats: &mut SearchStats) -> i32 {
     let before = living_enemy_ehp(game);
     let mut best_by_hand = vec![0; game.player.hand.len()];
     for action in legal.iter().filter(|action| attack_play(game, action)) {
@@ -169,8 +234,8 @@ fn optimistic_attack_damage(game: &Game, legal: &[Action]) -> i32 {
             continue;
         };
         let mut after = game.clone();
-        after.step(action);
-        resolve_grid_selects(&mut after);
+        simulated_step(&mut after, action, stats);
+        resolve_grid_selects(&mut after, stats);
         let dealt = if combat_won(&after) {
             before
         } else {
@@ -221,7 +286,18 @@ fn turn_state_hash(game: &Game) -> u64 {
     hasher.finish()
 }
 
-fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
+/// Exact-lethal search may draw attacks, so unlike the beam dedup key it must
+/// preserve pile order as well as the rest of the turn state.
+fn exact_turn_state_hash(game: &Game) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    turn_state_hash(game).hash(&mut hasher);
+    game.player.draw.hash(&mut hasher);
+    game.player.discard.hash(&mut hasher);
+    game.player.exhaust.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn searched_rest(origin: &Game, start: Game, stats: &mut SearchStats) -> (Game, f32) {
     let width = params().search_width.round().max(1.0) as usize;
     let depth = params().search_depth.round().max(1.0) as usize;
 
@@ -234,6 +310,7 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
         let mut next = Vec::new();
         let current = std::mem::take(&mut frontier);
         for node in current {
+            stats.expanded_nodes += 1;
             if node.game.screen != Screen::Combat
                 || node.game.player.hp <= 0
                 || node
@@ -251,7 +328,7 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
                 .find(|action| matches!(action, Action::EndTurn))
             {
                 let mut ended = node.clone();
-                ended.game.step(end);
+                simulated_step(&mut ended.game, end, stats);
                 finals.push(ended);
             }
             for play in legal
@@ -259,8 +336,8 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
                 .filter(|action| matches!(action, Action::Play { .. }))
             {
                 let mut after = node.game.clone();
-                after.step(play);
-                resolve_grid_selects(&mut after);
+                simulated_step(&mut after, play, stats);
+                resolve_grid_selects(&mut after, stats);
                 if non_progressing_status_play(&node.game, &after, play) {
                     continue;
                 }
@@ -275,27 +352,35 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
         if next.is_empty() {
             break;
         }
-        next.sort_by(|a, b| {
-            let a_score = score_state(origin, &a.game) + a.strategic_value;
-            let b_score = score_state(origin, &b.game) + b.strategic_value;
-            b_score.total_cmp(&a_score)
-        });
+        // Decorate once before sorting: comparator calls are O(n log n), while
+        // state scoring walks the full combat state.
+        let mut next: Vec<_> = next
+            .into_iter()
+            .map(|node| {
+                let score = evaluated_score(origin, &node.game, stats) + node.strategic_value;
+                (node, score)
+            })
+            .collect();
+        next.sort_by(|(_, a_score), (_, b_score)| b_score.total_cmp(a_score));
         // Card-order permutations often reach the same state. Since the
         // frontier is already best-first, retain the highest-value route to
         // each state before spending the limited width on it.
         let mut seen = HashSet::with_capacity(next.len());
-        next.retain(|node| seen.insert(turn_state_hash(&node.game)));
+        let before_dedup = next.len();
+        next.retain(|(node, _)| seen.insert(turn_state_hash(&node.game)));
+        stats.dedup_hits += (before_dedup - next.len()) as u64;
         next.truncate(width);
-        frontier = next;
+        frontier = next.into_iter().map(|(node, _)| node).collect();
     }
     finals.extend(frontier);
     let best = finals
         .into_iter()
-        .max_by(|a, b| {
-            let a_score = score_state(origin, &a.game) + a.strategic_value;
-            let b_score = score_state(origin, &b.game) + b.strategic_value;
-            a_score.total_cmp(&b_score)
+        .map(|node| {
+            let score = evaluated_score(origin, &node.game, stats) + node.strategic_value;
+            (node, score)
         })
+        .max_by(|(_, a_score), (_, b_score)| a_score.total_cmp(b_score))
+        .map(|(node, _)| node)
         .expect("turn search always has an end or continuation");
     (best.game, best.strategic_value)
 }
@@ -303,7 +388,7 @@ fn searched_rest(origin: &Game, start: Game) -> (Game, f32) {
 /// Step through in-combat grid selections (Hologram, Seek, Secret Technique)
 /// with the same policy the agent uses, so the turn search values those plays
 /// by their resolved outcome instead of treating the grid screen as terminal.
-fn resolve_grid_selects(game: &mut Game) {
+fn resolve_grid_selects(game: &mut Game, stats: &mut SearchStats) {
     for _ in 0..8 {
         if game.screen != Screen::Grid {
             return;
@@ -313,7 +398,7 @@ fn resolve_grid_selects(game: &mut Game) {
             return;
         }
         let choice = crate::htn::strategy::grid_choice(game, &legal);
-        game.step(&choice);
+        simulated_step(game, &choice, stats);
     }
 }
 
@@ -1255,17 +1340,28 @@ mod tests {
         monster.block = 0;
 
         let legal = game.legal_actions();
+        let mut stats = SearchStats::default();
         assert_eq!(
-            exact_attack_lethal(&game, &legal),
+            exact_attack_lethal(&game, &legal, &mut stats),
             Some(Action::Play {
                 hand_index: 0,
                 target_index: Some(0),
             })
         );
+        assert!(stats.lethal_expansions >= 2);
+        assert!(stats.simulated_steps >= stats.lethal_expansions);
+
+        let (planned, plan_stats) = plan_turn_with_stats(&game, &legal);
         assert_eq!(
-            plan_turn(&game, &legal),
-            exact_attack_lethal(&game, &legal).unwrap()
+            planned,
+            Action::Play {
+                hand_index: 0,
+                target_index: Some(0),
+            }
         );
+        assert_eq!(plan_stats.plan_calls, 1);
+        assert!(plan_stats.simulated_steps > 0);
+        assert!(plan_stats.lethal_expansions > 0);
     }
 
     #[test]

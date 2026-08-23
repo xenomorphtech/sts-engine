@@ -4,6 +4,7 @@ use crate::ids::PotionId;
 use std::collections::VecDeque;
 
 use super::{strategy, turnplan};
+use turnplan::SearchStats;
 
 /// Reactive HTN: re-decompose WinRun → CompleteAct at every decision.
 #[derive(Clone, Debug, Default)]
@@ -18,35 +19,51 @@ impl HtnAgent {
     }
 
     pub fn decide(&mut self, game: &Game) -> Action {
+        self.decide_with_stats(game).0
+    }
+
+    pub fn decide_with_stats(&mut self, game: &Game) -> (Action, SearchStats) {
+        let mut stats = SearchStats::default();
         let legal = game.legal_actions();
         if legal.is_empty() {
-            return Action::Quit;
+            return (Action::Quit, stats);
         }
         if game.done || game.screen == Screen::Terminal || game.player.hp <= 0 {
-            return Action::Quit;
+            return (Action::Quit, stats);
         }
-        let cmd = self.method(game, &legal).unwrap_or_else(|| {
+        let cmd = self.method(game, &legal, &mut stats).unwrap_or_else(|| {
             legal
                 .iter()
                 .find(|a| !matches!(a, Action::Potion { .. }))
                 .cloned()
                 .unwrap_or_else(|| legal[0].clone())
         });
-        self.anti_stall(game, cmd, &legal)
+        (self.anti_stall(game, cmd, &legal), stats)
     }
 
-    fn method(&mut self, game: &Game, legal: &[Action]) -> Option<Action> {
+    fn method(
+        &mut self,
+        game: &Game,
+        legal: &[Action],
+        stats: &mut SearchStats,
+    ) -> Option<Action> {
         if game.player.hp < (game.player.max_hp as f32 * 0.45) as i32 {
             if let Some(heal) = find_potion(legal, &[PotionId::Blood, PotionId::FruitJuice]) {
                 return Some(heal);
             }
         }
         match game.screen {
-            Screen::Combat => Some(turnplan::plan_turn(game, legal)),
+            Screen::Combat => {
+                let (action, turn_stats) = turnplan::plan_turn_with_stats(game, legal);
+                *stats += turn_stats;
+                Some(action)
+            }
             Screen::Map => {
                 let nodes: Vec<Action> = legal
                     .iter()
-                    .filter(|a| matches!(a, Action::Choose { label: Some(l), .. } if l == "map node" || l == "boss"))
+                    .filter(|a| {
+                        matches!(a, Action::Choose { x: Some(_), y: Some(_), .. })
+                    })
                     .cloned()
                     .collect();
                 if nodes.is_empty() {
@@ -71,12 +88,13 @@ impl HtnAgent {
 
     fn enter_shop(&mut self, game: &Game, legal: &[Action]) -> Action {
         let floor = game.dungeon.floor;
-        if let Some(shop) = legal.iter().find(|a| {
-            matches!(a, Action::Choose { label: Some(l), .. } if l.eq_ignore_ascii_case("shop"))
-        }) {
-            if !self.visited_shop_floors.contains(&floor) {
-                self.visited_shop_floors.push(floor);
-                return shop.clone();
+        if !game.shop_is_open() {
+            let shop = legal.iter().find(|a| matches!(a, Action::Choose { .. }));
+            if let Some(shop) = shop {
+                if !self.visited_shop_floors.contains(&floor) {
+                    self.visited_shop_floors.push(floor);
+                    return shop.clone();
+                }
             }
         }
         strategy::shop_choice(game, legal)
@@ -138,7 +156,6 @@ mod tests {
     fn choose(index: usize) -> Action {
         Action::Choose {
             index,
-            label: Some(format!("card {index}")),
             x: None,
             y: None,
             room: None,

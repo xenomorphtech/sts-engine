@@ -3652,7 +3652,9 @@ fn steal_stasis_card(player: &mut Player, rng: &mut RngSet) -> Option<Card> {
         if idxs.is_empty() {
             continue;
         }
-        idxs.sort_by(|&a, &b| pile[a].sts_id().cmp(pile[b].sts_id()));
+        idxs.sort_by_key(|&index| {
+            crate::generated::card_name_order::card_id_order(pile[index].id)
+        });
         let pick = rng.card_random.random_int(idxs.len() as i32 - 1) as usize;
         return Some(pile.remove(idxs[pick]));
     }

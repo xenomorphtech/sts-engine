@@ -2,6 +2,7 @@
 
 pub mod card_catalog;
 pub mod card_ids;
+pub mod card_name_order;
 pub mod orders;
 pub mod relic_catalog;
 pub mod relic_ids;

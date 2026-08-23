@@ -1,14 +1,14 @@
 use crate::generated::orders::{DEFAULT_LOCKED_CARDS, DEFAULT_LOCKED_RELICS};
+use crate::ids::{CardId, EncounterId, RelicId};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
 pub struct Unlocks {
-    pub locked_relics: HashSet<String>,
-    pub locked_cards: HashSet<String>,
-    pub seen_bosses: HashSet<String>,
+    pub locked_relics: HashSet<RelicId>,
+    pub locked_cards: HashSet<CardId>,
+    pub seen_bosses: HashSet<EncounterId>,
     pub everything_unlocked: bool,
     /// Java `Settings.isFinalActAvailable`: Ironclad+Silent+Defect WIN, not daily/trial.
     pub final_act_available: bool,
@@ -20,7 +20,9 @@ impl Unlocks {
     /// Same prefs UnlockTracker / Settings read: `STSSeenBosses`, `STSUnlocks`,
     /// `STSPlayer` `*_WIN`. Override with `STS_PROFILE_FIXTURE`.
     pub fn fixture() -> Self {
-        profile_cache().clone()
+        discover_profile_dir()
+            .and_then(|dir| load_profile_dir(&dir))
+            .unwrap_or_else(legacy_hardcoded)
     }
 
     /// Guardian+Champ seen, default card/relic locks. For transcripts captured
@@ -34,11 +36,17 @@ impl Unlocks {
             locked_relics: HashSet::new(),
             locked_cards: HashSet::new(),
             seen_bosses: [
-                "GUARDIAN", "GHOST", "SLIME", "CHAMP", "AUTOMATON", "COLLECTOR", "CROW", "DONUT",
-                "WIZARD",
+                EncounterId::TheGuardian,
+                EncounterId::Hexaghost,
+                EncounterId::SlimeBoss,
+                EncounterId::Champ,
+                EncounterId::Automaton,
+                EncounterId::Collector,
+                EncounterId::AwakenedOne,
+                EncounterId::DonuAndDeca,
+                EncounterId::TimeEater,
             ]
             .into_iter()
-            .map(str::to_string)
             .collect(),
             everything_unlocked: true,
             final_act_available: true,
@@ -49,29 +57,17 @@ impl Unlocks {
         load_profile_dir(dir.as_ref())
     }
 
-    pub fn relic_locked(&self, id: &str) -> bool {
-        !self.everything_unlocked && self.locked_relics.contains(id)
+    pub fn relic_locked(&self, id: RelicId) -> bool {
+        !self.everything_unlocked && self.locked_relics.contains(&id)
     }
 
-    pub fn card_locked(&self, id: &str) -> bool {
-        !self.everything_unlocked && self.locked_cards.contains(id)
+    pub fn card_locked(&self, id: CardId) -> bool {
+        !self.everything_unlocked && self.locked_cards.contains(&id)
     }
 
-    pub fn boss_seen(&self, key: &str) -> bool {
-        self.seen_bosses.contains(key)
+    pub fn boss_seen(&self, id: EncounterId) -> bool {
+        self.seen_bosses.contains(&id)
     }
-}
-
-fn profile_cache() -> &'static Unlocks {
-    static CACHED: OnceLock<Unlocks> = OnceLock::new();
-    CACHED.get_or_init(|| {
-        if let Some(dir) = discover_profile_dir() {
-            if let Some(loaded) = load_profile_dir(&dir) {
-                return loaded;
-            }
-        }
-        legacy_hardcoded()
-    })
 }
 
 /// Prefs tree Java `launch.sh` copies into each instance (`betaPreferences/` inside).
@@ -119,19 +115,21 @@ fn load_profile_dir(profile: &Path) -> Option<Unlocks> {
     let mut seen_bosses = HashSet::new();
     for (key, val) in &bosses {
         if pref_int(val) == 1 {
-            seen_bosses.insert(key.clone());
+            if let Some(id) = EncounterId::from_sts_key(key) {
+                seen_bosses.insert(id);
+            }
         }
     }
 
     let locked_cards = DEFAULT_LOCKED_CARDS
         .iter()
-        .filter(|id| pref_int(unlocks.get(**id).unwrap_or(&Value::Null)) != 2)
-        .map(|s| (*s).to_string())
+        .filter(|id| pref_int(unlocks.get(id.sts_id()).unwrap_or(&Value::Null)) != 2)
+        .copied()
         .collect();
     let locked_relics = DEFAULT_LOCKED_RELICS
         .iter()
-        .filter(|id| pref_int(unlocks.get(**id).unwrap_or(&Value::Null)) != 2)
-        .map(|s| (*s).to_string())
+        .filter(|id| pref_int(unlocks.get(id.sts_id()).unwrap_or(&Value::Null)) != 2)
+        .copied()
         .collect();
 
     // Settings.setFinalActAvailability: Ironclad AND Silent AND Defect WIN.
@@ -180,9 +178,11 @@ fn pref_truthy(v: &Value) -> bool {
 /// Used only when the Java profile tree is missing (engine-only checkout).
 fn legacy_hardcoded() -> Unlocks {
     Unlocks {
-        locked_relics: DEFAULT_LOCKED_RELICS.iter().map(|s| (*s).to_string()).collect(),
-        locked_cards: DEFAULT_LOCKED_CARDS.iter().map(|s| (*s).to_string()).collect(),
-        seen_bosses: ["GUARDIAN", "CHAMP"].into_iter().map(str::to_string).collect(),
+        locked_relics: DEFAULT_LOCKED_RELICS.iter().copied().collect(),
+        locked_cards: DEFAULT_LOCKED_CARDS.iter().copied().collect(),
+        seen_bosses: [EncounterId::TheGuardian, EncounterId::Champ]
+            .into_iter()
+            .collect(),
         everything_unlocked: false,
         final_act_available: true,
     }

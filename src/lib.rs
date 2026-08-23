@@ -4,6 +4,8 @@
 //! gameplay-relevant RNG and rules so a seeded command transcript can be
 //! replayed without LibGDX, a GPU, or the 60 Hz action queue.
 
+mod string_id;
+
 pub mod action;
 pub mod card;
 pub mod combat;

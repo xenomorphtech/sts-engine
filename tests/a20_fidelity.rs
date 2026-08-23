@@ -119,7 +119,6 @@ fn skill_potion_does_not_replace_tempests_x_cost_with_zero() {
     game.card_reward = vec![Card::new(CardId::Tempest)];
     game.step(&Action::Choose {
         index: 0,
-        label: Some("Tempest".into()),
         x: None,
         y: None,
         room: None,
@@ -299,7 +298,6 @@ fn thinking_ahead_requires_one_hand_choice_then_confirm() {
 
     game.step(&Action::Choose {
         index: 0,
-        label: Some("Defend_B".into()),
         x: None,
         y: None,
         room: None,
@@ -724,7 +722,6 @@ fn fire_potion_waits_for_colorless_discovery_and_keeps_relic_action_order() {
 
     game.step(&Action::Choose {
         index: 0,
-        label: None,
         x: None,
         y: None,
         room: None,
@@ -774,7 +771,6 @@ fn block_potion_waits_for_power_potion_discovery() {
 
     game.step(&Action::Choose {
         index: 0,
-        label: None,
         x: None,
         y: None,
         room: None,
@@ -812,17 +808,25 @@ fn upgraded_seek_adds_selected_cards_to_hand_in_click_order() {
     });
     assert_eq!(game.screen, Screen::Grid);
 
-    let defragment = game
-        .legal_actions()
+    let defragment_index = game
+        .grid_view()
+        .expect("Seek grid")
+        .1
         .into_iter()
-        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Defragment"))
+        .find(|(_, card)| card.id == CardId::Defragment)
+        .map(|(index, _)| index)
         .expect("Defragment grid choice");
+    let defragment = Action::choose(defragment_index);
     game.step(&defragment);
-    let ball_lightning = game
-        .legal_actions()
+    let ball_lightning_index = game
+        .grid_view()
+        .expect("Seek grid")
+        .1
         .into_iter()
-        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Ball Lightning"))
+        .find(|(_, card)| card.id == CardId::Ball_Lightning)
+        .map(|(index, _)| index)
         .expect("Ball Lightning grid choice");
+    let ball_lightning = Action::choose(ball_lightning_index);
     game.step(&ball_lightning);
 
     assert_eq!(game.screen, Screen::Combat);
@@ -1125,13 +1129,11 @@ fn skip_on_grid_confirmation_cancels_the_preview() {
     let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
     game.neow_screen = 3;
     game.neow_options = vec![NeowOption {
-        label: "Remove a card".into(),
         kind: NeowKind::RemoveCard,
         drawback: NeowDrawback::None,
     }];
     game.step(&Action::Choose {
         index: 0,
-        label: Some("Remove a card".into()),
         x: None,
         y: None,
         room: None,
@@ -1161,7 +1163,6 @@ fn skip_on_grid_confirmation_cancels_the_preview() {
 fn action_choose(index: usize) -> Action {
     Action::Choose {
         index,
-        label: None,
         x: None,
         y: None,
         room: None,
@@ -1423,9 +1424,11 @@ fn a20_beyond_proceed_starts_second_boss_without_healing() {
     let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
     game.dungeon.act = Act::Beyond;
     game.dungeon.floor = 50;
-    game.dungeon.boss = "Awakened One".into();
+    game.dungeon.boss = EncounterId::AwakenedOne;
     game.dungeon.boss_list.clear();
-    game.dungeon.boss_list.extend(["Donu and Deca", "Time Eater"].map(str::to_string));
+    game.dungeon
+        .boss_list
+        .extend([EncounterId::DonuAndDeca, EncounterId::TimeEater]);
     game.current_room = RoomType::Boss;
     game.screen = Screen::CombatReward;
     game.player.hp = 17;
@@ -1439,8 +1442,8 @@ fn a20_beyond_proceed_starts_second_boss_without_healing() {
     assert_eq!(game.current_y, 15);
     assert_eq!(game.dungeon.floor, 51);
     assert_eq!(game.player.hp, 17);
-    assert_eq!(game.dungeon.boss, "Donu and Deca");
-    assert_eq!(game.dungeon.boss_list.as_ref(), &["Time Eater"]);
+    assert_eq!(game.dungeon.boss, EncounterId::DonuAndDeca);
+    assert_eq!(game.dungeon.boss_list.as_ref(), &[EncounterId::TimeEater]);
     assert_eq!(game.combat.as_ref().unwrap().encounter, EncounterId::DonuAndDeca);
 }
 
@@ -1450,7 +1453,9 @@ fn a19_beyond_proceed_goes_to_spire_heart() {
     game.dungeon.act = Act::Beyond;
     game.dungeon.floor = 50;
     game.dungeon.boss_list.clear();
-    game.dungeon.boss_list.extend(["Time Eater", "Donu and Deca"].map(str::to_string));
+    game.dungeon
+        .boss_list
+        .extend([EncounterId::TimeEater, EncounterId::DonuAndDeca]);
     game.current_room = RoomType::Boss;
     game.screen = Screen::CombatReward;
 

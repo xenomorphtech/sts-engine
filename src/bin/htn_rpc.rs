@@ -63,13 +63,7 @@ fn default_character() -> String {
 }
 
 fn parse_character(raw: &str) -> Result<Character, String> {
-    match raw.to_ascii_uppercase().as_str() {
-        "DEFECT" => Ok(Character::Defect),
-        "IRONCLAD" | "IRON_CLAD" => Ok(Character::Ironclad),
-        "SILENT" | "THE_SILENT" => Ok(Character::Silent),
-        "WATCHER" => Ok(Character::Watcher),
-        _ => Err(format!("unsupported character {raw:?}")),
-    }
+    Character::from_cli(raw).ok_or_else(|| format!("unsupported character {raw:?}"))
 }
 
 fn parse_seed(value: &Value) -> Result<i64, String> {

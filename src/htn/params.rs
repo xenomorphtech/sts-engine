@@ -5,7 +5,10 @@
 //! Setting `STS_HTN_PARAMS=/path/to/params.json` overrides any subset, which
 //! is the interface the black-box optimizer uses.
 
-use serde::Deserialize;
+use crate::ids::{CardId, RelicId};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -107,11 +110,44 @@ pub struct Params {
     pub potion_boss_dump_hp: f32,
     pub entropic_min_empty: f32,
     /// Absolute per-card pick-score overrides keyed by sts id.
-    pub pick: std::collections::HashMap<String, f32>,
+    #[serde(deserialize_with = "deserialize_card_scores")]
+    pub pick: HashMap<CardId, f32>,
     /// Absolute per-card upgrade-score overrides keyed by sts id.
-    pub upgrade: std::collections::HashMap<String, f32>,
+    #[serde(deserialize_with = "deserialize_card_scores")]
+    pub upgrade: HashMap<CardId, f32>,
     /// Absolute boss-relic rank overrides keyed by sts id.
-    pub boss_relic: std::collections::HashMap<String, f32>,
+    #[serde(deserialize_with = "deserialize_relic_scores")]
+    pub boss_relic: HashMap<RelicId, f32>,
+}
+
+fn deserialize_card_scores<'de, D>(deserializer: D) -> Result<HashMap<CardId, f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let input = HashMap::<String, f32>::deserialize(deserializer)?;
+    input
+        .into_iter()
+        .map(|(name, score)| {
+            CardId::from_sts_id(&name)
+                .map(|id| (id, score))
+                .ok_or_else(|| D::Error::custom(format!("unknown card id {name:?}")))
+        })
+        .collect()
+}
+
+fn deserialize_relic_scores<'de, D>(deserializer: D) -> Result<HashMap<RelicId, f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let input = HashMap::<String, f32>::deserialize(deserializer)?;
+    input
+        .into_iter()
+        .map(|(name, score)| {
+            RelicId::from_sts_id(&name)
+                .map(|id| (id, score))
+                .ok_or_else(|| D::Error::custom(format!("unknown relic id {name:?}")))
+        })
+        .collect()
 }
 
 impl Default for Params {
@@ -204,9 +240,9 @@ impl Default for Params {
             potion_boss_dump_turn: 3.0,
             potion_boss_dump_hp: 120.0,
             entropic_min_empty: 2.0,
-            pick: std::collections::HashMap::new(),
-            upgrade: std::collections::HashMap::new(),
-            boss_relic: std::collections::HashMap::new(),
+            pick: HashMap::new(),
+            upgrade: HashMap::new(),
+            boss_relic: HashMap::new(),
         }
     }
 }

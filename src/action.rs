@@ -1,3 +1,4 @@
+use crate::ids::RoomType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -6,13 +7,11 @@ pub enum Action {
     Choose {
         index: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        label: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         x: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         y: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        room: Option<String>,
+        room: Option<RoomType>,
     },
     Play {
         hand_index: usize,
@@ -42,7 +41,6 @@ impl Action {
     pub fn choose(index: usize) -> Self {
         Action::Choose {
             index,
-            label: None,
             x: None,
             y: None,
             room: None,

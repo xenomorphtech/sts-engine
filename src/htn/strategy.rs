@@ -1,7 +1,7 @@
 use crate::action::{Action, PotionOp};
 use crate::card::Card;
-use crate::game::{Game, GridKind, RewardKind, Screen};
-use crate::ids::{CardId, CardType, Character, PotionId, RelicId, RoomType};
+use crate::game::{CampfireOption, EventOption, Game, GridKind, RewardKind, Screen, ShopChoice};
+use crate::ids::{CardId, CardType, Character, EncounterId, EventId, PotionId, RelicId, RoomType};
 
 use super::deckplan;
 use super::params::params;
@@ -64,14 +64,7 @@ fn action_value(
             y: Some(y),
             room: Some(r),
             ..
-        } => (
-            *x,
-            *y,
-            RoomType::from_java_class(r).unwrap_or(RoomType::Monster),
-        ),
-        Action::Choose { label: Some(l), .. } if l == "boss" => {
-            return 5.0;
-        }
+        } => (*x, *y, *r),
         _ => return 0.0,
     };
     node_value(game, x, y, room, hp_frac, act, gold, strength, need_emerald)
@@ -146,7 +139,7 @@ fn room_value(
                         + p.elite_strength_slope * act as f32
                         + if game.ascension >= 15 { 2.0 } else { 0.0 };
             let matchup = elite_matchup(
-                game.dungeon.elite_list.first().map(String::as_str),
+                game.dungeon.elite_list.first().copied(),
                 metrics,
                 strength,
             );
@@ -222,16 +215,16 @@ fn room_value(
     }
 }
 
-fn elite_matchup(next_elite: Option<&str>, metrics: DeckMetrics, strength: i32) -> i32 {
+fn elite_matchup(next_elite: Option<EncounterId>, metrics: DeckMetrics, strength: i32) -> i32 {
     match next_elite {
-        Some("Gremlin Nob") => {
+        Some(EncounterId::GremlinNob) => {
             if metrics.big_attacks >= 2 {
                 15
             } else {
                 -60
             }
         }
-        Some("3 Sentries") => {
+        Some(EncounterId::ThreeSentries) => {
             if metrics.aoe >= 2 {
                 20
             } else if metrics.aoe == 0 {
@@ -240,49 +233,49 @@ fn elite_matchup(next_elite: Option<&str>, metrics: DeckMetrics, strength: i32) 
                 0
             }
         }
-        Some("Lagavulin") => {
+        Some(EncounterId::Lagavulin) => {
             if metrics.big_attacks >= 1 || strength >= 6 {
                 15
             } else {
                 -35
             }
         }
-        Some("Book of Stabbing") => {
+        Some(EncounterId::BookOfStabbing) => {
             if metrics.block_cards + metrics.frost_src * 2 >= 6 {
                 15
             } else {
                 -35
             }
         }
-        Some("Gremlin Leader") => {
+        Some(EncounterId::GremlinLeader) => {
             if metrics.aoe >= 2 {
                 15
             } else {
                 -30
             }
         }
-        Some("Reptomancer") => {
+        Some(EncounterId::Reptomancer) => {
             if metrics.aoe >= 2 {
                 10
             } else {
                 -25
             }
         }
-        Some("Slavers") => {
+        Some(EncounterId::Slavers) => {
             if metrics.aoe >= 1 {
                 10
             } else {
                 -20
             }
         }
-        Some("Giant Head") => {
+        Some(EncounterId::GiantHead) => {
             if metrics.scaling >= 2 || metrics.big_attacks >= 2 {
                 10
             } else {
                 -50
             }
         }
-        Some("Nemesis") => {
+        Some(EncounterId::Nemesis) => {
             if metrics.big_attacks >= 2 {
                 10
             } else {
@@ -300,45 +293,41 @@ pub fn combat_reward(game: &Game, legal: &[Action]) -> Action {
         .iter()
         .filter(|p| p.id == crate::ids::PotionId::Slot)
         .count();
+    let untaken: Vec<_> = game.rewards.iter().filter(|reward| !reward.taken).collect();
     for a in legal {
-        if let Action::Choose { label: Some(l), .. } = a {
-            let lab = l.to_ascii_uppercase();
-            if lab == "EMERALD_KEY" {
+        if let Action::Choose { index, .. } = a {
+            let Some(reward) = untaken.get(*index) else {
+                continue;
+            };
+            match reward.kind {
+            RewardKind::EmeraldKey => {
                 if keys_advance_win_condition(game) && !game.has_emerald_key() {
                     return a.clone();
                 }
-                continue;
             }
-            if lab == "GOLD" || lab == "STOLEN_GOLD" {
-                return a.clone();
+            RewardKind::Gold(_) | RewardKind::StolenGold(_) | RewardKind::Relic(_) => {
+                return a.clone()
             }
-            if lab == "SAPPHIRE_KEY"
-                && keys_advance_win_condition(game)
-                && game.final_act_available()
-                && !game.has_sapphire_key()
-                && game.dungeon.act as i32 >= 2
-            {
-                return a.clone();
+            RewardKind::SapphireKey => {
+                if keys_advance_win_condition(game)
+                    && game.final_act_available()
+                    && !game.has_sapphire_key()
+                    && game.dungeon.act as i32 >= 2
+                {
+                    return a.clone();
+                }
             }
-            if lab == "POTION" {
+            RewardKind::Potion(id) => {
                 if empty_pots > 0 {
                     return a.clone();
                 }
-                if let Action::Choose { index, .. } = a {
-                    if let Some(slot) =
-                        reward_potion_id(game, *index).and_then(|id| potion_swap_slot(game, id))
-                    {
-                        if let Some(discard) = potion_discard_action(legal, slot) {
-                            return discard;
-                        }
+                if let Some(slot) = potion_swap_slot(game, id) {
+                    if let Some(discard) = potion_discard_action(legal, slot) {
+                        return discard;
                     }
                 }
-                continue;
             }
-            if lab == "RELIC" {
-                return a.clone();
-            }
-            if lab == "CARD" {
+            RewardKind::Card => {
                 let best = game
                     .card_reward
                     .iter()
@@ -348,6 +337,7 @@ pub fn combat_reward(game: &Game, legal: &[Action]) -> Action {
                 if best as f32 >= params().pick_threshold {
                     return a.clone();
                 }
+            }
             }
         }
     }
@@ -387,15 +377,14 @@ pub fn boss_relic(game: &Game, legal: &[Action]) -> Action {
     let mut best = None;
     let mut best_r = -1;
     for a in legal {
-        if let Action::Choose { index, label, .. } = a {
-            let name = label
-                .clone()
-                .or_else(|| game.boss_relics.get(*index).map(|r| r.sts_id().to_string()))
-                .unwrap_or_default();
-            let mut r = boss_relic_rank(&name);
+        if let Action::Choose { index, .. } = a {
+            let Some(id) = game.boss_relics.get(*index).copied() else {
+                continue;
+            };
+            let mut r = boss_relic_rank(id);
             // 99% of winning runs carry an energy boss relic. Until the run
             // has one, plain energy beats every utility relic.
-            if game.player.energy_master <= 3 && is_energy_boss_relic(&name) {
+            if game.player.energy_master <= 3 && is_energy_boss_relic(id) {
                 r += 40;
             }
             if r > best_r {
@@ -417,30 +406,23 @@ pub fn boss_relic(game: &Game, legal: &[Action]) -> Action {
 
 pub fn shop_choice(game: &Game, legal: &[Action]) -> Action {
     let empty_potions = game.player.potions.iter().any(|p| p.id == PotionId::Slot);
+    let choices = game.shop_choices();
     let mut best: Option<(&Action, i32, Option<usize>)> = None;
     for action in legal {
-        let Action::Choose {
-            label: Some(label), ..
-        } = action
-        else {
+        let Action::Choose { index, .. } = action else {
             continue;
         };
-        let (value, swap_slot) = if label == "purge" {
-            (deckplan::shop_purge_value(game), None)
-        } else if let Some(id) = CardId::from_sts_id(label) {
-            (score_card(game, &Card::new(id)) - 10, None)
-        } else if let Some(id) = RelicId::from_sts_id(label) {
-            (deckplan::shop_relic_value(game, id), None)
-        } else if let Some(id) = PotionId::from_sts_id(label) {
-            if empty_potions {
-                (shop_potion_value(id), None)
-            } else if let Some(slot) = potion_swap_slot(game, id) {
-                (shop_potion_value(id), Some(slot))
-            } else {
-                (0, None)
-            }
-        } else {
-            (0, None)
+        let Some(choice) = choices.get(*index) else {
+            continue;
+        };
+        let (value, swap_slot) = match choice {
+            ShopChoice::Purge => (deckplan::shop_purge_value(game), None),
+            ShopChoice::Card(card) => (score_card(game, card) - 10, None),
+            ShopChoice::Relic(id) => (deckplan::shop_relic_value(game, *id), None),
+            ShopChoice::Potion(id) if empty_potions => (shop_potion_value(*id), None),
+            ShopChoice::Potion(id) => potion_swap_slot(game, *id)
+                .map(|slot| (shop_potion_value(*id), Some(slot)))
+                .unwrap_or((0, None)),
         };
         if value > 45 && best.is_none_or(|(_, best_value, _)| value > best_value) {
             best = Some((action, value, swap_slot));
@@ -476,17 +458,6 @@ fn potion_discard_action(legal: &[Action], slot: usize) -> Option<Action> {
             )
         })
         .cloned()
-}
-
-fn reward_potion_id(game: &Game, compact_index: usize) -> Option<PotionId> {
-    game.rewards
-        .iter()
-        .filter(|reward| !reward.taken)
-        .nth(compact_index)
-        .and_then(|reward| match reward.kind {
-            RewardKind::Potion(id) => Some(id),
-            _ => None,
-        })
 }
 
 fn potion_swap_slot(game: &Game, incoming: PotionId) -> Option<usize> {
@@ -537,14 +508,16 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
     let hp_frac = game.player.hp as f32 / game.player.max_hp.max(1) as f32;
     let act = game.dungeon.act as i32;
     let near_boss = game.current_y >= 13;
+    let options = game.campfire_options();
 
     if keys_advance_win_condition(game) && game.final_act_available() && !game.has_ruby_key() {
         let must_recall = act >= 3 && near_boss;
         let comfortable =
             (act >= 3 && hp_frac >= 0.6) || (act == 2 && hp_frac >= 0.9 && !near_boss);
         if must_recall || comfortable {
-            if let Some(recall) = legal.iter().find(|a| {
-                matches!(a, Action::Choose { label: Some(l), .. } if l.eq_ignore_ascii_case("recall"))
+            if let Some(recall) = legal.iter().find(|action| {
+                matches!(action, Action::Choose { index, .. }
+                    if options.get(*index) == Some(&CampfireOption::Recall))
             }) {
                 return recall.clone();
             }
@@ -553,24 +526,19 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
 
     // Once Smith has opened its card list, upgrade the highest-value engine
     // piece instead of whichever deck card happens to be first.
-    if !legal.iter().any(|a| {
-        matches!(a, Action::Choose { label: Some(l), .. }
-            if l.eq_ignore_ascii_case("rest") || l.eq_ignore_ascii_case("smith"))
-    }) {
+    if game.rest_is_smithing() {
+        let upgradeable: Vec<_> = game
+            .player
+            .deck
+            .iter()
+            .filter(|card| card.can_upgrade())
+            .collect();
         let mut best: Option<(&Action, i32)> = None;
         for action in legal {
-            let Action::Choose {
-                label: Some(label), ..
-            } = action
-            else {
+            let Action::Choose { index, .. } = action else {
                 continue;
             };
-            if let Some(card) = game.player.deck.iter().find(|card| {
-                card.can_upgrade()
-                    && card
-                        .sts_id()
-                        .eq_ignore_ascii_case(label.trim_end_matches('+'))
-            }) {
+            if let Some(card) = upgradeable.get(*index) {
                 let score = upgrade_score(card.id);
                 if best.is_none_or(|(_, best_score)| score > best_score) {
                     best = Some((action, score));
@@ -588,24 +556,24 @@ pub fn rest_choice(game: &Game, legal: &[Action]) -> Action {
         } else {
             params().rest_hp_later
         }) {
-        "rest"
+        CampfireOption::Rest
     } else {
-        "smith"
+        CampfireOption::Smith
     };
     if near_boss && hp_frac < params().rest_hp_preboss {
-        want = "rest";
+        want = CampfireOption::Rest;
     }
-    if want == "rest"
+    if want == CampfireOption::Rest
         && act == 1
         && near_boss
-        && game.dungeon.boss == "Hexaghost"
+        && game.dungeon.boss == EncounterId::Hexaghost
         && hexaghost_smith_is_safer_value(game)
     {
-        want = "smith";
+        want = CampfireOption::Smith;
     }
     for a in legal {
-        if let Action::Choose { label: Some(l), .. } = a {
-            if l.eq_ignore_ascii_case(want) {
+        if let Action::Choose { index, .. } = a {
+            if options.get(*index) == Some(&want) {
                 return a.clone();
             }
         }
@@ -675,12 +643,14 @@ pub fn neow_choice(game: &Game, legal: &[Action]) -> Action {
 }
 
 pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
-    let mut choices: Vec<(&Action, String)> = legal
+    let event_options = game.event.as_ref().map(|event| event.options.as_slice()).unwrap_or(&[]);
+    let mut choices: Vec<(&Action, EventOption)> = legal
         .iter()
         .filter_map(|action| match action {
-            Action::Choose {
-                label: Some(label), ..
-            } => Some((action, strip_event_markup(label).to_ascii_lowercase())),
+            Action::Choose { index, .. } => event_options
+                .get(*index)
+                .copied()
+                .map(|option| (action, option)),
             _ => None,
         })
         .collect();
@@ -692,7 +662,7 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
     // HP while another option survives. This guard applies to every event.
     let survivable: Vec<_> = choices
         .iter()
-        .filter(|(_, label)| event_hp_loss(label, game.player.max_hp) < game.player.hp - 2)
+        .filter(|(_, option)| event_hp_loss(game, *option) < game.player.hp - 2)
         .cloned()
         .collect();
     if !survivable.is_empty() && survivable.len() < choices.len() {
@@ -700,85 +670,93 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
     }
 
     let event_state = game.event.as_ref();
-    let event = event_state
-        .map(|event| normalize_event_id(&event.id))
-        .unwrap_or_default();
+    let event = event_state.map(|event| event.id);
     let event_screen = event_state.map(|event| event.screen).unwrap_or(0);
     let hp = game.player.hp;
     let max_hp = game.player.max_hp.max(1);
     let hp_frac = hp as f32 / max_hp as f32;
     let gold = game.player.gold;
-    let pick = |words: &[&str]| choice_containing(&choices, words);
+    let pick = |options: &[EventOption]| choice_matching(&choices, options);
 
-    let selected = match event.as_str() {
-        "drugdealer" => pick(&["study", "inject"]),
-        "falling" => {
+    let selected = match event {
+        Some(EventId::DrugDealer) => pick(&[EventOption::Study, EventOption::Inject]),
+        Some(EventId::Falling) => {
             if event_screen == 1 {
                 falling_event_choice(game, &choices)
             } else {
-                pick(&["continue"])
+                pick(&[EventOption::Continue])
             }
         }
-        "matchandkeep" => match_and_keep_choice(game, &choices),
-        "forgottenaltar" => pick(&["offer"]).or_else(|| {
+        Some(EventId::MatchAndKeep) => match_and_keep_choice(game, &choices),
+        Some(EventId::ForgottenAltar) => pick(&[EventOption::Offer]).or_else(|| {
             if hp > 30.max(max_hp / 3) {
-                pick(&["sacrifice"])
+                pick(&[EventOption::Sacrifice])
             } else {
-                pick(&["desecrate", "curse", "leave"])
+                pick(&[EventOption::Desecrate, EventOption::Leave])
             }
         }),
-        "windinghalls" => pick(&["retrace"]),
+        Some(EventId::WindingHalls) => pick(&[EventOption::Retrace]),
         // Free shrine blessings: purge, upgrade, duplicate, transform.
-        "purifier" | "upgradeshrine" | "duplicator" | "transmorgrifier" | "goldenshrine" => {
-            pick(&["pray"])
+        Some(
+            EventId::Purifier
+            | EventId::UpgradeShrine
+            | EventId::Duplicator
+            | EventId::Transmorgrifier
+            | EventId::GoldenShrine,
+        ) => {
+            pick(&[EventOption::Pray])
         }
-        "accursedblacksmith" => pick(&["forge"]),
-        "shininglight" => {
+        Some(EventId::AccursedBlacksmith) => pick(&[EventOption::Forge]),
+        Some(EventId::ShiningLight) => {
             if hp_frac >= 0.7 {
-                pick(&["enter"])
+                pick(&[EventOption::Enter])
             } else {
                 None
             }
         }
-        "thecleric" => {
+        Some(EventId::Cleric) => {
             if gold >= 110 {
-                pick(&["purify"])
+                pick(&[EventOption::Purify])
             } else if hp_frac < 0.55 && gold >= 40 {
-                pick(&["heal"])
+                pick(&[EventOption::Heal])
             } else {
                 None
             }
         }
-        "thelibrary" => {
+        Some(EventId::Library) => {
             if hp_frac >= 0.65 {
-                pick(&["read"])
+                pick(&[EventOption::Read])
             } else {
-                pick(&["sleep"])
+                pick(&[EventOption::Sleep])
             }
         }
-        "addict" => {
+        Some(EventId::Addict) => {
             if gold >= 150 {
-                pick(&["offer"])
+                pick(&[EventOption::OfferGold])
             } else {
                 None
             }
         }
-        "beggar" => {
+        Some(EventId::Beggar) => {
             if gold >= 160 {
-                pick(&["offer"])
+                pick(&[EventOption::OfferGold])
             } else {
                 None
             }
         }
-        "maskedbandits" => pick(&["fight"]),
+        Some(EventId::MaskedBandits) => pick(&[EventOption::Fight]),
         _ => None,
     };
     if let Some(action) = selected {
         return action;
     }
 
-    const SAFE: &[&str] = &[
-        "leave", "continue", "proceed", "ignore", "depart", "refuse", "sleep", "escape", "talk",
+    const SAFE: &[EventOption] = &[
+        EventOption::Leave,
+        EventOption::Continue,
+        EventOption::Refuse,
+        EventOption::Sleep,
+        EventOption::Cowardice,
     ];
     if let Some(action) = pick(SAFE) {
         return action;
@@ -786,14 +764,14 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
     choices[0].0.clone()
 }
 
-fn action_at_choice_index(choices: &[(&Action, String)], wanted: usize) -> Option<Action> {
+fn action_at_choice_index(choices: &[(&Action, EventOption)], wanted: usize) -> Option<Action> {
     choices.iter().find_map(|(action, _)| match action {
         Action::Choose { index, .. } if *index == wanted => Some((*action).clone()),
         _ => None,
     })
 }
 
-fn falling_event_choice(game: &Game, choices: &[(&Action, String)]) -> Option<Action> {
+fn falling_event_choice(game: &Game, choices: &[(&Action, EventOption)]) -> Option<Action> {
     let event = game.event.as_ref()?;
     event
         .data
@@ -808,14 +786,14 @@ fn falling_event_choice(game: &Game, choices: &[(&Action, String)]) -> Option<Ac
         .and_then(|(choice_index, _)| action_at_choice_index(choices, choice_index))
 }
 
-fn match_and_keep_choice(game: &Game, choices: &[(&Action, String)]) -> Option<Action> {
+fn match_and_keep_choice(game: &Game, choices: &[(&Action, EventOption)]) -> Option<Action> {
     let (chosen, visible) = game.match_game_choices()?;
     match_and_keep_choice_from_state(game, choices, chosen, &visible)
 }
 
 fn match_and_keep_choice_from_state(
     game: &Game,
-    choices: &[(&Action, String)],
+    choices: &[(&Action, EventOption)],
     chosen: Option<CardId>,
     visible: &[Option<CardId>],
 ) -> Option<Action> {
@@ -871,58 +849,33 @@ fn match_and_keep_choice_from_state(
         })
 }
 
-fn normalize_event_id(id: &str) -> String {
-    id.chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+fn event_hp_loss(game: &Game, option: EventOption) -> i32 {
+    let event = game.event.as_ref();
+    let data = |index| event.and_then(|event| event.data.get(index)).copied().unwrap_or(0);
+    match (event.map(|event| event.id), option) {
+        (Some(EventId::ScrapOoze), EventOption::ReachInside | EventOption::Deeper) => data(0),
+        (Some(EventId::ShiningLight), EventOption::Enter) => data(0),
+        (Some(EventId::WindingHalls), EventOption::EmbraceMadness) => data(0),
+        (Some(EventId::GoldenIdol), EventOption::Smash) => data(0),
+        (Some(EventId::FaceTrader), EventOption::Touch) => data(0),
+        (Some(EventId::Nest), EventOption::StayInLine) => data(1),
+        (Some(EventId::KnowingSkull), EventOption::KnowingSkullPotion) => data(0),
+        (Some(EventId::KnowingSkull), EventOption::KnowingSkullGold) => data(1),
+        (Some(EventId::KnowingSkull), EventOption::KnowingSkullCard) => data(2),
+        (Some(EventId::KnowingSkull), EventOption::KnowingSkullLeave) => data(3),
+        (Some(EventId::ForgottenAltar), EventOption::Sacrifice) => data(0),
+        (Some(EventId::WorldOfGoop), EventOption::GatherGold) => data(2),
+        (Some(EventId::GoldenWing), EventOption::Pray) => data(0),
+        (Some(EventId::Designer), EventOption::Punch) => data(3),
+        (Some(EventId::SensoryStone), EventOption::Recall(2)) => 5,
+        (Some(EventId::SensoryStone), EventOption::Recall(3)) => 10,
+        _ => 0,
+    }
 }
 
-fn strip_event_markup(label: &str) -> String {
-    let mut clean = String::with_capacity(label.len());
-    let mut chars = label.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '#' {
-            let _ = chars.next();
-        } else {
-            clean.push(ch);
-        }
-    }
-    clean
-}
-
-fn event_hp_loss(label: &str, max_hp: i32) -> i32 {
-    let tokens: Vec<_> = label
-        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '%')
-        .filter(|token| !token.is_empty())
-        .collect();
-    for window in tokens.windows(3) {
-        if window[0] == "lose" && window[2] == "hp" {
-            if let Ok(amount) = window[1].parse::<i32>() {
-                return amount;
-            }
-        }
-        if window[0] == "take" && window[2] == "damage" {
-            if let Ok(amount) = window[1].parse::<i32>() {
-                return amount;
-            }
-        }
-    }
-    for window in tokens.windows(2) {
-        if window[0] == "lose" {
-            if let Some(percent) = window[1].strip_suffix('%') {
-                if let Ok(percent) = percent.parse::<i32>() {
-                    return max_hp * percent / 100;
-                }
-            }
-        }
-    }
-    0
-}
-
-fn choice_containing(choices: &[(&Action, String)], words: &[&str]) -> Option<Action> {
-    for word in words {
-        if let Some((action, _)) = choices.iter().find(|(_, label)| label.contains(word)) {
+fn choice_matching(choices: &[(&Action, EventOption)], wanted: &[EventOption]) -> Option<Action> {
+    for option in wanted {
+        if let Some((action, _)) = choices.iter().find(|(_, candidate)| candidate == option) {
             return Some((*action).clone());
         }
     }
@@ -1220,7 +1173,7 @@ fn card_pick(id: CardId) -> i32 {
 }
 
 fn defect_pick(id: CardId) -> i32 {
-    if let Some(v) = params().pick.get(id.sts_id()) {
+    if let Some(v) = params().pick.get(&id) {
         return *v as i32;
     }
     defect_pick_base(id)
@@ -1408,7 +1361,7 @@ fn max_copies(id: CardId) -> i32 {
 }
 
 fn upgrade_score(id: CardId) -> i32 {
-    if let Some(v) = params().upgrade.get(id.sts_id()) {
+    if let Some(v) = params().upgrade.get(&id) {
         return *v as i32;
     }
     match id {
@@ -1429,64 +1382,37 @@ fn upgrade_score(id: CardId) -> i32 {
     }
 }
 
-fn is_energy_boss_relic(name: &str) -> bool {
+fn is_energy_boss_relic(id: RelicId) -> bool {
     matches!(
-        name,
-        "SlaversCollar"
-            | "Slaver's Collar"
-            | "Velvet Choker"
-            | "Cursed Key"
-            | "Coffee Dripper"
-            | "Fusion Hammer"
+        id,
+        RelicId::SlaversCollar
+            | RelicId::Velvet_Choker
+            | RelicId::Cursed_Key
+            | RelicId::Coffee_Dripper
+            | RelicId::Fusion_Hammer
     )
 }
 
-fn boss_relic_rank(name: &str) -> i32 {
-    if let Some(v) = params().boss_relic.get(name) {
+fn boss_relic_rank(id: RelicId) -> i32 {
+    if let Some(v) = params().boss_relic.get(&id) {
         return *v as i32;
     }
-    match name {
-        "SlaversCollar" | "Slaver's Collar" => 95,
-        "Velvet Choker" => 88,
-        "Cursed Key" => 82,
-        "Black Blood" => 80,
-        "FrozenCore" | "Frozen Core" => 72,
-        "Nuclear Battery" => 70,
-        "Runic Pyramid" => 76,
-        "Coffee Dripper" => 75,
-        "Fusion Hammer" => 72,
-        "Tiny House" => 60,
-        "Busted Crown" => 20,
-        "Snecko Eye" => 15,
-        "Runic Dome" => 5,
-        "Calling Bell" => 8,
+    match id {
+        RelicId::SlaversCollar => 95,
+        RelicId::Velvet_Choker => 88,
+        RelicId::Cursed_Key => 82,
+        RelicId::Black_Blood => 80,
+        RelicId::FrozenCore => 72,
+        RelicId::Nuclear_Battery => 70,
+        RelicId::Runic_Pyramid => 76,
+        RelicId::Coffee_Dripper => 75,
+        RelicId::Fusion_Hammer => 72,
+        RelicId::Tiny_House => 60,
+        RelicId::Busted_Crown => 20,
+        RelicId::Snecko_Eye => 15,
+        RelicId::Runic_Dome => 5,
+        RelicId::Calling_Bell => 8,
         _ => 55,
-    }
-}
-
-trait FromJavaClass {
-    fn from_java_class(s: &str) -> Option<RoomType>;
-}
-
-impl FromJavaClass for RoomType {
-    fn from_java_class(s: &str) -> Option<RoomType> {
-        Some(if s.contains("MonsterRoomElite") {
-            RoomType::Elite
-        } else if s.contains("MonsterRoomBoss") {
-            RoomType::Boss
-        } else if s.contains("MonsterRoom") {
-            RoomType::Monster
-        } else if s.contains("RestRoom") {
-            RoomType::Rest
-        } else if s.contains("ShopRoom") {
-            RoomType::Shop
-        } else if s.contains("EventRoom") {
-            RoomType::Event
-        } else if s.contains("TreasureRoom") {
-            RoomType::Treasure
-        } else {
-            return None;
-        })
     }
 }
 
@@ -1498,8 +1424,8 @@ mod tests {
     #[test]
     fn elite_matchups_reflect_deck_shape() {
         let weak = DeckMetrics::default();
-        assert_eq!(elite_matchup(Some("Gremlin Nob"), weak, 0), -60);
-        assert_eq!(elite_matchup(Some("3 Sentries"), weak, 0), -40);
+        assert_eq!(elite_matchup(Some(EncounterId::GremlinNob), weak, 0), -60);
+        assert_eq!(elite_matchup(Some(EncounterId::ThreeSentries), weak, 0), -40);
 
         let prepared = DeckMetrics {
             aoe: 2,
@@ -1507,12 +1433,12 @@ mod tests {
             block_cards: 6,
             ..DeckMetrics::default()
         };
-        assert_eq!(elite_matchup(Some("Gremlin Nob"), prepared, 6), 15);
-        assert_eq!(elite_matchup(Some("3 Sentries"), prepared, 6), 20);
-        assert_eq!(elite_matchup(Some("Book of Stabbing"), prepared, 6), 15);
-        assert_eq!(elite_matchup(Some("Slavers"), prepared, 6), 10);
-        assert_eq!(elite_matchup(Some("Giant Head"), weak, 0), -50);
-        assert_eq!(elite_matchup(Some("Nemesis"), prepared, 6), 10);
+        assert_eq!(elite_matchup(Some(EncounterId::GremlinNob), prepared, 6), 15);
+        assert_eq!(elite_matchup(Some(EncounterId::ThreeSentries), prepared, 6), 20);
+        assert_eq!(elite_matchup(Some(EncounterId::BookOfStabbing), prepared, 6), 15);
+        assert_eq!(elite_matchup(Some(EncounterId::Slavers), prepared, 6), 10);
+        assert_eq!(elite_matchup(Some(EncounterId::GiantHead), weak, 0), -50);
+        assert_eq!(elite_matchup(Some(EncounterId::Nemesis), prepared, 6), 10);
     }
 
     #[test]
@@ -1526,12 +1452,22 @@ mod tests {
 
     #[test]
     fn event_hp_guard_distinguishes_hp_from_max_hp() {
-        let sacrifice = strip_event_markup("[Sacrifice] #gMax #gHP #g+5. #rLose #r19 #rHP.")
-            .to_ascii_lowercase();
-        let retrace =
-            strip_event_markup("[Retrace Your Steps] #rLose #r4 #rMax #rHP.").to_ascii_lowercase();
-        assert_eq!(event_hp_loss(&sacrifice, 75), 19);
-        assert_eq!(event_hp_loss(&retrace, 75), 0);
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.event = Some(crate::game::EventState::policy_fixture(
+            EventId::ForgottenAltar,
+            0,
+            vec![EventOption::Sacrifice],
+            vec![19],
+        ));
+        assert_eq!(event_hp_loss(&game, EventOption::Sacrifice), 19);
+
+        game.event = Some(crate::game::EventState::policy_fixture(
+            EventId::WindingHalls,
+            0,
+            vec![EventOption::Retrace],
+            vec![4],
+        ));
+        assert_eq!(event_hp_loss(&game, EventOption::Retrace), 0);
     }
 
     #[test]
@@ -1542,30 +1478,30 @@ mod tests {
 
         let emerald = Action::Choose {
             index: 0,
-            label: Some("EMERALD_KEY".into()),
             x: None,
             y: None,
             room: None,
         };
         let gold = Action::Choose {
             index: 1,
-            label: Some("GOLD".into()),
             x: None,
             y: None,
             room: None,
         };
+        game.rewards = vec![
+            crate::game::Reward::new(RewardKind::EmeraldKey),
+            crate::game::Reward::new(RewardKind::Gold(10)),
+        ];
         assert_eq!(combat_reward(&game, &[emerald, gold.clone()]), gold);
 
         let recall = Action::Choose {
             index: 0,
-            label: Some("Recall".into()),
             x: None,
             y: None,
             room: None,
         };
         let smith = Action::Choose {
             index: 1,
-            label: Some("Smith".into()),
             x: None,
             y: None,
             room: None,
@@ -1578,17 +1514,15 @@ mod tests {
     fn hexaghost_rest_choice_accounts_for_divider_breakpoints() {
         let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         game.current_y = 14;
-        game.dungeon.boss = "Hexaghost".into();
+        game.dungeon.boss = EncounterId::Hexaghost;
         let rest = Action::Choose {
             index: 0,
-            label: Some("Rest".into()),
             x: None,
             y: None,
             room: None,
         };
         let smith = Action::Choose {
             index: 1,
-            label: Some("Smith".into()),
             x: None,
             y: None,
             room: None,
@@ -1632,13 +1566,13 @@ mod tests {
         game.step(&discard);
         let legal = game.legal_actions();
         let claim = combat_reward(&game, &legal);
-        assert!(matches!(
-            claim,
-            Action::Choose {
-                label: Some(ref label),
-                ..
-            } if label == "POTION"
-        ));
+        let potion_index = game
+            .rewards
+            .iter()
+            .filter(|reward| !reward.taken)
+            .position(|reward| matches!(reward.kind, RewardKind::Potion(_)))
+            .expect("potion reward");
+        assert!(matches!(claim, Action::Choose { index, .. } if index == potion_index));
         game.step(&claim);
         assert_eq!(game.player.potions[0].id, PotionId::Focus);
         assert_eq!(game.player.potions[1].id, PotionId::Fairy);
@@ -1649,23 +1583,10 @@ mod tests {
         let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         game.player.potions[0].id = PotionId::Weak;
         game.player.potions[1].id = PotionId::Fairy;
-        let focus = Action::Choose {
-            index: 0,
-            label: Some(PotionId::Focus.sts_id().into()),
-            x: None,
-            y: None,
-            room: None,
-        };
-        let discard = Action::Potion {
-            action: PotionOp::Discard,
-            slot: 0,
-            target_index: None,
-        };
-        let legal = vec![focus.clone(), discard.clone(), Action::Proceed];
-        assert_eq!(shop_choice(&game, &legal), discard);
+        assert_eq!(potion_swap_slot(&game, PotionId::Focus), Some(0));
 
         game.player.potions[0].id = PotionId::Slot;
-        assert_eq!(shop_choice(&game, &legal), focus);
+        assert_eq!(potion_swap_slot(&game, PotionId::Focus), None);
 
         game.player.potions[0].id = PotionId::EntropicBrew;
         assert_eq!(potion_swap_slot(&game, PotionId::Focus), None);
@@ -1676,31 +1597,33 @@ mod tests {
         use crate::game::EventState;
 
         let set_event =
-            |game: &mut Game, id: &str, screen: i32, options: &[&str], data: Vec<i32>| {
+            |game: &mut Game,
+             id: EventId,
+             screen: i32,
+             options: &[EventOption],
+             data: Vec<i32>| {
                 game.screen = Screen::Event;
-                game.event = Some(EventState::policy_fixture(
-                    id,
-                    screen,
-                    options.iter().map(|option| (*option).into()).collect(),
-                    data,
-                ));
+                game.event = Some(EventState::policy_fixture(id, screen, options.to_vec(), data));
             };
-        let chosen_label = |game: &Game| match event_choice(game, &game.legal_actions()) {
-            Action::Choose {
-                label: Some(label), ..
-            } => label,
+        let chosen_option = |game: &Game| match event_choice(game, &game.legal_actions()) {
+            Action::Choose { index, .. } => game
+                .event
+                .as_ref()
+                .and_then(|event| event.options.get(index))
+                .copied()
+                .expect("event option"),
             action => panic!("expected event choice, got {action:?}"),
         };
 
         let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         set_event(
             &mut game,
-            "Drug Dealer",
+            EventId::DrugDealer,
             0,
-            &["[Ingest]", "[Study]", "[Inject]"],
+            &[EventOption::Ingest, EventOption::Study, EventOption::Inject],
             vec![],
         );
-        assert!(chosen_label(&game).contains("Study"));
+        assert_eq!(chosen_option(&game), EventOption::Study);
 
         let strike = game
             .player
@@ -1716,24 +1639,22 @@ mod tests {
             .unwrap() as i32;
         set_event(
             &mut game,
-            "Falling",
+            EventId::Falling,
             1,
-            &["[Land]", "[Channel]", "[Strike]"],
+            &[EventOption::Land, EventOption::Channel, EventOption::Strike],
             vec![defend, -1, strike],
         );
-        assert!(chosen_label(&game).contains("Strike"));
+        assert_eq!(chosen_option(&game), EventOption::Strike);
 
         let actions = [
             Action::Choose {
                 index: 0,
-                label: Some("known curse".into()),
                 x: None,
                 y: None,
                 room: None,
             },
             Action::Choose {
                 index: 1,
-                label: Some("hidden card".into()),
                 x: None,
                 y: None,
                 room: None,
@@ -1741,7 +1662,8 @@ mod tests {
         ];
         let choices: Vec<_> = actions
             .iter()
-            .map(|action| (action, String::new()))
+            .enumerate()
+            .map(|(index, action)| (action, EventOption::MatchCard(index)))
             .collect();
         assert_eq!(
             match_and_keep_choice_from_state(

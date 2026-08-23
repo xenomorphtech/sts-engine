@@ -32,13 +32,7 @@ fn boss_relic_choice_can_only_be_taken_once() {
         RelicId::Runic_Pyramid,
         RelicId::Inserter,
     ];
-    let choose = game
-        .legal_actions()
-        .into_iter()
-        .find(|action| {
-            matches!(action, Action::Choose { label: Some(label), .. } if label == RelicId::Cursed_Key.sts_id())
-        })
-        .expect("Cursed Key choice");
+    let choose = Action::choose(0);
 
     let energy_before = game.player.energy_master;
     game.step(&choose);

@@ -1,6 +1,6 @@
 use crate::card::Card;
 use crate::game::Game;
-use crate::ids::{Act, CardId, CardType, RelicId};
+use crate::ids::{Act, CardId, CardType, EncounterId, RelicId};
 
 /// Long-lived deck-building tasks shared by rewards, shops, and boss relics.
 /// Acquisitions are valued as package components rather than in isolation.
@@ -239,15 +239,15 @@ impl<'a> DeckPlan<'a> {
 
     fn boss_card_value(&self, id: CardId) -> i32 {
         let p = self.profile;
-        match self.game.dungeon.boss.as_str() {
-            "Hexaghost" => match id {
+        match self.game.dungeon.boss {
+            EncounterId::Hexaghost => match id {
                 CardId::Glacier => 50,
                 CardId::Defragment => 30,
                 CardId::Go_for_the_Eyes | CardId::Ball_Lightning | CardId::Doom_and_Gloom => 30,
                 CardId::Cold_Snap => 25,
                 _ => 0,
             },
-            "The Guardian" => match id {
+            EncounterId::TheGuardian => match id {
                 CardId::Glacier => 60,
                 CardId::Reinforced_Body => 45,
                 CardId::Auto_Shields => 35,
@@ -256,7 +256,7 @@ impl<'a> DeckPlan<'a> {
                 CardId::Go_for_the_Eyes => 20,
                 _ => 0,
             },
-            "Slime Boss" => match id {
+            EncounterId::SlimeBoss => match id {
                 CardId::Hyperbeam => 70,
                 CardId::Electrodynamics => 60,
                 CardId::Sunder => 50,
@@ -265,7 +265,7 @@ impl<'a> DeckPlan<'a> {
                 CardId::Ball_Lightning => 25,
                 _ => 0,
             },
-            "Collector" => {
+            EncounterId::Collector => {
                 let missing_aoe = (2 - p.aoe).max(0);
                 match id {
                     CardId::Electrodynamics => 45 * missing_aoe,
@@ -276,7 +276,7 @@ impl<'a> DeckPlan<'a> {
                     _ => 0,
                 }
             }
-            "Automaton" => match id {
+            EncounterId::Automaton => match id {
                 CardId::Buffer => 75,
                 CardId::Reinforced_Body => 35,
                 CardId::Glacier => 25,
@@ -285,7 +285,7 @@ impl<'a> DeckPlan<'a> {
                 CardId::Echo_Form => 30,
                 _ => 0,
             },
-            "Champ" => match id {
+            EncounterId::Champ => match id {
                 CardId::Echo_Form => 50,
                 CardId::Defragment => 30,
                 CardId::Doom_and_Gloom | CardId::Darkness => 35,
@@ -592,9 +592,9 @@ mod tests {
         let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
         game.dungeon.act = Act::City;
         let electrodynamics = Card::new(CardId::Electrodynamics);
-        game.dungeon.boss = "Champ".into();
+        game.dungeon.boss = EncounterId::Champ;
         let champ = card_adjustment(&game, &electrodynamics);
-        game.dungeon.boss = "Collector".into();
+        game.dungeon.boss = EncounterId::Collector;
         assert!(card_adjustment(&game, &electrodynamics) >= champ + 90);
     }
 
@@ -603,9 +603,9 @@ mod tests {
         let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
         game.dungeon.act = Act::Exordium;
         let glacier = Card::new(CardId::Glacier);
-        game.dungeon.boss = "Slime Boss".into();
+        game.dungeon.boss = EncounterId::SlimeBoss;
         let slime = card_adjustment(&game, &glacier);
-        game.dungeon.boss = "The Guardian".into();
+        game.dungeon.boss = EncounterId::TheGuardian;
         assert!(card_adjustment(&game, &glacier) >= slime + 60);
     }
 }

@@ -1,5 +1,5 @@
 use sts_engine::game::Game;
-use sts_engine::ids::Character;
+use sts_engine::ids::{Character, EncounterId};
 use sts_engine::parity::{compare_generation, load_first_snapshot};
 use sts_engine::Unlocks;
 use std::path::PathBuf;
@@ -7,6 +7,12 @@ use std::path::PathBuf;
 fn snapshot_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../exact-text-sim/runtime/act1-seed2-final-pruned.jsonl")
+}
+
+fn seed2_unlocks() -> Unlocks {
+    let mut unlocks = Unlocks::guardian_champ();
+    unlocks.final_act_available = false;
+    unlocks
 }
 
 #[test]
@@ -17,7 +23,7 @@ fn seed2_dungeon_generation_matches_java() {
         return;
     }
     let java = load_first_snapshot(&path).expect("snapshot");
-    let game = Game::new(2, Character::Ironclad, 0, Unlocks::fixture());
+    let game = Game::new(2, Character::Ironclad, 0, seed2_unlocks());
     let report = compare_generation(&game, &java);
     if !report.ok() {
         for line in &report.mismatches {
@@ -33,7 +39,7 @@ fn seed2_dungeon_generation_matches_java() {
 
 #[test]
 fn seed2_named_rng_initial_streams() {
-    let game = Game::new(2, Character::Ironclad, 0, Unlocks::fixture());
+    let game = Game::new(2, Character::Ironclad, 0, seed2_unlocks());
     assert_eq!(game.rng.event.random.seed0, 4233148493373801447);
     assert_eq!(game.rng.event.counter, 0);
     assert_eq!(game.rng.relic.counter, 5);
@@ -64,16 +70,16 @@ fn seed2_floor1_starter_shuffle_matches_java() {
 
 #[test]
 fn multiple_seeds_are_deterministic_and_distinct() {
-    let a = Game::new(1, Character::Ironclad, 0, Unlocks::fixture());
-    let a2 = Game::new(1, Character::Ironclad, 0, Unlocks::fixture());
-    let b = Game::new(2, Character::Ironclad, 0, Unlocks::fixture());
-    let c = Game::new(3, Character::Ironclad, 0, Unlocks::fixture());
+    let a = Game::new(1, Character::Ironclad, 0, seed2_unlocks());
+    let a2 = Game::new(1, Character::Ironclad, 0, seed2_unlocks());
+    let b = Game::new(2, Character::Ironclad, 0, seed2_unlocks());
+    let c = Game::new(3, Character::Ironclad, 0, seed2_unlocks());
     assert_eq!(a.dungeon.monster_list, a2.dungeon.monster_list);
     assert_eq!(a.dungeon.common_relics, a2.dungeon.common_relics);
     assert_eq!(a.rng.monster.snapshot(), a2.rng.monster.snapshot());
     assert_ne!(a.dungeon.monster_list, b.dungeon.monster_list);
     assert_ne!(b.dungeon.common_relics, c.dungeon.common_relics);
-    assert_eq!(a.dungeon.boss, "Hexaghost");
-    assert_eq!(b.dungeon.boss, "Hexaghost");
-    assert_eq!(c.dungeon.boss, "Hexaghost");
+    assert_eq!(a.dungeon.boss, EncounterId::Hexaghost);
+    assert_eq!(b.dungeon.boss, EncounterId::Hexaghost);
+    assert_eq!(c.dungeon.boss, EncounterId::Hexaghost);
 }

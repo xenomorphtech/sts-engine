@@ -3,7 +3,7 @@ use crate::card::Card;
 use crate::combat::{self, after_combat_relics, Combat};
 use crate::creature::{Player, PotionInstance, RelicInstance};
 use crate::dungeon::Dungeon;
-use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, PotionId, RelicId, RelicTier, RoomType};
+use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, EventId, PotionId, RelicId, RelicTier, RoomType};
 use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
@@ -61,11 +61,118 @@ pub enum RewardKind {
     SapphireKey,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CampfireOption {
+    Rest,
+    Smith,
+    Toke,
+    Lift,
+    Recall,
+}
+
+/// A semantic event choice. Presentation text belongs at an I/O boundary;
+/// event execution and policy use these values directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum EventOption {
+    Accept,
+    Adjustments,
+    Agree,
+    Attack,
+    Banana,
+    Box,
+    BuyPotion(u8),
+    Change,
+    CleanUp,
+    Continue,
+    Cowardice,
+    Deeper,
+    Desecrate,
+    Destroy,
+    Disagree,
+    DonRedMask,
+    Donut,
+    Eat,
+    Elegance,
+    EmbraceMadness,
+    Enter,
+    Fight,
+    Focus,
+    Forge,
+    Forget,
+    FullService,
+    GatherGold,
+    GiveCard,
+    GiveGold,
+    GivePotion,
+    Grow,
+    Heal,
+    Hide,
+    Ingest,
+    Inject,
+    Interact,
+    JumpInside,
+    Land,
+    KnowingSkullCard,
+    KnowingSkullGold,
+    KnowingSkullLeave,
+    KnowingSkullPotion,
+    Leave,
+    LeaveIt,
+    LoseBloodVial,
+    MatchCard(usize),
+    Murderer,
+    Offer,
+    OfferGold,
+    OfferGoldenIdol,
+    OfferRelic,
+    OpenCoffin,
+    OpenSphere,
+    Outrun,
+    Owner,
+    Pay,
+    Play,
+    ApproachDoor,
+    Pray,
+    Prize,
+    Punch,
+    Purify,
+    ReachInside,
+    Recall(u8),
+    Read,
+    Refuse,
+    Retrace,
+    Rob,
+    Rummage,
+    Sacrifice,
+    Search,
+    Simplicity,
+    Sleep,
+    Smash,
+    SmashAndGrab,
+    Spin,
+    StayInLine,
+    Strike,
+    Stomp,
+    Study,
+    Success,
+    Take,
+    Touch,
+    Trade,
+    Watch,
+    Channel,
+    // Mind Bloom choices.
+    Awake,
+    Healthy,
+    Rich,
+    War,
+    Victory,
+}
+
 #[derive(Clone, Debug)]
 pub struct EventState {
-    pub id: String,
+    pub id: EventId,
     pub screen: i32,
-    pub options: Vec<String>,
+    pub options: Vec<EventOption>,
     /// Event-specific deck indices or counters (Falling: skill/power/attack).
     pub data: Vec<i32>,
     /// The Library Read grid (20 unique cards).
@@ -78,9 +185,14 @@ pub struct EventState {
 
 #[cfg(test)]
 impl EventState {
-    pub(crate) fn policy_fixture(id: &str, screen: i32, options: Vec<String>, data: Vec<i32>) -> Self {
+    pub(crate) fn policy_fixture(
+        id: EventId,
+        screen: i32,
+        options: Vec<EventOption>,
+        data: Vec<i32>,
+    ) -> Self {
         Self {
-            id: id.into(),
+            id,
             screen,
             options,
             data,
@@ -210,17 +322,19 @@ enum ShopKind {
     Potion(usize),
 }
 
-fn match_play_options(cards: &[MatchCard]) -> Vec<String> {
+#[derive(Clone, Debug)]
+pub enum ShopChoice {
+    Purge,
+    Card(Card),
+    Relic(RelicId),
+    Potion(PotionId),
+}
+
+fn match_play_options(cards: &[MatchCard]) -> Vec<EventOption> {
     cards
         .iter()
-        .filter(|c| c.flipped)
-        .map(|c| {
-            if c.revealed {
-                c.id.sts_id().to_string()
-            } else {
-                "hidden card".into()
-            }
-        })
+        .enumerate()
+        .filter_map(|(index, card)| card.flipped.then_some(EventOption::MatchCard(index)))
         .collect()
 }
 
@@ -231,129 +345,98 @@ fn purgeable_card(c: &Card) -> bool {
     )
 }
 
-fn shop_card_matches(card: &Card, label: &str) -> bool {
-    let id = card.sts_id();
-    if label == id
-        || label == id.replace('_', " ")
-        || (card.upgraded && (label == format!("{id}+") || label == format!("{}+", id.replace('_', " "))))
-    {
-        return true;
-    }
-    let (label, requested_upgrade) = label.strip_suffix('+').map_or((label, false), |base| (base, true));
-    (!requested_upgrade || card.upgraded)
-        && label
-            .chars()
-            .filter(|c| c.is_alphanumeric())
-            .flat_map(char::to_lowercase)
-            .eq(id.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase))
-}
-
-#[cfg(test)]
-mod shop_label_tests {
-    use super::shop_card_matches;
-    use crate::card::Card;
-    use crate::ids::CardId;
-
-    #[test]
-    fn java_display_name_matches_compact_card_id() {
-        assert!(shop_card_matches(&Card::new(CardId::BootSequence), "Boot Sequence"));
-    }
-}
-
 #[cfg(test)]
 mod event_fidelity_tests {
     use super::*;
     use crate::ids::MonsterId;
 
-    fn start_named_event(id: &str) -> Game {
+    fn start_named_event(id: EventId) -> Game {
         let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
-        *game.dungeon.event_list = vec![id.into()];
-        *game.dungeon.shrine_list = vec![id.into()];
+        *game.dungeon.event_list = vec![id];
+        *game.dungeon.shrine_list = vec![id];
         game.dungeon.special_one_time.clear();
         game.start_event();
-        assert_eq!(game.event.as_ref().map(|event| event.id.as_str()), Some(id));
+        assert_eq!(game.event.as_ref().map(|event| event.id), Some(id));
         game
     }
 
-    fn event_verbs(game: &Game) -> Vec<String> {
-        game.event
-            .as_ref()
-            .expect("event")
-            .options
-            .iter()
-            .map(|label| {
-                label
-                    .strip_prefix('[')
-                    .and_then(|label| label.split_once(']'))
-                    .map(|(verb, _)| verb.to_string())
-                    .unwrap_or_else(|| label.clone())
-            })
-            .collect()
+    fn event_options(game: &Game) -> Vec<EventOption> {
+        game.event.as_ref().expect("event").options.clone()
     }
 
     #[test]
     fn common_shrine_and_exordium_events_publish_java_intro_verbs() {
-        assert_eq!(event_verbs(&start_named_event("Liars Game")), ["Agree", "Disagree"]);
         assert_eq!(
-            event_verbs(&start_named_event("Accursed Blacksmith")),
-            ["Forge", "Rummage", "Leave"]
-        );
-        assert_eq!(event_verbs(&start_named_event("Purifier")), ["Pray", "Leave"]);
-        assert_eq!(
-            event_verbs(&start_named_event("Transmorgrifier")),
-            ["Pray", "Leave"]
+            event_options(&start_named_event(EventId::LiarsGame)),
+            [EventOption::Agree, EventOption::Disagree]
         );
         assert_eq!(
-            event_verbs(&start_named_event("Upgrade Shrine")),
-            ["Pray", "Leave"]
+            event_options(&start_named_event(EventId::AccursedBlacksmith)),
+            [EventOption::Forge, EventOption::Rummage, EventOption::Leave]
         );
         assert_eq!(
-            event_verbs(&start_named_event("World of Goop")),
-            ["Gather Gold", "Leave It"]
-        );
-        assert_eq!(event_verbs(&start_named_event("Cursed Tome")), ["Read", "Leave"]);
-        assert_eq!(event_verbs(&start_named_event("Beggar")), ["Offer Gold", "Leave"]);
-        assert_eq!(
-            event_verbs(&start_named_event("Mysterious Sphere")),
-            ["Open Sphere", "Leave"]
+            event_options(&start_named_event(EventId::Purifier)),
+            [EventOption::Pray, EventOption::Leave]
         );
         assert_eq!(
-            start_named_event("Masked Bandits")
-                .event
-                .expect("event")
-                .options,
-            ["[Pay] #rLose #rALL of your #yGold.", "[Fight!]"]
+            event_options(&start_named_event(EventId::Transmorgrifier)),
+            [EventOption::Pray, EventOption::Leave]
         );
         assert_eq!(
-            event_verbs(&start_named_event("The Mausoleum")),
-            ["Open Coffin", "Leave"]
+            event_options(&start_named_event(EventId::UpgradeShrine)),
+            [EventOption::Pray, EventOption::Leave]
+        );
+        assert_eq!(
+            event_options(&start_named_event(EventId::WorldOfGoop)),
+            [EventOption::GatherGold, EventOption::LeaveIt]
+        );
+        assert_eq!(
+            event_options(&start_named_event(EventId::CursedTome)),
+            [EventOption::Read, EventOption::Leave]
+        );
+        assert_eq!(
+            event_options(&start_named_event(EventId::Beggar)),
+            [EventOption::OfferGold, EventOption::Leave]
+        );
+        assert_eq!(
+            event_options(&start_named_event(EventId::MysteriousSphere)),
+            [EventOption::OpenSphere, EventOption::Leave]
+        );
+        assert_eq!(
+            event_options(&start_named_event(EventId::MaskedBandits)),
+            [EventOption::Pay, EventOption::Fight]
+        );
+        assert_eq!(
+            event_options(&start_named_event(EventId::Mausoleum)),
+            [EventOption::OpenCoffin, EventOption::Leave]
         );
 
         let mut dead_adventurer = Game::new(7, Character::Defect, 20, Unlocks::fixture());
         dead_adventurer.dungeon.floor = 7;
-        *dead_adventurer.dungeon.event_list = vec!["Dead Adventurer".into()];
-        *dead_adventurer.dungeon.shrine_list = vec!["Dead Adventurer".into()];
+        *dead_adventurer.dungeon.event_list = vec![EventId::DeadAdventurer];
+        *dead_adventurer.dungeon.shrine_list = vec![EventId::DeadAdventurer];
         dead_adventurer.dungeon.special_one_time.clear();
         dead_adventurer.start_event();
-        assert_eq!(event_verbs(&dead_adventurer), ["Search", "Leave"]);
+        assert_eq!(
+            event_options(&dead_adventurer),
+            [EventOption::Search, EventOption::Leave]
+        );
     }
 
     #[test]
     fn beggar_duplicator_colosseum_and_heart_follow_java_event_controls() {
-        let mut beggar = start_named_event("Beggar");
+        let mut beggar = start_named_event(EventId::Beggar);
         let gold_before = beggar.player.gold;
         beggar.step(&Action::Choose {
             index: 0,
-            label: Some("[Offer Gold]".into()),
             x: None,
             y: None,
             room: None,
         });
         assert_eq!(beggar.player.gold, gold_before - 75);
-        assert_eq!(event_verbs(&beggar), ["Continue"]);
+        assert_eq!(event_options(&beggar), [EventOption::Continue]);
         beggar.step(&Action::Choose {
             index: 0,
-            label: Some("[Continue]".into()),
             x: None,
             y: None,
             room: None,
@@ -370,29 +453,29 @@ mod event_fidelity_tests {
         beggar.step(&Action::Proceed);
         assert_eq!(beggar.screen, Screen::Map);
 
-        let mut beggar_decline = start_named_event("Beggar");
+        let mut beggar_decline = start_named_event(EventId::Beggar);
         beggar_decline.step(&Action::Choose {
             index: 1,
-            label: Some("[Leave]".into()),
             x: None,
             y: None,
             room: None,
         });
-        assert_eq!(event_verbs(&beggar_decline), ["Leave"]);
+        assert_eq!(event_options(&beggar_decline), [EventOption::Leave]);
         beggar_decline.step(&Action::Choose {
             index: 0,
-            label: Some("[Leave]".into()),
             x: None,
             y: None,
             room: None,
         });
         assert_eq!(beggar_decline.screen, Screen::Map);
 
-        let mut duplicator = start_named_event("Duplicator");
-        assert_eq!(event_verbs(&duplicator), ["Pray", "Leave"]);
+        let mut duplicator = start_named_event(EventId::Duplicator);
+        assert_eq!(
+            event_options(&duplicator),
+            [EventOption::Pray, EventOption::Leave]
+        );
         duplicator.step(&Action::Choose {
             index: 0,
-            label: Some("[Pray]".into()),
             x: None,
             y: None,
             room: None,
@@ -400,18 +483,16 @@ mod event_fidelity_tests {
         assert_eq!(duplicator.screen, Screen::Grid);
         assert!(!duplicator.legal_actions().contains(&Action::Skip));
 
-        let mut colosseum = start_named_event("Colosseum");
+        let mut colosseum = start_named_event(EventId::Colosseum);
         colosseum.current_room = RoomType::Event;
         colosseum.step(&Action::Choose {
             index: 0,
-            label: Some("[Continue]".into()),
             x: None,
             y: None,
             room: None,
         });
         colosseum.step(&Action::Choose {
             index: 0,
-            label: Some("[Fight]".into()),
             x: None,
             y: None,
             room: None,
@@ -423,14 +504,10 @@ mod event_fidelity_tests {
         colosseum.finish_combat();
         assert_eq!(
             colosseum.event.as_ref().expect("colosseum").options,
-            [
-                "[COWARDICE] Escape.",
-                "[VICTORY] A powerful fight with many rewards."
-            ]
+            [EventOption::Cowardice, EventOption::Victory]
         );
         colosseum.step(&Action::Choose {
             index: 1,
-            label: Some("[VICTORY] A powerful fight with many rewards.".into()),
             x: None,
             y: None,
             room: None,
@@ -448,39 +525,41 @@ mod event_fidelity_tests {
         );
         assert_eq!(colosseum.rewards.len(), 3);
 
-        let mut heart = start_named_event("SpireHeart");
-        heart.event.as_mut().expect("heart").options = vec!["[Continue]".into()];
-        for label in ["[Continue]", "[Attack] #b???", "[Continue]"] {
+        let mut heart = start_named_event(EventId::SpireHeart);
+        heart.event.as_mut().expect("heart").options = vec![EventOption::Continue];
+        for _ in 0..3 {
             heart.step(&Action::Choose {
                 index: 0,
-                label: Some(label.into()),
                 x: None,
                 y: None,
                 room: None,
             });
         }
-        assert_eq!(event_verbs(&heart), ["Sleep"]);
+        assert_eq!(event_options(&heart), [EventOption::Sleep]);
     }
 
     #[test]
     fn knowing_skull_and_back_to_basics_publish_java_controls() {
-        let mut skull = start_named_event("Knowing Skull");
+        let mut skull = start_named_event(EventId::KnowingSkull);
         skull.step(&Action::Choose {
             index: 0,
-            label: Some("[Continue]".into()),
             x: None,
             y: None,
             room: None,
         });
         assert_eq!(
-            event_verbs(&skull),
-            ["A Pick Me Up?", "Riches?", "Success?", "How do I leave?"]
+            event_options(&skull),
+            [
+                EventOption::KnowingSkullPotion,
+                EventOption::KnowingSkullGold,
+                EventOption::KnowingSkullCard,
+                EventOption::KnowingSkullLeave,
+            ]
         );
 
-        let mut basics = start_named_event("Back to Basics");
+        let mut basics = start_named_event(EventId::BackToBasics);
         basics.step(&Action::Choose {
             index: 0,
-            label: Some("[Elegance]".into()),
             x: None,
             y: None,
             room: None,
@@ -488,15 +567,14 @@ mod event_fidelity_tests {
         assert_eq!(basics.screen, Screen::Grid);
         assert!(basics.legal_actions().contains(&Action::Skip));
 
-        let mut designer = start_named_event("Designer");
+        let mut designer = start_named_event(EventId::Designer);
         designer.step(&Action::Choose {
             index: 0,
-            label: Some("[Continue]".into()),
             x: None,
             y: None,
             room: None,
         });
-        assert_eq!(event_verbs(&designer)[0], "Adjustments");
+        assert_eq!(event_options(&designer)[0], EventOption::Adjustments);
     }
 
     #[test]
@@ -507,26 +585,21 @@ mod event_fidelity_tests {
             counter: -1,
             used_up: false,
         });
-        *nloth.dungeon.event_list = vec!["N'loth".into()];
-        *nloth.dungeon.shrine_list = vec!["N'loth".into()];
+        *nloth.dungeon.event_list = vec![EventId::Nloth];
+        *nloth.dungeon.shrine_list = vec![EventId::Nloth];
         nloth.dungeon.special_one_time.clear();
         nloth.start_event();
         let options = &nloth.event.as_ref().expect("event").options;
         assert_eq!(options.len(), 3);
-        assert!(options.iter().any(|option| option.starts_with("[Offer: Cracked Core]")));
-        assert!(options.iter().any(|option| option.starts_with("[Offer: Velvet Choker]")));
-        assert_eq!(options[2], "[Leave]");
+        assert_eq!(
+            options,
+            &[EventOption::OfferRelic, EventOption::OfferRelic, EventOption::Leave]
+        );
 
-        let tomb = start_named_event("Tomb of Lord Red Mask");
+        let tomb = start_named_event(EventId::TombOfLordRedMask);
         assert_eq!(
             tomb.event.as_ref().expect("event").options,
-            [
-                format!(
-                    "[Offer: {} Gold] #rLose #rall #rGold. #gObtain #ga #gRelic.",
-                    tomb.player.gold
-                ),
-                "[Leave]".into(),
-            ]
+            [EventOption::OfferGold, EventOption::Leave]
         );
 
         let mut rest = Game::new(7, Character::Defect, 20, Unlocks::fixture());
@@ -537,10 +610,17 @@ mod event_fidelity_tests {
         });
         rest.current_room = RoomType::Rest;
         rest.screen = Screen::Rest;
-        assert_eq!(rest.campfire_options(), ["Rest", "Smith", "Toke", "Recall"]);
+        assert_eq!(
+            rest.campfire_options(),
+            [
+                CampfireOption::Rest,
+                CampfireOption::Smith,
+                CampfireOption::Toke,
+                CampfireOption::Recall,
+            ]
+        );
         rest.step(&Action::Choose {
             index: 2,
-            label: Some("Toke".into()),
             x: None,
             y: None,
             room: None,
@@ -552,10 +632,9 @@ mod event_fidelity_tests {
         lift.gain_relic(RelicId::Girya);
         lift.current_room = RoomType::Rest;
         lift.screen = Screen::Rest;
-        assert!(lift.campfire_options().contains(&"Lift"));
+        assert!(lift.campfire_options().contains(&CampfireOption::Lift));
         lift.step(&Action::Choose {
             index: 2,
-            label: Some("Lift".into()),
             x: None,
             y: None,
             room: None,
@@ -574,25 +653,24 @@ mod event_fidelity_tests {
 
     #[test]
     fn a20_woman_in_blue_leave_loses_ceil_five_percent_max_hp() {
-        let mut game = start_named_event("The Woman in Blue");
+        let mut game = start_named_event(EventId::WomanInBlue);
         game.player.max_hp = 73;
         game.player.hp = 60;
 
         game.step(&Action::Choose {
             index: 3,
-            label: Some("[Leave]".into()),
             x: None,
             y: None,
             room: None,
         });
 
         assert_eq!(game.player.hp, 56);
-        assert_eq!(event_verbs(&game), ["Leave"]);
+        assert_eq!(event_options(&game), [EventOption::Leave]);
     }
 
     #[test]
     fn we_meet_again_keeps_potions_locked_after_opening_the_map() {
-        let mut game = start_named_event("WeMeetAgain");
+        let mut game = start_named_event(EventId::WeMeetAgain);
         game.player.potions[0].id = PotionId::GamblersBrew;
         game.open_map();
 
@@ -614,7 +692,7 @@ mod event_fidelity_tests {
 
     #[test]
     fn event_transform_applies_toxic_egg_to_the_obtained_replacement() {
-        let mut game = start_named_event("Transmorgrifier");
+        let mut game = start_named_event(EventId::Transmorgrifier);
         game.player.relics.push(RelicInstance {
             id: RelicId::Toxic_Egg_2,
             counter: -1,
@@ -626,16 +704,19 @@ mod event_fidelity_tests {
 
         game.step(&Action::Choose {
             index: 0,
-            label: Some("[Pray] #gTransform #ga #gcard.".into()),
             x: None,
             y: None,
             room: None,
         });
-        let strike = game
-            .legal_actions()
+        let strike_index = game
+            .grid_view()
+            .expect("transform grid")
+            .1
             .into_iter()
-            .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Strike_B"))
+            .find(|(_, card)| card.id == CardId::Strike_B)
+            .map(|(index, _)| index)
             .expect("transformable Strike");
+        let strike = Action::choose(strike_index);
         game.step(&strike);
         game.step(&Action::Proceed);
 
@@ -650,14 +731,16 @@ mod event_fidelity_tests {
 
     #[test]
     fn vampires_accept_replaces_starter_strikes_and_loses_max_hp() {
-        let mut game = start_named_event("Vampires");
+        let mut game = start_named_event(EventId::Vampires);
         let max_before = game.player.max_hp;
         let loss = game.event.as_ref().expect("event").data[0];
-        assert_eq!(event_verbs(&game), ["Accept", "Refuse"]);
+        assert_eq!(
+            event_options(&game),
+            [EventOption::Accept, EventOption::Refuse]
+        );
 
         game.step(&Action::Choose {
             index: 0,
-            label: Some("[Accept]".into()),
             x: None,
             y: None,
             room: None,
@@ -666,78 +749,79 @@ mod event_fidelity_tests {
         assert_eq!(game.player.max_hp, max_before - loss);
         assert!(!game.player.deck.iter().any(|card| card.id == CardId::Strike_B));
         assert_eq!(game.player.deck.iter().filter(|card| card.id == CardId::Bite).count(), 5);
-        assert_eq!(event_verbs(&game), ["Leave"]);
+        assert_eq!(event_options(&game), [EventOption::Leave]);
     }
 
     #[test]
     fn a20_library_sleep_heals_twenty_percent_with_gdx_rounding() {
-        let mut game = start_named_event("The Library");
+        let mut game = start_named_event(EventId::Library);
         let expected = crate::rewards::gdx_round(game.player.max_hp as f32 * 0.2);
         assert_eq!(game.event.as_ref().expect("event").data, [expected]);
         game.player.hp = 1;
 
         game.step(&Action::Choose {
             index: 1,
-            label: Some("[Sleep]".into()),
             x: None,
             y: None,
             room: None,
         });
 
         assert_eq!(game.player.hp, 1 + expected);
-        assert_eq!(event_verbs(&game), ["Leave"]);
+        assert_eq!(event_options(&game), [EventOption::Leave]);
     }
 
     #[test]
     fn liars_game_agree_defers_then_grants_gold_and_doubt() {
-        let mut game = start_named_event("Liars Game");
+        let mut game = start_named_event(EventId::LiarsGame);
         let gold_before = game.player.gold;
         game.step(&Action::Choose {
             index: 0,
-            label: Some("[Agree]".into()),
             x: None,
             y: None,
             room: None,
         });
-        assert_eq!(event_verbs(&game), ["Continue"]);
+        assert_eq!(event_options(&game), [EventOption::Continue]);
         assert_eq!(game.player.gold, gold_before);
 
         game.step(&Action::Choose {
             index: 0,
-            label: Some("[Continue]".into()),
             x: None,
             y: None,
             room: None,
         });
         assert_eq!(game.player.gold, gold_before + 150);
         assert!(game.player.deck.iter().any(|card| card.id == CardId::Doubt));
-        assert_eq!(event_verbs(&game), ["Leave"]);
+        assert_eq!(event_options(&game), [EventOption::Leave]);
     }
 
     #[test]
     fn golden_wing_destroy_is_conditional_and_pray_opens_uncancellable_purge() {
-        let mut game = start_named_event("Golden Wing");
-        assert_eq!(event_verbs(&game), ["Pray", "Leave"]);
+        let mut game = start_named_event(EventId::GoldenWing);
+        assert_eq!(
+            event_options(&game),
+            [EventOption::Pray, EventOption::Leave]
+        );
 
         game.player.deck.push(Card::new(CardId::Streamline));
-        *game.dungeon.event_list = vec!["Golden Wing".into()];
-        *game.dungeon.shrine_list = vec!["Golden Wing".into()];
+        *game.dungeon.event_list = vec![EventId::GoldenWing];
+        *game.dungeon.shrine_list = vec![EventId::GoldenWing];
         game.start_event();
-        assert_eq!(event_verbs(&game), ["Pray", "Destroy", "Leave"]);
+        assert_eq!(
+            event_options(&game),
+            [EventOption::Pray, EventOption::Destroy, EventOption::Leave]
+        );
 
         let hp_before = game.player.hp;
         game.step(&Action::Choose {
             index: 0,
-            label: Some("[Pray]".into()),
             x: None,
             y: None,
             room: None,
         });
         assert_eq!(game.player.hp, hp_before - 7);
-        assert_eq!(event_verbs(&game), ["Continue"]);
+        assert_eq!(event_options(&game), [EventOption::Continue]);
         game.step(&Action::Choose {
             index: 0,
-            label: Some("[Continue]".into()),
             x: None,
             y: None,
             room: None,
@@ -753,28 +837,24 @@ mod event_fidelity_tests {
         let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
         game.player.max_hp = 80;
         game.player.hp = 30;
-        *game.dungeon.event_list = vec!["The Moai Head".into()];
-        *game.dungeon.shrine_list = vec!["The Moai Head".into()];
+        *game.dungeon.event_list = vec![EventId::MoaiHead];
+        *game.dungeon.shrine_list = vec![EventId::MoaiHead];
         game.dungeon.special_one_time.clear();
         game.start_event();
 
         assert_eq!(
             game.event.as_ref().expect("event").options,
-            [
-                "[Jump Inside] #gHeal #gto #gfull #gHP. #rLose #r14 #rMax #rHP.",
-                "[Leave]",
-            ]
+            [EventOption::JumpInside, EventOption::Leave]
         );
         game.step(&Action::Choose {
             index: 0,
-            label: Some("[Jump Inside]".into()),
             x: None,
             y: None,
             room: None,
         });
 
         assert_eq!((game.player.hp, game.player.max_hp), (66, 66));
-        assert_eq!(event_verbs(&game), ["Leave"]);
+        assert_eq!(event_options(&game), [EventOption::Leave]);
 
         let mut idol_game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
         idol_game.player.relics.push(RelicInstance {
@@ -782,18 +862,17 @@ mod event_fidelity_tests {
             counter: -1,
             used_up: false,
         });
-        *idol_game.dungeon.event_list = vec!["The Moai Head".into()];
-        *idol_game.dungeon.shrine_list = vec!["The Moai Head".into()];
+        *idol_game.dungeon.event_list = vec![EventId::MoaiHead];
+        *idol_game.dungeon.shrine_list = vec![EventId::MoaiHead];
         idol_game.dungeon.special_one_time.clear();
         idol_game.start_event();
         assert_eq!(
             idol_game.event.as_ref().expect("event").options[1],
-            "[Offer: Golden Idol] #gGain #g333 #gGold. #rLose #rGolden #rIdol."
+            EventOption::OfferGoldenIdol
         );
         let gold_before = idol_game.player.gold;
         idol_game.step(&Action::Choose {
             index: 1,
-            label: Some("[Offer: Golden Idol]".into()),
             x: None,
             y: None,
             room: None,
@@ -821,16 +900,14 @@ mod event_fidelity_tests {
         game.screen = Screen::Grid;
 
         let actions = game.legal_actions();
-        assert_eq!(
-            actions
-                .iter()
-                .filter_map(|action| match action {
-                    Action::Choose { label, .. } => label.clone(),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            ["Strike_B", "Strike_B"]
-        );
+        let ids: Vec<_> = game
+            .grid_view()
+            .expect("purge grid")
+            .1
+            .into_iter()
+            .map(|(_, card)| card.id)
+            .collect();
+        assert_eq!(ids, [CardId::Strike_B, CardId::Strike_B]);
         assert!(actions.contains(&Action::Skip));
     }
 
@@ -854,15 +931,14 @@ mod event_fidelity_tests {
         });
         game.screen = Screen::Grid;
 
-        let labels = game
-            .legal_actions()
+        let ids: Vec<_> = game
+            .grid_view()
+            .expect("draw grid")
+            .1
             .into_iter()
-            .filter_map(|action| match action {
-                Action::Choose { label, .. } => label,
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(labels, ["Conserve Battery", "Cold Snap"]);
+            .map(|(_, card)| card.id)
+            .collect();
+        assert_eq!(ids, [CardId::Conserve_Battery, CardId::Cold_Snap]);
     }
 
     #[test]
@@ -920,49 +996,8 @@ mod event_fidelity_tests {
     }
 }
 
-fn shop_relic_matches(id: RelicId, label: &str) -> bool {
-    let sts = id.sts_id();
-    label == sts || label.replace(' ', "") == sts.replace(' ', "")
-}
-
-fn shop_potion_matches(id: crate::ids::PotionId, label: &str) -> bool {
-    let sts = id.sts_id();
-    let name = potion_shop_name(id);
-    label == sts || label == name || label.replace(' ', "") == sts.replace(' ', "")
-}
-
-fn potion_shop_name(id: crate::ids::PotionId) -> &'static str {
-    match id {
-        crate::ids::PotionId::Fairy => "Fairy in a Bottle",
-        crate::ids::PotionId::EntropicBrew => "Entropic Brew",
-        crate::ids::PotionId::Blood => "Blood Potion",
-        crate::ids::PotionId::FruitJuice => "Fruit Juice",
-        crate::ids::PotionId::HeartOfIron => "Heart of Iron",
-        crate::ids::PotionId::Elixir => "Elixir",
-        crate::ids::PotionId::LiquidBronze => "Liquid Bronze",
-        crate::ids::PotionId::Duplication => "Duplication Potion",
-        crate::ids::PotionId::GamblersBrew => "Gambler's Brew",
-        crate::ids::PotionId::EssenceOfSteel => "Essence of Steel",
-        crate::ids::PotionId::DistilledChaos => "Distilled Chaos",
-        crate::ids::PotionId::LiquidMemories => "Liquid Memories",
-        crate::ids::PotionId::Cultist => "Cultist Potion",
-        crate::ids::PotionId::SneckoOil => "Snecko Oil",
-        crate::ids::PotionId::SmokeBomb => "Smoke Bomb",
-        crate::ids::PotionId::BlessingOfTheForge => "Blessing of the Forge",
-        crate::ids::PotionId::Attack => "Attack Potion",
-        crate::ids::PotionId::Skill => "Skill Potion",
-        crate::ids::PotionId::Power => "Power Potion",
-        crate::ids::PotionId::Colorless => "Colorless Potion",
-        crate::ids::PotionId::Steroid => "Flex Potion",
-        crate::ids::PotionId::Speed => "Speed Potion",
-        crate::ids::PotionId::Fear => "Fear Potion",
-        _ => id.sts_id(),
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct NeowOption {
-    pub label: String,
     pub kind: NeowKind,
     pub drawback: NeowDrawback,
 }
@@ -1114,7 +1149,6 @@ impl Game {
             toolbox_reward: false,
         };
         game.neow_options = vec![NeowOption {
-            label: "[Talk]".into(),
             kind: NeowKind::ThreeCards,
             drawback: NeowDrawback::None,
         }];
@@ -1187,10 +1221,9 @@ impl Game {
                 for (idx, (x, y, room)) in self.map_choices().into_iter().enumerate() {
                     actions.push(Action::Choose {
                         index: idx,
-                        label: Some("map node".into()),
                         x: Some(x),
                         y: Some(y),
-                        room: Some(room.java_class().into()),
+                        room: Some(room),
                     });
                 }
             }
@@ -1200,7 +1233,7 @@ impl Game {
                         actions.push(Action::Proceed);
                         actions.push(Action::Skip);
                     } else {
-                        for (i, card) in self
+                        for (i, _) in self
                             .player
                             .deck
                             .iter()
@@ -1209,7 +1242,6 @@ impl Game {
                         {
                             actions.push(Action::Choose {
                                 index: i,
-                                label: Some(card.sts_id().to_string()),
                                 x: None,
                                 y: None,
                                 room: None,
@@ -1223,10 +1255,9 @@ impl Game {
                 } else if self.rest_selected {
                     actions.push(Action::Proceed);
                 } else {
-                    for (i, kind) in self.campfire_options().into_iter().enumerate() {
+                    for (i, _) in self.campfire_options().into_iter().enumerate() {
                         actions.push(Action::Choose {
                             index: i,
-                            label: Some(kind.into()),
                             x: None,
                             y: None,
                             room: None,
@@ -1238,34 +1269,14 @@ impl Game {
                 if !self.shop.open {
                     actions.push(Action::Choose {
                         index: 0,
-                        label: Some("shop".into()),
                         x: None,
                         y: None,
                         room: None,
                     });
                 } else {
-                    for (index, kind) in self.shop_affordable().into_iter().enumerate() {
-                        let label = match kind {
-                            ShopKind::Purge => Some("purge".to_string()),
-                            ShopKind::Card(i) => self
-                                .shop
-                                .cards
-                                .get(i)
-                                .map(|offer| offer.item.sts_id().to_string()),
-                            ShopKind::Relic(i) => self
-                                .shop
-                                .relics
-                                .get(i)
-                                .map(|offer| offer.item.sts_id().to_string()),
-                            ShopKind::Potion(i) => self
-                                .shop
-                                .potions
-                                .get(i)
-                                .map(|offer| offer.item.sts_id().to_string()),
-                        };
+                    for (index, _) in self.shop_affordable().into_iter().enumerate() {
                         actions.push(Action::Choose {
                             index,
-                            label,
                             x: None,
                             y: None,
                             room: None,
@@ -1287,16 +1298,8 @@ impl Game {
                     _ => 0,
                 };
                 for i in 0..n {
-                    let label = match self.screen {
-                        Screen::Neow => self.neow_options.get(i).map(|o| o.label.clone()),
-                        Screen::Event => self.event.as_ref().and_then(|e| e.options.get(i).cloned()),
-                        Screen::Treasure => Some("open".into()),
-                        Screen::BossRelic => self.boss_relics.get(i).map(|r| r.sts_id().to_string()),
-                        _ => None,
-                    };
                     actions.push(Action::Choose {
                         index: i,
-                        label,
                         x: None,
                         y: None,
                         room: None,
@@ -1315,24 +1318,9 @@ impl Game {
                         actions.push(Action::Skip);
                     } else {
                         let cards = self.grid_card_indices(grid.kind);
-                        for (i, &pile_i) in cards.iter().enumerate() {
-                            let label = match grid.kind {
-                                GridKind::DiscardToHand => {
-                                    self.player.discard.get(pile_i).map(|c| c.sts_id().to_string())
-                                }
-                                GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
-                                    self.player.draw.get(pile_i).map(|c| c.sts_id().to_string())
-                                }
-                                GridKind::Library => self
-                                    .event
-                                    .as_ref()
-                                    .and_then(|event| event.library_cards.get(pile_i))
-                                    .map(|card| card.sts_id().to_string()),
-                                _ => self.player.deck.get(pile_i).map(|c| c.sts_id().to_string()),
-                            };
+                        for (i, _) in cards.iter().enumerate() {
                             actions.push(Action::Choose {
                                 index: i,
-                                label,
                                 x: None,
                                 y: None,
                                 room: None,
@@ -1358,18 +1346,8 @@ impl Game {
                     let mut compact = 0usize;
                     for reward in self.rewards.iter() {
                         if !reward.taken {
-                            let label = match reward.kind {
-                                RewardKind::Gold(_) => "GOLD",
-                                RewardKind::StolenGold(_) => "STOLEN_GOLD",
-                                RewardKind::Potion(_) => "POTION",
-                                RewardKind::Relic(_) => "RELIC",
-                                RewardKind::Card => "CARD",
-                                RewardKind::EmeraldKey => "EMERALD_KEY",
-                                RewardKind::SapphireKey => "SAPPHIRE_KEY",
-                            };
                             actions.push(Action::Choose {
                                 index: compact,
-                                label: Some(label.into()),
                                 x: None,
                                 y: None,
                                 room: None,
@@ -1381,10 +1359,9 @@ impl Game {
                 }
             }
             Screen::CardReward => {
-                for (i, card) in self.card_reward.iter().enumerate() {
+                for (i, _) in self.card_reward.iter().enumerate() {
                     actions.push(Action::Choose {
                         index: i,
-                        label: Some(card.sts_id().to_string()),
                         x: None,
                         y: None,
                         room: None,
@@ -1404,10 +1381,9 @@ impl Game {
                 let thinking_ahead_confirm =
                     thinking_ahead_requires_one && !self.pending_cards.is_empty();
                 if !thinking_ahead_confirm {
-                    for (i, card) in self.player.hand.iter().enumerate() {
+                    for (i, _) in self.player.hand.iter().enumerate() {
                         actions.push(Action::Choose {
                             index: i,
-                            label: Some(card.sts_id().to_string()),
                             x: None,
                             y: None,
                             room: None,
@@ -1434,7 +1410,7 @@ impl Game {
     /// Choose actions. `None` entries are still-hidden cards.
     pub fn match_game_choices(&self) -> Option<(Option<CardId>, Vec<Option<CardId>>)> {
         let event = self.event.as_ref()?;
-        if event.id != "Match and Keep!" || event.screen != 2 {
+        if event.id != EventId::MatchAndKeep || event.screen != 2 {
             return None;
         }
         let chosen = event.match_chosen.map(|index| event.match_cards[index].id);
@@ -1518,51 +1494,15 @@ impl Game {
             let stay = matches!(
                 action,
                 Action::Choose {
-                    label: Some(label),
+                    x: Some(_),
+                    y: Some(_),
                     ..
-                } if label == "map node" || label == "boss"
+                }
             ) || matches!(action, Action::Potion { .. });
             if stay {
                 self.pending_room = Some(dest);
             } else {
                 self.enter_room(dest.0, dest.1, dest.2);
-            }
-        }
-        if let Action::Choose { label: Some(label), .. } = action {
-            if label.contains("Apparition") && label.contains("Accept") {
-                let loss = ((self.player.max_hp as f32) * 0.5).ceil() as i32;
-                let loss = loss.min(self.player.max_hp - 1).max(0);
-                self.player.max_hp -= loss;
-                if self.player.hp > self.player.max_hp {
-                    self.player.hp = self.player.max_hp;
-                }
-            }
-            match label.as_str() {
-                "map node" | "boss" => {
-                    if self.screen == Screen::Map {
-                        self.step_map(action);
-                        return;
-                    }
-                }
-                "open" => {
-                    self.step_treasure(action);
-                    return;
-                }
-                "Rest" => {
-                    self.step_rest(action);
-                    return;
-                }
-                "shop" => {
-                    self.step_shop(action);
-                    return;
-                }
-                "GOLD" | "POTION" | "CARD" | "RELIC" | "STOLEN_GOLD" => {
-                    if matches!(self.screen, Screen::CombatReward | Screen::Treasure) {
-                        self.step_reward(action);
-                        return;
-                    }
-                }
-                _ => {}
             }
         }
         if let Action::Potion {
@@ -1642,7 +1582,6 @@ impl Game {
         self.queue_neow_curse();
         self.flush_pending_cards();
         self.neow_options = vec![NeowOption {
-            label: "[Leave]".into(),
             kind: NeowKind::ThreeCards,
             drawback: NeowDrawback::None,
         }];
@@ -1695,22 +1634,18 @@ impl Game {
         let _ = self.neow_rng.random_range(0, 0);
         self.neow_options = vec![
             NeowOption {
-                label: format!("{a:?}"),
                 kind: a,
                 drawback: NeowDrawback::None,
             },
             NeowOption {
-                label: format!("{b:?}"),
                 kind: b,
                 drawback: NeowDrawback::None,
             },
             NeowOption {
-                label: format!("{c:?}"),
                 kind: c,
                 drawback,
             },
             NeowOption {
-                label: "Boss Relic".into(),
                 kind: NeowKind::BossRelic,
                 drawback: NeowDrawback::None,
             },
@@ -1858,7 +1793,7 @@ impl Game {
         if let Some(event) = self.event.as_mut() {
             event.library_cards = cards;
             event.screen = 1;
-            event.options = vec!["[Leave]".into()];
+            event.options = vec![EventOption::Leave];
         }
         self.grid = Some(GridSelect {
             kind: GridKind::Library,
@@ -2356,7 +2291,7 @@ impl Game {
         let completed_beggar_purge = kind == GridKind::Purge
             && !selection_order.is_empty()
             && self.grid.as_ref().is_some_and(|grid| grid.return_event)
-            && self.event.as_ref().is_some_and(|event| event.id == "Beggar");
+            && self.event.as_ref().is_some_and(|event| event.id == EventId::Beggar);
         match kind {
             GridKind::Purge => {
                 let shop_purge = self.grid.as_ref().is_some_and(|g| g.return_shop);
@@ -2370,10 +2305,10 @@ impl Game {
                     self.shop.purge_cost += 25;
                 }
                 let bonfire = self.grid.as_ref().is_some_and(|g| g.return_event)
-                    && self.event.as_ref().is_some_and(|e| e.id == "Bonfire Elementals");
+                    && self.event.as_ref().is_some_and(|e| e.id == EventId::BonfireElementals);
                 let designer_full = self.grid.as_ref().is_some_and(|g| g.return_event)
                     && self.event.as_ref().is_some_and(|e| {
-                        e.id == "Designer" && e.data.get(6).copied().unwrap_or(0) != 0
+                        e.id == EventId::Designer && e.data.get(6).copied().unwrap_or(0) != 0
                     });
                 for i in idxs.into_iter().rev() {
                     if i < self.player.deck.len() {
@@ -2595,7 +2530,7 @@ impl Game {
         }
         if let Some(event) = self.event.as_mut() {
             event.screen = 2;
-            event.options = vec!["[Leave]".into()];
+            event.options = vec![EventOption::Leave];
         }
     }
 
@@ -2635,20 +2570,20 @@ impl Game {
         }
         if back_to_event {
             self.flush_pending_cards();
-            if self.event.as_ref().is_some_and(|e| e.id == "Bonfire Elementals") {
+            if self.event.as_ref().is_some_and(|e| e.id == EventId::BonfireElementals) {
                 self.screen = Screen::Event;
                 return;
             }
             if let Some(event) = self.event.as_mut() {
                 // Wheel applyResult already moved to LEAVE before opening GRID.
-                event.screen = match event.id.as_str() {
-                    "Wheel of Change" => 3,
+                event.screen = match event.id {
+                    EventId::WheelOfChange => 3,
                     // Designer.buttonEffect sets curScreen=DONE before opening
                     // its upgrade/remove/transform grid.
-                    "Designer" => 2,
+                    EventId::Designer => 2,
                     _ => 1,
                 };
-                event.options = vec!["[Leave]".into()];
+                event.options = vec![EventOption::Leave];
             }
             self.screen = Screen::Event;
         } else {
@@ -2733,11 +2668,11 @@ impl Game {
     }
 
     fn step_map(&mut self, action: &Action) {
-        let Action::Choose { index, x, y, .. } = action else {
+        let Action::Choose { index, x, y, room } = action else {
             return;
         };
         let choices = self.map_choices();
-        if matches!(action, Action::Choose { label: Some(label), .. } if label == "boss") {
+        if *room == Some(RoomType::Boss) && *x == Some(-1) && *y == Some(15) {
             self.enter_room(-1, 15, RoomType::Boss);
             return;
         }
@@ -2746,15 +2681,17 @@ impl Game {
                 .into_iter()
                 .find(|c| c.0 == x && c.1 == y)
                 .unwrap_or_else(|| {
-                    let room = if y >= 0 && (y as usize) < self.dungeon.map.height() && x >= 0 {
-                        self.dungeon
-                            .map
-                            .node(x, y)
-                            .room
-                            .unwrap_or(RoomType::Monster)
-                    } else {
-                        RoomType::Monster
-                    };
+                    let room = room.unwrap_or_else(|| {
+                        if y >= 0 && (y as usize) < self.dungeon.map.height() && x >= 0 {
+                            self.dungeon
+                                .map
+                                .node(x, y)
+                                .room
+                                .unwrap_or(RoomType::Monster)
+                        } else {
+                            RoomType::Monster
+                        }
+                    });
                     (x, y, room)
                 })
         } else {
@@ -3524,7 +3461,7 @@ impl Game {
             && self
                 .event
                 .as_ref()
-                .is_some_and(|event| event.id == "Colosseum" && event.screen == 2);
+                .is_some_and(|event| event.id == EventId::Colosseum && event.screen == 2);
         if colosseum_first_fight {
             // Colosseum sets rewardAllowed=false for the Slavers. reopen()
             // returns to POST_COMBAT instead of opening CombatReward. The
@@ -3556,10 +3493,7 @@ impl Game {
             self.rewards.clear();
             self.combat = None;
             if let Some(event) = self.event.as_mut() {
-                event.options = vec![
-                    "[COWARDICE] Escape.".into(),
-                    "[VICTORY] A powerful fight with many rewards.".into(),
-                ];
+                event.options = vec![EventOption::Cowardice, EventOption::Victory];
             }
             self.screen = Screen::Event;
             return;
@@ -3855,7 +3789,7 @@ impl Game {
                     // second phase of the same combat, and does not heal HP.
                     if self.ascension >= 20 && self.dungeon.act == Act::Beyond && self.dungeon.boss_list.len() == 2 {
                         self.rewards.clear();
-                        self.dungeon.boss = self.dungeon.boss_list[0].clone();
+                        self.dungeon.boss = self.dungeon.boss_list[0];
                         self.enter_room(-1, 15, RoomType::Boss);
                     } else {
                         self.reset_player_between_rooms();
@@ -3864,9 +3798,9 @@ impl Game {
                         if self.dungeon.act == Act::Beyond {
                             self.current_room = RoomType::Victory;
                             self.event = Some(EventState {
-                                id: "SpireHeart".into(),
+                                id: EventId::SpireHeart,
                                 screen: 0,
-                                options: vec!["[Continue]".into()],
+                                options: vec![EventOption::Continue],
                                 data: Vec::new(),
                                 library_cards: Vec::new(),
                                 match_cards: Vec::new(),
@@ -3887,81 +3821,16 @@ impl Game {
                     // continues the act transition that BossRelic Skip would.
                     self.begin_next_act();
                 } else if self.event.as_ref().is_some_and(|e| {
-                    (e.id == "SensoryStone" && e.screen == 2)
-                        || (e.id == "Wheel of Change" && e.screen == 3)
-                        || e.id == "Woman in Blue"
-                        || e.id == "The Woman in Blue"
+                    (e.id == EventId::SensoryStone && e.screen == 2)
+                        || (e.id == EventId::WheelOfChange && e.screen == 3)
+                        || e.id == EventId::WomanInBlue
                 }) {
                     self.screen = Screen::Event;
                 } else {
                     self.open_map();
                 }
             }
-            Action::Choose { index, label, .. } => {
-                if let Some(label) = label {
-                    if label == "EMERALD_KEY" {
-                        self.claim_emerald_key();
-                        return;
-                    }
-                    if label == "RUBY_KEY" {
-                        return;
-                    }
-                    if label == "STOLEN_GOLD" {
-                        let gold = self.rewards.iter().find_map(|r| match r.kind {
-                            RewardKind::StolenGold(g) if !r.taken => Some(g),
-                            _ => None,
-                        });
-                        if let Some(g) = gold {
-                            // RewardItem.STOLEN_GOLD calls player.gainGold;
-                            // Ectoplasm consumes the reward but blocks the gain.
-                            if !self.player.has_relic(RelicId::Ectoplasm) {
-                                self.player.gold += g;
-                            }
-                            if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::StolenGold(_)) && !r.taken) {
-                                r.taken = true;
-                            }
-                        }
-                        return;
-                    }
-                    if label == "GOLD" {
-                        let gold = self.rewards.iter().find_map(|r| match r.kind {
-                            RewardKind::Gold(g) if !r.taken => Some(g),
-                            _ => None,
-                        });
-                        if let Some(g) = gold {
-                            let gained = self.gold_gain(g);
-                            self.player.gold += gained;
-                            if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::Gold(_)) && !r.taken) {
-                                r.taken = true;
-                            }
-                        }
-                        return;
-                    }
-                    if label == "POTION" {
-                        let potion = self.rewards.iter().find_map(|r| match r.kind {
-                            RewardKind::Potion(p) if !r.taken => Some(p),
-                            _ => None,
-                        });
-                        if let Some(p) = potion {
-                            if self.gain_potion(p) {
-                                if let Some(r) = self.rewards.iter_mut().find(|r| matches!(r.kind, RewardKind::Potion(x) if x == p && !r.taken)) {
-                                    r.taken = true;
-                                }
-                            }
-                        }
-                        return;
-                    }
-                    if label == "CARD" {
-                        if let Some(real) = self
-                            .rewards
-                            .iter()
-                            .position(|r| matches!(r.kind, RewardKind::Card) && !r.taken)
-                        {
-                            self.open_reward_card_at(real);
-                        }
-                        return;
-                    }
-                }
+            Action::Choose { index, .. } => {
                 let untaken: Vec<usize> = self
                     .rewards
                     .iter()
@@ -4142,25 +4011,8 @@ impl Game {
             Action::Skip => {
                 self.finish_card_reward();
             }
-            Action::Choose { index, label, .. } => {
-                let card = label
-                    .as_ref()
-                    .and_then(|name| {
-                        let upgraded = name.ends_with('+');
-                        let base = name.trim_end_matches('+');
-                        self.card_reward
-                            .iter()
-                            .find(|c| c.sts_id() == base || c.sts_id().replace('_', " ") == base)
-                            .cloned()
-                            .or_else(|| crate::ids::CardId::from_sts_id(base).map(crate::card::Card::new))
-                            .map(|mut c| {
-                                if upgraded {
-                                    c.upgrade();
-                                }
-                                c
-                            })
-                    })
-                    .or_else(|| self.card_reward.get(*index).cloned());
+            Action::Choose { index, .. } => {
+                let card = self.card_reward.get(*index).cloned();
                 if let Some(mut card) = card {
                     if self.toolbox_reward {
                         if self.player.hand.len() < 10 {
@@ -4244,15 +4096,15 @@ impl Game {
         self.screen = Screen::CombatReward;
     }
 
-    fn campfire_options(&self) -> Vec<&'static str> {
+    pub fn campfire_options(&self) -> Vec<CampfireOption> {
         let mut opts = Vec::new();
         if !self.player.has_relic(RelicId::Coffee_Dripper) {
-            opts.push("Rest");
+            opts.push(CampfireOption::Rest);
         }
         if !self.player.has_relic(RelicId::Fusion_Hammer)
             && self.player.deck.iter().any(|c| c.can_upgrade())
         {
-            opts.push("Smith");
+            opts.push(CampfireOption::Smith);
         }
         if self.player.has_relic(RelicId::Peace_Pipe)
             && self
@@ -4261,7 +4113,7 @@ impl Game {
                 .iter()
                 .any(|card| purgeable_card(card) && !card.in_bottle)
         {
-            opts.push("Toke");
+            opts.push(CampfireOption::Toke);
         }
         if self
             .player
@@ -4269,12 +4121,20 @@ impl Game {
             .iter()
             .any(|relic| relic.id == RelicId::Girya && relic.counter < 3)
         {
-            opts.push("Lift");
+            opts.push(CampfireOption::Lift);
         }
         if self.final_act_available && !self.has_ruby_key {
-            opts.push("Recall");
+            opts.push(CampfireOption::Recall);
         }
         opts
+    }
+
+    pub fn rest_is_smithing(&self) -> bool {
+        self.rest_smithing
+    }
+
+    pub fn shop_is_open(&self) -> bool {
+        self.shop.open
     }
 
     fn step_rest(&mut self, action: &Action) {
@@ -4321,31 +4181,17 @@ impl Game {
                 self.rest_smith_pending = None;
                 self.open_map();
             }
-            Action::Choose { index, label, .. } => {
-                if matches!(label.as_deref(), Some("open") | Some("boss") | Some("map node")) {
-                    return;
-                }
+            Action::Choose { index, .. } => {
                 if self.rest_smithing {
-                    let selected = if let Some(name) = label.as_deref() {
-                        let base = name.trim_end_matches('+');
-                        self.player.deck.iter().position(|c| {
-                            let id = c.sts_id();
-                            c.can_upgrade()
-                                && (id == base
-                                    || id.replace('_', " ") == base
-                                    || c.def().sts_id == base)
-                        })
-                    } else {
-                        let upg: Vec<usize> = self
-                            .player
-                            .deck
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, c)| c.can_upgrade())
-                            .map(|(i, _)| i)
-                            .collect();
-                        upg.get(*index).copied()
-                    };
+                    let upg: Vec<usize> = self
+                        .player
+                        .deck
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| c.can_upgrade())
+                        .map(|(i, _)| i)
+                        .collect();
+                    let selected = upg.get(*index).copied();
                     if let Some(i) = selected {
                         self.rest_smith_pending = Some(i);
                         self.rest_smith_picked = true;
@@ -4353,20 +4199,12 @@ impl Game {
                     }
                     return;
                 }
-                let kind = match label.as_deref() {
-                    Some("Rest") => Some("Rest"),
-                    Some(s) if s.contains("Sleep") => Some("Rest"),
-                    Some("Smith") => Some("Smith"),
-                    Some("Toke") => Some("Toke"),
-                    Some("Lift") => Some("Lift"),
-                    Some("Recall") => Some("Recall"),
-                    _ => self.campfire_options().get(*index).copied(),
-                };
-                if self.rest_selected && kind != Some("Rest") {
+                let kind = self.campfire_options().get(*index).copied();
+                if self.rest_selected && kind != Some(CampfireOption::Rest) {
                     return;
                 }
                 match kind {
-                    Some("Rest") => {
+                    Some(CampfireOption::Rest) => {
                         let mut heal = (self.player.max_hp as f32 * 0.3).floor() as i32;
                         if self.player.has_relic(RelicId::Regal_Pillow) {
                             heal += 15;
@@ -4381,13 +4219,13 @@ impl Game {
                             self.open_dream_catcher_reward();
                         }
                     }
-                    Some("Smith") => {
+                    Some(CampfireOption::Smith) => {
                         self.rest_selected = true;
                         self.rest_smithing = true;
                         self.rest_smith_picked = false;
                         self.rest_smith_pending = None;
                     }
-                    Some("Toke") => {
+                    Some(CampfireOption::Toke) => {
                         self.rest_selected = true;
                         self.open_grid(GridKind::Purge, 1, false);
                         if let Some(grid) = self.grid.as_mut() {
@@ -4398,7 +4236,7 @@ impl Game {
                             grid.return_screen = Some(Screen::Rest);
                         }
                     }
-                    Some("Lift") => {
+                    Some(CampfireOption::Lift) => {
                         if let Some(girya) = self
                             .player
                             .relics
@@ -4409,7 +4247,7 @@ impl Game {
                             self.rest_selected = true;
                         }
                     }
-                    Some("Recall") => {
+                    Some(CampfireOption::Recall) => {
                         self.has_ruby_key = true;
                         self.rest_selected = true;
                     }
@@ -4510,11 +4348,7 @@ impl Game {
         if !self.shop.open {
             match action {
                 Action::Proceed | Action::Skip => self.open_map(),
-                Action::Choose { label, .. }
-                    if label.as_deref() == Some("shop") || label.is_none() =>
-                {
-                    self.shop.open = true;
-                }
+                Action::Choose { .. } => self.shop.open = true,
                 _ => {}
             }
             return;
@@ -4524,90 +4358,14 @@ impl Game {
                 self.apply_pending_shop_purge();
                 self.shop.open = false;
             }
-            Action::Choose { index, label, .. } => {
-                if !self.buy_shop_item(label.as_deref(), *index) {
-                    self.shop.open = false;
+            Action::Choose { index, .. } => {
+                let affordable = self.shop_affordable();
+                if let Some(kind) = affordable.get(*index).copied() {
+                    self.buy_shop_kind(kind);
                 }
             }
             _ => {}
         }
-    }
-
-    fn buy_shop_item(&mut self, label: Option<&str>, index: usize) -> bool {
-        if matches!(label, Some("purge")) {
-            if self.player.gold >= self.shop.purge_cost && self.shop.purge_available {
-                self.grid = Some(GridSelect {
-                    kind: GridKind::Purge,
-                    needed: 1,
-                    confirm: false,
-                    hovered: None,
-                    picked: Vec::new(),
-                    return_event: false,
-                    return_shop: true,
-                    return_screen: None,
-                    can_cancel: true,
-                    immediate: false,
-                });
-                self.screen = Screen::Grid;
-            }
-            return true;
-        }
-        if let Some(name) = label {
-            if let Some(i) = self
-                .shop
-                .cards
-                .iter()
-                .position(|o| !o.sold && shop_card_matches(&o.item, name))
-            {
-                let price = self.shop.cards[i].price;
-                if self.player.gold >= price {
-                    self.spend_shop_gold(price);
-                    let card = self.shop.cards[i].item.clone();
-                    self.shop.cards[i].sold = true;
-                    self.player.deck.push(card);
-                }
-                return true;
-            }
-            if let Some(i) = self
-                .shop
-                .relics
-                .iter()
-                .position(|o| !o.sold && shop_relic_matches(o.item, name))
-            {
-                let price = self.shop.relics[i].price;
-                if self.player.gold >= price {
-                    self.spend_shop_gold(price);
-                    let id = self.shop.relics[i].item;
-                    self.shop.relics[i].sold = true;
-                    self.gain_relic(id);
-                    if id == RelicId::Membership_Card {
-                        self.discount_current_shop(0.5, true);
-                    }
-                }
-                return true;
-            }
-            if let Some(i) = self
-                .shop
-                .potions
-                .iter()
-                .position(|o| !o.sold && shop_potion_matches(o.item, name))
-            {
-                let price = self.shop.potions[i].price;
-                if self.player.gold >= price && !self.player.has_relic(RelicId::Sozu) {
-                    self.spend_shop_gold(price);
-                    let id = self.shop.potions[i].item;
-                    self.shop.potions[i].sold = true;
-                    self.gain_potion(id);
-                }
-                return true;
-            }
-            return true;
-        }
-        let affordable = self.shop_affordable();
-        if let Some(kind) = affordable.get(index).copied() {
-            self.buy_shop_kind(kind);
-        }
-        true
     }
 
     fn shop_affordable(&self) -> Vec<ShopKind> {
@@ -4633,10 +4391,48 @@ impl Game {
         out
     }
 
+    pub fn shop_choices(&self) -> Vec<ShopChoice> {
+        self.shop_affordable()
+            .into_iter()
+            .filter_map(|kind| match kind {
+                ShopKind::Purge => Some(ShopChoice::Purge),
+                ShopKind::Card(index) => self
+                    .shop
+                    .cards
+                    .get(index)
+                    .map(|offer| ShopChoice::Card(offer.item.clone())),
+                ShopKind::Relic(index) => self
+                    .shop
+                    .relics
+                    .get(index)
+                    .map(|offer| ShopChoice::Relic(offer.item)),
+                ShopKind::Potion(index) => self
+                    .shop
+                    .potions
+                    .get(index)
+                    .map(|offer| ShopChoice::Potion(offer.item)),
+            })
+            .collect()
+    }
+
     fn buy_shop_kind(&mut self, kind: ShopKind) {
         match kind {
             ShopKind::Purge => {
-                let _ = self.buy_shop_item(Some("purge"), 0);
+                if self.player.gold >= self.shop.purge_cost && self.shop.purge_available {
+                    self.grid = Some(GridSelect {
+                        kind: GridKind::Purge,
+                        needed: 1,
+                        confirm: false,
+                        hovered: None,
+                        picked: Vec::new(),
+                        return_event: false,
+                        return_shop: true,
+                        return_screen: None,
+                        can_cancel: true,
+                        immediate: false,
+                    });
+                    self.screen = Screen::Grid;
+                }
             }
             ShopKind::Card(i) => {
                 if let Some(offer) = self.shop.cards.get_mut(i) {
@@ -4730,11 +4526,6 @@ impl Game {
             }
             return;
         }
-        if let Action::Choose { label: Some(label), .. } = action {
-            if label == "open" {
-                // fall through
-            }
-        }
         if self.current_room == RoomType::BossTreasure {
             self.boss_relics.clear();
             for _ in 0..3 {
@@ -4764,16 +4555,8 @@ impl Game {
     }
 
     fn step_boss_relic(&mut self, action: &Action) {
-        if let Action::Choose { index, label, .. } = action {
-            let picked = label
-                .as_ref()
-                .and_then(|name| {
-                    self.boss_relics
-                        .iter()
-                        .copied()
-                        .find(|id| id.sts_id() == name.as_str())
-                })
-                .or_else(|| self.boss_relics.get(*index).copied());
+        if let Action::Choose { index, .. } = action {
+            let picked = self.boss_relics.get(*index).copied();
             if let Some(id) = picked {
                 self.gain_relic(id);
                 // The choice screen closes after one relic. Keep the screen
@@ -4849,7 +4632,7 @@ impl Game {
 
     fn start_combat_in_current_room(&mut self) {
         let encounter = if self.current_room == RoomType::Boss {
-            EncounterId::from_sts_key(&self.dungeon.boss).unwrap_or(EncounterId::Hexaghost)
+            self.dungeon.boss
         } else if self.current_room == RoomType::Elite {
             self.dungeon.next_elite().unwrap_or(EncounterId::GremlinNob)
         } else {
@@ -5106,7 +4889,7 @@ impl Game {
         choice
     }
 
-    fn pick_event(&mut self, rng: &mut StsRandom) -> String {
+    fn pick_event(&mut self, rng: &mut StsRandom) -> EventId {
         if rng.random_float_range(0.0, 1.0) < 0.25 {
             self.pick_shrine(rng)
         } else {
@@ -5114,11 +4897,11 @@ impl Game {
         }
     }
 
-    fn pick_shrine(&mut self, rng: &mut StsRandom) -> String {
+    fn pick_shrine(&mut self, rng: &mut StsRandom) -> EventId {
         // AbstractDungeon.getShrine: shrineList plus specialOneTimeEventList
         // with per-event filters (act / gold / HP / relics / curses).
         let mut tmp = self.dungeon.shrine_list.clone();
-        let dungeon_id = self.dungeon.id;
+        let act = self.dungeon.act;
         let cursed = self.player.deck.iter().any(|c| {
             c.card_type() == crate::ids::CardType::CURSE
                 && !matches!(
@@ -5127,70 +4910,70 @@ impl Game {
                 )
         });
         for e in self.dungeon.special_one_time.iter() {
-            let include = match e.as_str() {
-                "Fountain of Cleansing" => cursed,
-                "Designer" => {
-                    matches!(dungeon_id, "TheCity" | "TheBeyond") && self.player.gold >= 75
+            let include = match e {
+                EventId::FountainOfCleansing => cursed,
+                EventId::Designer => {
+                    matches!(act, Act::City | Act::Beyond) && self.player.gold >= 75
                 }
-                "Duplicator" => matches!(dungeon_id, "TheCity" | "TheBeyond"),
-                "FaceTrader" => matches!(dungeon_id, "TheCity" | "Exordium"),
-                "Knowing Skull" => dungeon_id == "TheCity" && self.player.hp > 12,
-                "N'loth" => dungeon_id == "TheCity" && self.player.relics.len() >= 2,
-                "The Joust" => dungeon_id == "TheCity" && self.player.gold >= 50,
-                "The Woman in Blue" => self.player.gold >= 50,
-                "SecretPortal" => false,
+                EventId::Duplicator => matches!(act, Act::City | Act::Beyond),
+                EventId::FaceTrader => matches!(act, Act::City | Act::Exordium),
+                EventId::KnowingSkull => act == Act::City && self.player.hp > 12,
+                EventId::Nloth => act == Act::City && self.player.relics.len() >= 2,
+                EventId::Joust => act == Act::City && self.player.gold >= 50,
+                EventId::WomanInBlue => self.player.gold >= 50,
+                EventId::SecretPortal => false,
                 _ => true,
             };
             if include {
-                tmp.push(e.clone());
+                tmp.push(*e);
             }
         }
         if tmp.is_empty() {
-            return "Scrap Ooze".into();
+            return EventId::ScrapOoze;
         }
-        let key = tmp[rng.random_int(tmp.len() as i32 - 1) as usize].clone();
+        let key = tmp[rng.random_int(tmp.len() as i32 - 1) as usize];
         self.dungeon.shrine_list.retain(|s| s != &key);
         self.dungeon.special_one_time.retain(|s| s != &key);
         key
     }
 
-    fn pick_normal_event(&mut self, rng: &mut StsRandom) -> String {
+    fn pick_normal_event(&mut self, rng: &mut StsRandom) -> EventId {
         let mut tmp = Vec::new();
         for e in self.dungeon.event_list.iter() {
-            match e.as_str() {
-                "Dead Adventurer" | "Mushrooms" => {
+            match e {
+                EventId::DeadAdventurer | EventId::Mushrooms => {
                     if self.dungeon.floor > 6 {
-                        tmp.push(e.clone());
+                        tmp.push(*e);
                     }
                 }
-                "The Cleric" => {
+                EventId::Cleric => {
                     if self.player.gold >= 35 {
-                        tmp.push(e.clone());
+                        tmp.push(*e);
                     }
                 }
-                "The Moai Head" => {
+                EventId::MoaiHead => {
                     let bloodied = (self.player.hp as f32) / (self.player.max_hp as f32) <= 0.5;
                     if self.player.has_relic(RelicId::Golden_Idol) || bloodied {
-                        tmp.push(e.clone());
+                        tmp.push(*e);
                     }
                 }
-                "Beggar" => {
+                EventId::Beggar => {
                     if self.player.gold >= 75 {
-                        tmp.push(e.clone());
+                        tmp.push(*e);
                     }
                 }
-                "Colosseum" => {
+                EventId::Colosseum => {
                     if self.current_y > (self.dungeon.map.height() as i32) / 2 {
-                        tmp.push(e.clone());
+                        tmp.push(*e);
                     }
                 }
-                _ => tmp.push(e.clone()),
+                _ => tmp.push(*e),
             }
         }
         if tmp.is_empty() {
             return self.pick_shrine(rng);
         }
-        let key = tmp[rng.random_int(tmp.len() as i32 - 1) as usize].clone();
+        let key = tmp[rng.random_int(tmp.len() as i32 - 1) as usize];
         self.dungeon.event_list.retain(|s| s != &key);
         key
     }
@@ -5199,32 +4982,29 @@ impl Game {
         // generateEvent uses a duplicate of eventRng and does not write it back.
         let mut local = StsRandom::from_seed_counter(self.seed, self.rng.event.counter);
         let id = self.pick_event(&mut local);
-        self.we_meet_again_room = id == "WeMeetAgain";
+        self.we_meet_again_room = id == EventId::WeMeetAgain;
         let mut data = Vec::new();
-        let options = match id.as_str() {
-            "Scrap Ooze" => {
+        let options = match id {
+            EventId::ScrapOoze => {
                 // ScrapOoze: dmg=3, A15+ dmg=5; relicObtainChance=25.
                 let dmg = if self.ascension >= 15 { 5 } else { 3 };
                 data = vec![dmg, 25];
-                vec![
-                    format!("[Reach Inside] #rLose #r{dmg} #rHP. #g25%: #gFind #ga #gRelic."),
-                    "[Leave]".into(),
-                ]
+                vec![EventOption::ReachInside, EventOption::Leave]
             }
-            "Woman in Blue" | "The Woman in Blue" => vec![
-                "[Buy 1 Potion]".into(),
-                "[Buy 2 Potions]".into(),
-                "[Buy 3 Potions]".into(),
-                "[Leave]".into(),
+            EventId::WomanInBlue => vec![
+                EventOption::BuyPotion(1),
+                EventOption::BuyPotion(2),
+                EventOption::BuyPotion(3),
+                EventOption::Leave,
             ],
-            "The Library" => {
+            EventId::Library => {
                 let pct = if self.ascension >= 15 { 0.2 } else { 0.33 };
                 let heal = crate::rewards::gdx_round(self.player.max_hp as f32 * pct);
                 data = vec![heal];
-                vec!["[Read]".into(), format!("[Sleep] #gHeal #g{heal} #gHP.")]
+                vec![EventOption::Read, EventOption::Sleep]
             }
-            "Cursed Tome" => vec!["[Read]".into(), "[Leave]".into()],
-            "Dead Adventurer" => {
+            EventId::CursedTome => vec![EventOption::Read, EventOption::Leave],
+            EventId::DeadAdventurer => {
                 // DeadAdventurer constructor shuffles its three hidden rewards
                 // and rolls the elite before publishing the first choice.
                 let mut rewards = vec![0, 1, 2]; // GOLD, NOTHING, RELIC
@@ -5233,18 +5013,12 @@ impl Game {
                 let enemy = self.rng.misc.random_range(0, 2);
                 let chance = if self.ascension >= 15 { 35 } else { 25 };
                 data = vec![chance, enemy, rewards[0], rewards[1], rewards[2]];
-                vec![
-                    format!("[Search] #gFind #gLoot. #r{chance}%: #rmonster #rreturns."),
-                    "[Leave]".into(),
-                ]
+                vec![EventOption::Search, EventOption::Leave]
             }
-            "Ghosts" => vec![
-                "[Accept] #gReceive #g5 Apparition. #rLose #r40 #rMax #rHP.".into(),
-                "[Refuse]".into(),
-            ],
-            "Falling" => vec!["[Continue]".into()],
-            "SensoryStone" => vec!["[Interact]".into()],
-            "Winding Halls" => {
+            EventId::Ghosts => vec![EventOption::Accept, EventOption::Refuse],
+            EventId::Falling => vec![EventOption::Continue],
+            EventId::SensoryStone => vec![EventOption::Interact],
+            EventId::WindingHalls => {
                 let (hp_pct, heal_pct) = if self.ascension >= 15 {
                     (0.18, 0.2)
                 } else {
@@ -5255,153 +5029,118 @@ impl Game {
                 let max_hp_loss =
                     crate::rewards::gdx_round(self.player.max_hp as f32 * 0.05);
                 data = vec![hp_loss, heal, max_hp_loss];
-                vec!["[Continue]".into()]
+                vec![EventOption::Continue]
             }
-            "The Moai Head" => {
+            EventId::MoaiHead => {
                 let max_hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * 0.18);
                 data = vec![max_hp_loss];
-                let mut opts = vec![format!(
-                    "[Jump Inside] #gHeal #gto #gfull #gHP. #rLose #r{max_hp_loss} #rMax #rHP."
-                )];
+                let mut opts = vec![EventOption::JumpInside];
                 if self.player.has_relic(RelicId::Golden_Idol) {
-                    opts.push(
-                        "[Offer: Golden Idol] #gGain #g333 #gGold. #rLose #rGolden #rIdol."
-                            .into(),
-                    );
+                    opts.push(EventOption::OfferGoldenIdol);
                 }
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Leave);
                 opts
             }
-            "MindBloom" => mind_bloom_options(self.dungeon.floor),
-            "World of Goop" => {
+            EventId::MindBloom => mind_bloom_options(self.dungeon.floor),
+            EventId::WorldOfGoop => {
                 let (lo, hi) = if self.ascension >= 15 { (35, 75) } else { (20, 50) };
                 let mut loss = self.rng.misc.random_range(lo, hi);
                 if loss > self.player.gold {
                     loss = self.player.gold;
                 }
                 data = vec![loss, 75, 11];
-                vec![
-                    format!("[Gather Gold] #gGain #g75 #gGold. #rLose #r11 #rHP."),
-                    format!("[Leave It] #rLose #r{loss} #rGold."),
-                ]
+                vec![EventOption::GatherGold, EventOption::LeaveIt]
             }
-            "Golden Wing" => {
+            EventId::GoldenWing => {
                 let can_attack = self.player.deck.iter().any(|card| {
                     card.card_type() == crate::ids::CardType::ATTACK && card.base_damage >= 10
                 });
                 data = vec![7, i32::from(can_attack)];
-                let mut opts = vec![
-                    "[Pray] #gRemove #ga #gcard #gfrom #gyour #gdeck. #rLose #r7 #rHP."
-                        .into(),
-                ];
+                let mut opts = vec![EventOption::Pray];
                 if can_attack {
-                    opts.push("[Destroy] #gGain #g50 #g- #g80 #gGold.".into());
+                    opts.push(EventOption::Destroy);
                 }
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Leave);
                 opts
             }
-            "Liars Game" => {
+            EventId::LiarsGame => {
                 let gold = if self.ascension >= 15 { 150 } else { 175 };
                 data = vec![gold];
-                vec![
-                    format!(
-                        "[Agree] #gGain #g{gold} #gGold. #rBecome #rCursed #r- #rDoubt."
-                    ),
-                    "[Disagree]".into(),
-                ]
+                vec![EventOption::Agree, EventOption::Disagree]
             }
-            "Accursed Blacksmith" => {
+            EventId::AccursedBlacksmith => {
                 let mut opts = Vec::new();
                 if self.player.deck.iter().any(|card| card.can_upgrade()) {
-                    opts.push("[Forge] #gUpgrade #ga #gcard #gin #gyour #gdeck.".into());
+                    opts.push(EventOption::Forge);
                 }
-                opts.push(
-                    "[Rummage] #gObtain #ga #gspecial #gRelic. #rBecome #rCursed #r- #rPain."
-                        .into(),
-                );
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Rummage);
+                opts.push(EventOption::Leave);
                 opts
             }
-            "Purifier" => {
+            EventId::Purifier => {
                 let mut opts = Vec::new();
                 if self.player.deck.iter().any(|card| purgeable_card(card) && !card.in_bottle) {
-                    opts.push("[Pray] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into());
+                    opts.push(EventOption::Pray);
                 }
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Leave);
                 opts
             }
-            "Transmorgrifier" => {
+            EventId::Transmorgrifier => {
                 let mut opts = Vec::new();
                 if self.player.deck.iter().any(purgeable_card) {
-                    opts.push("[Pray] #gTransform #ga #gcard.".into());
+                    opts.push(EventOption::Pray);
                 }
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Leave);
                 opts
             }
-            "Upgrade Shrine" => {
+            EventId::UpgradeShrine => {
                 let mut opts = Vec::new();
                 if self.player.deck.iter().any(|card| card.can_upgrade()) {
-                    opts.push("[Pray] #gUpgrade #ga #gcard.".into());
+                    opts.push(EventOption::Pray);
                 }
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Leave);
                 opts
             }
-            "Big Fish" => {
+            EventId::BigFish => {
                 let heal = self.player.max_hp / 3;
                 data = vec![heal];
-                vec![
-                    format!("[Banana] #gHeal #g{heal} #gHP."),
-                    "[Donut] #gMax #gHP #g+5.".into(),
-                    "[Box] #gObtain #ga #gRelic. #rBecome #rCursed #r- #rRegret.".into(),
-                ]
+                vec![EventOption::Banana, EventOption::Donut, EventOption::Box]
             }
-            "The Cleric" => {
+            EventId::Cleric => {
                 let heal = (self.player.max_hp as f32 * 0.25) as i32;
                 let purify = if self.ascension >= 15 { 75 } else { 50 };
                 data = vec![heal, purify];
                 let mut opts = Vec::new();
                 if self.player.gold >= 35 {
-                    opts.push(format!("[Heal] #y35 #yGold: #gHeal #g{heal} #gHP."));
+                    opts.push(EventOption::Heal);
                 }
                 if self.player.gold >= purify {
-                    opts.push(format!("[Purify] #y{purify} #yGold: #gRemove #ga #gcard #gfrom #gyour #gdeck."));
+                    opts.push(EventOption::Purify);
                 }
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Leave);
                 opts
             }
-            "Beggar" => vec![
-                "[Offer Gold] #y75 #yGold: #gRemove #ga #gcard #gfrom #gyour #gdeck."
-                    .into(),
-                "[Leave]".into(),
-            ],
-            "Duplicator" => vec![
-                "[Pray] #gDuplicate #ga #gcard #gin #gyour #gdeck.".into(),
-                "[Leave]".into(),
-            ],
-            "Living Wall" => {
-                let mut opts = vec![
-                    "[Forget] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into(),
-                    "[Change] #gTransform #ga #gcard #gin #gyour #gdeck.".into(),
-                ];
+            EventId::Beggar => vec![EventOption::OfferGold, EventOption::Leave],
+            EventId::Duplicator => vec![EventOption::Pray, EventOption::Leave],
+            EventId::LivingWall => {
+                let mut opts = vec![EventOption::Forget, EventOption::Change];
                 if self.player.deck.iter().any(|c| c.can_upgrade()) {
-                    opts.push("[Grow] #gUpgrade #ga #gcard #gin #gyour #gdeck.".into());
+                    opts.push(EventOption::Grow);
                 }
                 opts
             }
-            "Shining Light" => {
+            EventId::ShiningLight => {
                 let pct = if self.ascension >= 15 { 0.3 } else { 0.2 };
                 let damage = (self.player.max_hp as f32 * pct + 0.5).floor() as i32;
                 data = vec![damage];
                 let mut opts = Vec::new();
                 if self.player.deck.iter().any(|c| c.can_upgrade()) {
-                    opts.push(format!(
-                        "[Enter] #gUpgrade #g2 #grandom #gcards. #rLose #r{damage} #rHP."
-                    ));
+                    opts.push(EventOption::Enter);
                 }
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Leave);
                 opts
             }
-            "WeMeetAgain" => {
+            EventId::WeMeetAgain => {
                 // Constructor order: getRandomPotion, getGoldAmount, getRandomNonBasicCard.
                 let mut potion_slots: Vec<i32> = self
                     .player
@@ -5439,111 +5178,76 @@ impl Game {
                 let mut opts = Vec::new();
                 // ChoiceDriver skips disabled buttons; potion is enabled when a real potion exists.
                 if potion_slot >= 0 {
-                    opts.push("[Give Potion] #rLose #ra #rPotion. #gObtain #ga #gRelic.".into());
+                    opts.push(EventOption::GivePotion);
                 }
                 if gold_amt != 0 {
-                    opts.push(format!(
-                        "[Give Gold] #rLose #r{gold_amt} #gGold. #gObtain #ga #gRelic."
-                    ));
+                    opts.push(EventOption::GiveGold);
                 }
                 if card_idx >= 0 {
-                    opts.push("[Give Card]".into());
+                    opts.push(EventOption::GiveCard);
                 }
-                opts.push("[Attack]".into());
+                opts.push(EventOption::Attack);
                 opts
             }
-            "Golden Shrine" => {
-                let pray = if self.ascension >= 15 { 50 } else { 100 };
+            EventId::GoldenShrine => {
                 vec![
-                    format!("[Pray] #gGain #g{pray} #gGold."),
-                    "[Desecrate] #gGain #g275 #gGold. #rBecome #rCursed #r- #rRegret.".into(),
-                    "[Leave]".into(),
+                    EventOption::Pray,
+                    EventOption::Desecrate,
+                    EventOption::Leave,
                 ]
             }
-            "Golden Idol" => {
-                vec![
-                    "[Take] #gObtain #gGolden #gIdol.".into(),
-                    "[Leave]".into(),
-                ]
+            EventId::GoldenIdol => {
+                vec![EventOption::Take, EventOption::Leave]
             }
-            "Mushrooms" => {
+            EventId::Mushrooms => {
                 let heal = (self.player.max_hp as f32 * 0.25) as i32;
                 data = vec![heal];
-                vec![
-                    "[Stomp] #rAnger #rthe #rMushrooms.".into(),
-                    format!("[Eat] #gHeal #g{heal} #gHP. #rBecome #rCursed #r- #rParasite."),
-                ]
+                vec![EventOption::Stomp, EventOption::Eat]
             }
-            "Masked Bandits" => vec![
-                "[Pay] #rLose #rALL of your #yGold.".into(),
-                "[Fight!]".into(),
-            ],
-            "The Mausoleum" => vec![
-                "[Open Coffin] #gObtain #ga #gRelic. #r100%: #rBecome #rCursed #r- #rWrithe."
-                    .into(),
-                "[Leave]".into(),
-            ],
-            "Mysterious Sphere" => vec![
-                "[Open Sphere] #rFight. #gReward: #gRare #gRelic.".into(),
-                "[Leave]".into(),
-            ],
-            "Tomb of Lord Red Mask" => {
+            EventId::MaskedBandits => vec![EventOption::Pay, EventOption::Fight],
+            EventId::Mausoleum => vec![EventOption::OpenCoffin, EventOption::Leave],
+            EventId::MysteriousSphere => vec![EventOption::OpenSphere, EventOption::Leave],
+            EventId::TombOfLordRedMask => {
                 if self.player.has_relic(RelicId::Red_Mask) {
-                    vec![
-                        "[Don the Red Mask] #gGain #g222 #gGold.".into(),
-                        "[Leave]".into(),
-                    ]
+                    vec![EventOption::DonRedMask, EventOption::Leave]
                 } else {
-                    vec![
-                        format!(
-                            "[Offer: {} Gold] #rLose #rall #rGold. #gObtain #ga #gRelic.",
-                            self.player.gold
-                        ),
-                        "[Leave]".into(),
-                    ]
+                    vec![EventOption::OfferGold, EventOption::Leave]
                 }
             }
-            "Vampires" => {
+            EventId::Vampires => {
                 let max_hp_loss = ((self.player.max_hp as f32) * 0.3).ceil() as i32;
                 let max_hp_loss = max_hp_loss.min(self.player.max_hp - 1);
                 data = vec![max_hp_loss];
-                let mut opts = vec![format!(
-                    "[Accept] #gRemove #gall Strikes. #gReceive #g5 Bites. #rLose #r{max_hp_loss} #rMax #rHP."
-                )];
+                let mut opts = vec![EventOption::Accept];
                 if self.player.has_relic(RelicId::Blood_Vial) {
-                    opts.push(
-                        "[Lose Blood Vial] #gRemove #gall Strikes. #gReceive #g5 Bites."
-                            .into(),
-                    );
+                    opts.push(EventOption::LoseBloodVial);
                 }
-                opts.push("[Refuse]".into());
+                opts.push(EventOption::Refuse);
                 opts
             }
-            "Addict" => {
+            EventId::Addict => {
                 let can_pay = self.player.gold >= 85;
                 data = vec![i32::from(can_pay)];
                 let mut opts = Vec::new();
                 if can_pay {
-                    opts.push("[Offer Gold] #y85 #yGold: #gObtain #ga #gRelic.".into());
+                    opts.push(EventOption::OfferGold);
                 }
-                opts.push(
-                    "[Rob] #gObtain #ga #gRelic. #rBecome #rCursed #r- #rShame.".into(),
-                );
-                opts.push("[Leave]".into());
+                opts.push(EventOption::Rob);
+                opts.push(EventOption::Leave);
                 opts
             }
-            "Nest" => {
+            EventId::Nest => {
                 let gold = if self.ascension >= 15 { 50 } else { 99 };
                 data = vec![gold, 6];
-                vec!["[Continue]".into()]
+                vec![EventOption::Continue]
             }
-            "Knowing Skull" => {
+            EventId::KnowingSkull => {
                 // KnowingSkull starts with an INTRO Continue. The four paid
                 // choices are installed only after that button is pressed.
                 data = vec![6, 6, 6, 6];
-                vec!["[Continue]".into()]
+                vec![EventOption::Continue]
             }
-            "N'loth" => {
+            EventId::Nloth => {
                 // Nloth copies the player's relic list, then shuffles it with
                 // a java.util.Random seeded by one miscRng.randomLong().
                 let mut choices: Vec<usize> = (0..self.player.relics.len()).collect();
@@ -5553,23 +5257,17 @@ impl Game {
                 let second = choices.get(1).copied().unwrap_or(first);
                 data = vec![first as i32, second as i32];
                 vec![
-                    format!(
-                        "[Offer: {}] #rLose #rthis #rrelic. #gObtain #ga #gspecial #grelic.",
-                        self.player.relics[first].id.sts_id()
-                    ),
-                    format!(
-                        "[Offer: {}] #rLose #rthis #rrelic. #gObtain #ga #gspecial #grelic.",
-                        self.player.relics[second].id.sts_id()
-                    ),
-                    "[Leave]".into(),
+                    EventOption::OfferRelic,
+                    EventOption::OfferRelic,
+                    EventOption::Leave,
                 ]
             }
-            "The Joust" => {
+            EventId::Joust => {
                 // betFor and ownerWins are populated on the following screens.
                 data = vec![0, 0];
-                vec!["[Continue]".into()]
+                vec![EventOption::Continue]
             }
-            "Forgotten Altar" => {
+            EventId::ForgottenAltar => {
                 // ForgottenAltar ctor: hpLoss = MathUtils.round(max * 0.25),
                 // A15+ 0.35. Golden Idol option is disabled without the relic;
                 // ChoiceDriver skips disabled buttons so omit it.
@@ -5578,26 +5276,24 @@ impl Game {
                 data = vec![hp_loss];
                 let mut opts = Vec::new();
                 if self.player.has_relic(RelicId::Golden_Idol) {
-                    opts.push("[Offer] #gObtain #gBloody #gIdol.".into());
+                    opts.push(EventOption::Offer);
                 }
-                opts.push(format!(
-                    "[Sacrifice] #gMax #gHP #g+5. #rLose #r{hp_loss} #rHP."
-                ));
-                opts.push("[Desecrate] #rBecome #rCursed #r- #rDecay.".into());
+                opts.push(EventOption::Sacrifice);
+                opts.push(EventOption::Desecrate);
                 opts
             }
-            "Drug Dealer" => {
+            EventId::DrugDealer => {
                 // DrugDealer ctor: JAX, transform 2 if >=2 purgeable, MutagenicStrength.
                 // Transform is disabled below that; ChoiceDriver skips it.
-                let mut opts = vec!["[Ingest] #gObtain #gJ.A.X.".into()];
+                let mut opts = vec![EventOption::Ingest];
                 let purgeable = self.player.deck.iter().filter(|c| purgeable_card(c)).count();
                 if purgeable >= 2 {
-                    opts.push("[Study] #gTransform #g2 #gcards.".into());
+                    opts.push(EventOption::Study);
                 }
-                opts.push("[Inject] #gObtain #gMutagenic #gStrength.".into());
+                opts.push(EventOption::Inject);
                 opts
             }
-            "Designer" => {
+            EventId::Designer => {
                 // Designer ctor: two miscRng.randomBoolean(), then INTRO Continue.
                 let upg_one = if self.rng.misc.random_boolean() { 1 } else { 0 };
                 let rem_cards = if self.rng.misc.random_boolean() { 1 } else { 0 };
@@ -5607,19 +5303,16 @@ impl Game {
                     (40, 60, 90, 3)
                 };
                 data = vec![adj, clean, full, hp, upg_one, rem_cards, 0];
-                vec!["[Continue]".into()]
+                vec![EventOption::Continue]
             }
-            "Lab" => vec!["[Search] #gFind #gsome #gPotions!".into()],
-            "NoteForYourself" => {
+            EventId::Lab => vec![EventOption::Search],
+            EventId::NoteForYourself => {
                 // NoteForYourself ctor: one INTRO option, then CHOOSE take/leave.
-                vec!["[Continue]".into()]
+                vec![EventOption::Continue]
             }
-            "Back to Basics" => vec![
-                "[Elegance] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into(),
-                "[Simplicity] #gUpgrade #gall #gStrikes #gand #gDefends.".into(),
-            ],
-            "Bonfire Elementals" => vec!["[Continue]".into()],
-            "FaceTrader" => {
+            EventId::BackToBasics => vec![EventOption::Elegance, EventOption::Simplicity],
+            EventId::BonfireElementals => vec![EventOption::Continue],
+            EventId::FaceTrader => {
                 // FaceTrader: A15+ gold=50 else 75; damage = maxHp/10 (min 1).
                 let gold = if self.ascension >= 15 { 50 } else { 75 };
                 let mut dmg = self.player.max_hp / 10;
@@ -5627,18 +5320,18 @@ impl Game {
                     dmg = 1;
                 }
                 data = vec![dmg, gold];
-                vec!["[Continue]".into()]
+                vec![EventOption::Continue]
             }
-            "Wheel of Change" => {
+            EventId::WheelOfChange => {
                 // GremlinWheelGame: gold by act; A15+ hpLoss 0.15 else 0.1.
                 data = vec![self.wheel_gold_amount(), 0, 0];
-                vec!["[Play]".into()]
+                vec![EventOption::Play]
             }
-            "Match and Keep!" => vec!["[Continue]".into()],
-            "Colosseum" => vec!["[Continue]".into()],
-            _ => vec!["[Continue]".into(), "[Leave]".into()],
+            EventId::MatchAndKeep => vec![EventOption::Continue],
+            EventId::Colosseum => vec![EventOption::Continue],
+            _ => vec![EventOption::Continue, EventOption::Leave],
         };
-        if id == "Falling" {
+        if id == EventId::Falling {
             // Falling.setCards: attack, then skill, then power via miscRng.
             let attack = self.pick_deck_index_of_type(crate::ids::CardType::ATTACK);
             let skill = self.pick_deck_index_of_type(crate::ids::CardType::SKILL);
@@ -5649,7 +5342,7 @@ impl Game {
                 attack.map(|i| i as i32).unwrap_or(-1),
             ];
         }
-        let (match_cards, match_attempts) = if id == "Match and Keep!" {
+        let (match_cards, match_attempts) = if id == EventId::MatchAndKeep {
             (self.initialize_match_cards(), 5)
         } else {
             (Vec::new(), 0)
@@ -5681,20 +5374,6 @@ impl Game {
             0.15
         } else {
             0.1
-        }
-    }
-
-    fn wheel_prize_option(&self, result: i32) -> String {
-        match result {
-            0 => "[Prize!] YAY!!!!".into(),
-            1 => "[Prize!] #gObtain #ga #gRelic.".into(),
-            2 => "[Prize!] #gHeal #gto #gfull #ghealth.".into(),
-            3 => "[Prize?] #rCurse #r- #rDecay.".into(),
-            4 => "[Prize!] #gRemove #ga #gcard #gfrom #gyour #gdeck.".into(),
-            _ => {
-                let dmg = (self.player.max_hp as f32 * self.wheel_hp_loss_percent()) as i32;
-                format!("[Prize?] #rLose #r{dmg} #rHP.")
-            }
         }
     }
 
@@ -5811,7 +5490,7 @@ impl Game {
             0 => {
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Play]".into()];
+                    event.options = vec![EventOption::Play];
                 }
             }
             1 => {
@@ -5861,7 +5540,7 @@ impl Game {
                 event.match_attempts -= 1;
                 if event.match_attempts == 0 {
                     event.screen = 3;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 } else {
                     event.options = match_play_options(&event.match_cards);
                 }
@@ -5908,7 +5587,7 @@ impl Game {
             }
         }
         if ids.is_empty() {
-            return RelicId::from_sts_id("Circlet");
+            return Some(RelicId::Circlet);
         }
         let seed = self.rng.misc.random_long();
         shuffle_java(&mut ids, seed);
@@ -5916,12 +5595,10 @@ impl Game {
     }
 
     /// Designer MAIN buttons. Disabled options are omitted (ChoiceDriver skips them).
-    fn designer_main_options(&self) -> Vec<String> {
+    fn designer_main_options(&self) -> Vec<EventOption> {
         let adj = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(40);
         let clean = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(60);
         let full = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(90);
-        let hp = self.event.as_ref().and_then(|e| e.data.get(3).copied()).unwrap_or(3);
-        let upg_one = self.event.as_ref().and_then(|e| e.data.get(4).copied()).unwrap_or(0) != 0;
         let rem_cards = self.event.as_ref().and_then(|e| e.data.get(5).copied()).unwrap_or(0) != 0;
         let upgradable = self.player.deck.iter().any(|c| c.can_upgrade());
         let unbottled = self
@@ -5932,23 +5609,19 @@ impl Game {
             .count();
         let mut opts = Vec::new();
         if self.player.gold >= adj && upgradable {
-            if upg_one {
-                opts.push(format!("[Adjustments] #y{adj} #yGold: #gUpgrade #g1 #gcard."));
-            } else {
-                opts.push(format!("[Adjustments] #y{adj} #yGold: #gUpgrade #g2 #grandom #gcards."));
-            }
+            opts.push(EventOption::Adjustments);
         }
         if rem_cards {
             if self.player.gold >= clean && unbottled > 0 {
-                opts.push(format!("[Clean Up] #y{clean} #yGold: #gRemove #g1 #gcard."));
+                opts.push(EventOption::CleanUp);
             }
         } else if self.player.gold >= clean && unbottled >= 2 {
-            opts.push(format!("[Clean Up] #y{clean} #yGold: #gTransform #g2 #gcards."));
+            opts.push(EventOption::CleanUp);
         }
         if self.player.gold >= full && unbottled > 0 {
-            opts.push(format!("[Full Service] #y{full} #yGold: #gRemove #g1, #gUpgrade #g1."));
+            opts.push(EventOption::FullService);
         }
-        opts.push(format!("[Punch] #rLose #r{hp} #rHP."));
+        opts.push(EventOption::Punch);
         opts
     }
 
@@ -5970,7 +5643,7 @@ impl Game {
     }
 
     fn step_event(&mut self, action: &Action) {
-        let Action::Choose { index, label, .. } = action else {
+        let Action::Choose { index, .. } = action else {
             return;
         };
         let (id, screen, option_count) = match &self.event {
@@ -5980,18 +5653,18 @@ impl Game {
                 return;
             }
         };
-        if id == "SpireHeart" {
+        if id == EventId::SpireHeart {
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Attack] #b???".into()];
+                        event.options = vec![EventOption::Attack];
                     }
                 }
                 1 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Continue]".into()];
+                        event.options = vec![EventOption::Continue];
                     }
                 }
                 2 => {
@@ -6002,9 +5675,9 @@ impl Game {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = if go_to_ending { 4 } else { 3 };
                         event.options = vec![if go_to_ending {
-                            "[Approach Door]".into()
+                            EventOption::ApproachDoor
                         } else {
-                            "[Sleep]".into()
+                            EventOption::Sleep
                         }];
                     }
                 }
@@ -6022,19 +5695,19 @@ impl Game {
             }
             return;
         }
-        if id == "Tomb of Lord Red Mask" && screen == 0 && *index == 1 {
+        if id == EventId::TombOfLordRedMask && screen == 0 && *index == 1 {
             // TombRedMask INTRO's third raw button is Leave. ChoiceDriver
             // omits the disabled first button when the player has no mask, so
             // it arrives as normalized index 1 and opens the map immediately.
             self.open_map();
             return;
         }
-        if id == "Colosseum" {
+        if id == EventId::Colosseum {
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Fight]".into()];
+                        event.options = vec![EventOption::Fight];
                     }
                 }
                 1 => {
@@ -6067,7 +5740,7 @@ impl Game {
             }
             return;
         }
-        if id == "Wheel of Change" {
+        if id == EventId::WheelOfChange {
             // GremlinWheelGame.buttonEffect: INTRO Play rolls miscRng.random(0,5)
             // then hides the dialog. ExactTextSim then publishes one event
             // boundary per discrete spin flag (buttonPressed, finishSpin,
@@ -6083,7 +5756,7 @@ impl Game {
                         event.data[1] = result;
                         event.data[2] = 0;
                         event.screen = 1;
-                        event.options = vec!["spin".into()];
+                        event.options = vec![EventOption::Spin];
                     }
                 }
                 1 => {
@@ -6103,10 +5776,9 @@ impl Game {
                     }
                     if step >= 5 {
                         self.wheel_pre_apply(result, gold);
-                        let prize = self.wheel_prize_option(result);
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 2;
-                            event.options = vec![prize];
+                            event.options = vec![EventOption::Prize];
                         }
                     }
                 }
@@ -6118,7 +5790,7 @@ impl Game {
                         .unwrap_or(0);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 3;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                     self.wheel_apply_result(result);
                 }
@@ -6126,7 +5798,7 @@ impl Game {
             }
             return;
         }
-        if id == "Match and Keep!" {
+        if id == EventId::MatchAndKeep {
             // GremlinMatchGame.buttonEffect: INTRO Continue → RULE Play → PLAY
             // flips. The private waitTimer blocks ExactTextSim after the
             // second flip of an attempt, so the next published boundary is
@@ -6135,17 +5807,14 @@ impl Game {
             self.step_gremlin_match(*index);
             return;
         }
-        if id == "NoteForYourself" {
+        if id == EventId::NoteForYourself {
             // INTRO Continue → CHOOSE take saved card or Leave → COMPLETE Leave/openMap.
             // Default obtain card is Iron Wave (playerPref NOTE_CARD missing in fixture).
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            "[Take] Iron Wave.".into(),
-                            "[Leave]".into(),
-                        ];
+                        event.options = vec![EventOption::Take, EventOption::Leave];
                     }
                 }
                 1 => {
@@ -6154,25 +5823,23 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "FaceTrader" {
+        if id == EventId::FaceTrader {
             // FaceTrader.buttonEffect: INTRO Continue → MAIN Touch/Trade/Leave → RESULT Leave.
             match screen {
                 0 => {
-                    let dmg = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(1);
-                    let gold = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(75);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            format!("[Touch] #rLose #r{dmg} #rHP, #ggain #g{gold} #gGold."),
-                            "[Trade] #g50%: #gGood #gFace. #r50%: #rBad #rFace.".into(),
-                            "[Leave]".into(),
+                            EventOption::Touch,
+                            EventOption::Trade,
+                            EventOption::Leave,
                         ];
                     }
                 }
@@ -6196,20 +5863,20 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Masked Bandits" {
+        if id == EventId::MaskedBandits {
             match screen {
                 0 if *index == 0 => {
                     self.player.gold = 0;
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Continue]".into()];
+                        event.options = vec![EventOption::Continue];
                     }
                 }
                 0 => {
@@ -6221,9 +5888,7 @@ impl Game {
                     let gold = self.rng.misc.random_range(25, 35);
                     self.add_gold_to_rewards(gold);
                     if self.player.has_relic(RelicId::Red_Mask) {
-                        if let Some(id) = RelicId::from_sts_id("Circlet") {
-                            self.add_relic_to_rewards(id);
-                        }
+                        self.add_relic_to_rewards(RelicId::Circlet);
                     } else {
                         self.add_relic_to_rewards(RelicId::Red_Mask);
                     }
@@ -6231,7 +5896,7 @@ impl Game {
                 1 | 2 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen += 1;
-                        event.options = vec!["[Continue]".into()];
+                        event.options = vec![EventOption::Continue];
                     }
                 }
                 3 => self.open_map(),
@@ -6239,15 +5904,14 @@ impl Game {
             }
             return;
         }
-        if id == "Vampires" {
+        if id == EventId::Vampires {
             if screen == 0 {
                 let chosen = self
                     .event
                     .as_ref()
                     .and_then(|event| event.options.get(*index))
-                    .cloned()
-                    .unwrap_or_default();
-                if chosen.contains("Accept") {
+                    .copied();
+                if chosen == Some(EventOption::Accept) {
                     let loss = self
                         .event
                         .as_ref()
@@ -6256,7 +5920,7 @@ impl Game {
                     self.player.max_hp = (self.player.max_hp - loss).max(1);
                     self.player.hp = self.player.hp.min(self.player.max_hp);
                     self.replace_starter_strikes_with_bites();
-                } else if chosen.contains("Blood Vial") {
+                } else if chosen == Some(EventOption::LoseBloodVial) {
                     self.player
                         .relics
                         .retain(|relic| relic.id != RelicId::Blood_Vial);
@@ -6264,14 +5928,14 @@ impl Game {
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "Addict" {
+        if id == EventId::Addict {
             if screen == 0 {
                 let can_pay = self
                     .event
@@ -6298,33 +5962,21 @@ impl Game {
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "Nest" {
+        if id == EventId::Nest {
             match screen {
                 0 => {
-                    let gold = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.first().copied())
-                        .unwrap_or(if self.ascension >= 15 { 50 } else { 99 });
-                    let damage = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(1).copied())
-                        .unwrap_or(6);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            format!("[Smash and Grab] #gGain #g{gold} #gGold."),
-                            format!(
-                                "[Stay in Line] #rLose #r{damage} #rHP. #gObtain #gRitual #gDagger."
-                            ),
+                            EventOption::SmashAndGrab,
+                            EventOption::StayInLine,
                         ];
                     }
                 }
@@ -6353,24 +6005,23 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Knowing Skull" {
+        if id == EventId::KnowingSkull {
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            "[A Pick Me Up?] #gGet #ga #gPotion. #rLose #r6 #rHP.".into(),
-                            "[Riches?] #gGain #g90 #gGold. #rLose #r6 #rHP.".into(),
-                            "[Success?] #gGet #ga #gColorless #gCard. #rLose #r6 #rHP."
-                                .into(),
-                            "[How do I leave?] #rLose #r6 #rHP.".into(),
+                            EventOption::KnowingSkullPotion,
+                            EventOption::KnowingSkullGold,
+                            EventOption::KnowingSkullCard,
+                            EventOption::KnowingSkullLeave,
                         ];
                     }
                 }
@@ -6387,7 +6038,7 @@ impl Game {
                     combat::red_skull_on_hp_change(&mut self.player);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 1 => {
@@ -6398,16 +6049,14 @@ impl Game {
             }
             return;
         }
-        if id == "The Joust" {
+        if id == EventId::Joust {
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            "[Murderer] #yBet #y50 #yGold - #g70%: #gwin #g100 #gGold."
-                                .into(),
-                            "[Owner] #yBet #y50 #yGold - #g30%: #gwin #g250 #gGold."
-                                .into(),
+                            EventOption::Murderer,
+                            EventOption::Owner,
                         ];
                     }
                 }
@@ -6416,7 +6065,7 @@ impl Game {
                     if let Some(event) = self.event.as_mut() {
                         event.data[0] = i32::from(*index == 1);
                         event.screen = 2;
-                        event.options = vec!["[Watch]".into()];
+                        event.options = vec![EventOption::Watch];
                     }
                 }
                 2 => {
@@ -6424,7 +6073,7 @@ impl Game {
                     if let Some(event) = self.event.as_mut() {
                         event.data[1] = i32::from(owner_wins);
                         event.screen = 3;
-                        event.options = vec!["[Watch]".into()];
+                        event.options = vec![EventOption::Watch];
                     }
                 }
                 3 => {
@@ -6447,43 +6096,22 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 4;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Winding Halls" {
+        if id == EventId::WindingHalls {
             match screen {
                 0 => {
-                    let hp_loss = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.first().copied())
-                        .unwrap_or(0);
-                    let heal = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(1).copied())
-                        .unwrap_or(0);
-                    let max_hp_loss = self
-                        .event
-                        .as_ref()
-                        .and_then(|e| e.data.get(2).copied())
-                        .unwrap_or(0);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            format!(
-                                "[Embrace Madness] #gReceive #g2 Madness. #rLose #r{hp_loss} #rHP."
-                            ),
-                            format!(
-                                "[Focus] #rBecome #rCursed #r- #rWrithe. #gHeal #g{heal} #gHP."
-                            ),
-                            format!(
-                                "[Retrace Your Steps] #rLose #r{max_hp_loss} #rMax #rHP."
-                            ),
+                            EventOption::EmbraceMadness,
+                            EventOption::Focus,
+                            EventOption::Retrace,
                         ];
                     }
                 }
@@ -6516,22 +6144,21 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "The Moai Head" {
+        if id == EventId::MoaiHead {
             if screen == 0 {
                 let chosen = self
                     .event
                     .as_ref()
                     .and_then(|event| event.options.get(*index))
-                    .cloned()
-                    .unwrap_or_default();
-                if chosen.contains("Jump Inside") {
+                    .copied();
+                if chosen == Some(EventOption::JumpInside) {
                     let loss = self
                         .event
                         .as_ref()
@@ -6542,7 +6169,7 @@ impl Game {
                     self.player.max_hp = (self.player.max_hp - loss).max(1);
                     self.player.hp = self.player.hp.min(self.player.max_hp);
                     self.heal_player(self.player.max_hp);
-                } else if chosen.contains("Golden Idol") {
+                } else if chosen == Some(EventOption::OfferGoldenIdol) {
                     self.player.relics.retain(|relic| relic.id != RelicId::Golden_Idol);
                     if !self.player.has_relic(RelicId::Ectoplasm) {
                         self.player.gold += 333;
@@ -6550,32 +6177,32 @@ impl Game {
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "Beggar" {
+        if id == EventId::Beggar {
             match screen {
                 0 if *index == 0 => {
                     self.player.gold = (self.player.gold - 75).max(0);
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Continue]".into()];
+                        event.options = vec![EventOption::Continue];
                     }
                 }
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 1 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                     self.open_grid(GridKind::Purge, 1, true);
                 }
@@ -6583,41 +6210,45 @@ impl Game {
             }
             return;
         }
-        if id == "Duplicator" {
+        if id == EventId::Duplicator {
             match screen {
                 0 if *index == 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                     self.open_grid(GridKind::Copy, 1, true);
                 }
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if label.as_deref().is_some_and(|l| l.contains("[Leave]") || l == "Leave")
-            && id != "Woman in Blue"
-            && id != "The Woman in Blue"
+        let selected_is_leave = self
+            .event
+            .as_ref()
+            .and_then(|event| event.options.get(*index))
+            .is_some_and(|option| *option == EventOption::Leave);
+        if selected_is_leave
+            && id != EventId::WomanInBlue
         {
             // Tomb INTRO Leave opens the map; Mausoleum/Scrap Ooze-style Leave goes to RESULT first.
-            if id == "Tomb of Lord Red Mask" || screen > 0 || option_count == 1 {
+            if id == EventId::TombOfLordRedMask || screen > 0 || option_count == 1 {
                 self.open_map();
                 return;
             }
             if let Some(event) = self.event.as_mut() {
                 event.screen = 1;
-                event.options = vec!["[Leave]".into()];
+                event.options = vec![EventOption::Leave];
             }
             return;
         }
-        if id == "Scrap Ooze" {
+        if id == EventId::ScrapOoze {
             // ScrapOoze.buttonEffect: damage then miscRng.random(0,99) >= 99-chance.
             if screen > 0 {
                 self.open_map();
@@ -6635,61 +6266,55 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 } else if let Some(event) = self.event.as_mut() {
                     let dmg = dmg + 1;
                     let chance = chance + 10;
                     event.data = vec![dmg, chance];
-                    event.options = vec![
-                        format!("[Deeper] #rLose #r{dmg} #rHP. #g{chance}%: #gFind #ga #gRelic."),
-                        "[Leave]".into(),
-                    ];
+                    event.options = vec![EventOption::Deeper, EventOption::Leave];
                 }
             } else if let Some(event) = self.event.as_mut() {
                 event.screen = 1;
-                event.options = vec!["[Leave]".into()];
+                event.options = vec![EventOption::Leave];
             }
             return;
         }
-        if id == "Drug Dealer" {
+        if id == EventId::DrugDealer {
             if screen == 0 {
                 let chosen = self
                     .event
                     .as_ref()
                     .and_then(|e| e.options.get(*index))
-                    .cloned()
-                    .unwrap_or_default();
-                if chosen.contains("Ingest") || chosen.contains("J.A.X") {
+                    .copied();
+                if chosen == Some(EventOption::Ingest) {
                     self.obtain_master_deck_card(CardId::J_A_X_);
-                } else if chosen.contains("Study") || chosen.contains("Transform") {
+                } else if chosen == Some(EventOption::Study) {
                     if self.player.deck.iter().filter(|c| purgeable_card(c)).count() >= 2 {
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         self.open_grid(GridKind::Transform, 2, true);
                         return;
                     }
-                } else if chosen.contains("Inject") || chosen.contains("Mutagen") {
+                } else if chosen == Some(EventOption::Inject) {
                     if self.player.has_relic(RelicId::MutagenicStrength) {
-                        if let Some(id) = RelicId::from_sts_id("Circlet") {
-                            self.gain_relic(id);
-                        }
+                        self.gain_relic(RelicId::Circlet);
                     } else {
                         self.gain_relic(RelicId::MutagenicStrength);
                     }
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "Designer" {
+        if id == EventId::Designer {
             match screen {
                 0 => {
                     let opts = self.designer_main_options();
@@ -6703,19 +6328,18 @@ impl Game {
                         .event
                         .as_ref()
                         .and_then(|e| e.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
+                        .copied();
                     let adj = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(40);
                     let clean = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(60);
                     let full = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(90);
                     let hp = self.event.as_ref().and_then(|e| e.data.get(3).copied()).unwrap_or(3);
                     let upg_one = self.event.as_ref().and_then(|e| e.data.get(4).copied()).unwrap_or(0) != 0;
                     let rem_cards = self.event.as_ref().and_then(|e| e.data.get(5).copied()).unwrap_or(0) != 0;
-                    if chosen.contains("Adjust") {
+                    if chosen == Some(EventOption::Adjustments) {
                         self.player.gold = (self.player.gold - adj).max(0);
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 2;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         if upg_one {
                             self.open_grid(GridKind::Upgrade, 1, true);
@@ -6736,11 +6360,11 @@ impl Game {
                                 c.upgrade();
                             }
                         }
-                    } else if chosen.contains("Clean") {
+                    } else if chosen == Some(EventOption::CleanUp) {
                         self.player.gold = (self.player.gold - clean).max(0);
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 2;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         if rem_cards {
                             self.open_grid(GridKind::Purge, 1, true);
@@ -6748,7 +6372,7 @@ impl Game {
                             self.open_grid(GridKind::Transform, 2, true);
                         }
                         return;
-                    } else if chosen.contains("Full") {
+                    } else if chosen == Some(EventOption::FullService) {
                         self.player.gold = (self.player.gold - full).max(0);
                         if let Some(event) = self.event.as_mut() {
                             if event.data.len() < 7 {
@@ -6756,29 +6380,29 @@ impl Game {
                             }
                             event.data[6] = 1;
                             event.screen = 2;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         self.open_grid(GridKind::Purge, 1, true);
                         return;
-                    } else if chosen.contains("Punch") {
+                    } else if chosen == Some(EventOption::Punch) {
                         // DamageInfo(null, hpLoss, HP_LOSS): TungstenRod applies.
                         let dmg = combat::on_lose_hp_last(&self.player, hp);
                         self.player.hp = (self.player.hp - dmg).max(0);
                         combat::red_skull_on_hp_change(&mut self.player);
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 2;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                     } else if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Forgotten Altar" {
+        if id == EventId::ForgottenAltar {
             if screen == 0 {
                 let has_idol = self.player.has_relic(RelicId::Golden_Idol);
                 let sacrifice = if has_idol { 1 } else { 0 };
@@ -6787,9 +6411,7 @@ impl Game {
                     // gainChalice: replace Golden Idol in-slot; Circlet if
                     // Bloody Idol is already owned. instantObtain callOnEquip=false.
                     if self.player.has_relic(RelicId::Bloody_Idol) {
-                        if let Some(id) = RelicId::from_sts_id("Circlet") {
-                            self.gain_relic(id);
-                        }
+                        self.gain_relic(RelicId::Circlet);
                     } else if let Some(i) = self
                         .player
                         .relics
@@ -6821,14 +6443,14 @@ impl Game {
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "Golden Shrine" {
+        if id == EventId::GoldenShrine {
             if screen == 0 {
                 match *index {
                     0 => {
@@ -6847,23 +6469,22 @@ impl Game {
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "Golden Wing" {
+        if id == EventId::GoldenWing {
             match screen {
                 0 => {
                     let chosen = self
                         .event
                         .as_ref()
                         .and_then(|event| event.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
-                    if chosen.contains("Pray") {
+                        .copied();
+                    if chosen == Some(EventOption::Pray) {
                         let damage = self
                             .event
                             .as_ref()
@@ -6873,26 +6494,26 @@ impl Game {
                         self.player.hp = (self.player.hp - damage).max(0);
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Continue]".into()];
+                            event.options = vec![EventOption::Continue];
                         }
-                    } else if chosen.contains("Destroy") {
+                    } else if chosen == Some(EventOption::Destroy) {
                         let gold = self.rng.misc.random_range(50, 80);
                         if !self.player.has_relic(RelicId::Ectoplasm) {
                             self.player.gold += gold;
                         }
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 2;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                     } else if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 1 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                     self.open_grid(GridKind::Purge, 1, true);
                 }
@@ -6900,18 +6521,18 @@ impl Game {
             }
             return;
         }
-        if id == "Liars Game" {
+        if id == EventId::LiarsGame {
             match screen {
                 0 if *index == 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Continue]".into()];
+                        event.options = vec![EventOption::Continue];
                     }
                 }
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 1 => {
@@ -6926,76 +6547,75 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 3;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Accursed Blacksmith" {
+        if id == EventId::AccursedBlacksmith {
             match screen {
                 0 => {
                     let chosen = self
                         .event
                         .as_ref()
                         .and_then(|event| event.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
-                    if chosen.contains("Forge") {
+                        .copied();
+                    if chosen == Some(EventOption::Forge) {
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         self.open_grid(GridKind::Upgrade, 1, true);
                         return;
                     }
-                    if chosen.contains("Rummage") {
+                    if chosen == Some(EventOption::Rummage) {
                         self.obtain_master_deck_card(CardId::Pain);
-                        if let Some(relic) = RelicId::from_sts_id("WarpedTongs") {
-                            self.gain_relic(relic);
-                        }
+                        self.gain_relic(RelicId::WarpedTongs);
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if matches!(id.as_str(), "Purifier" | "Transmorgrifier" | "Upgrade Shrine") {
+        if matches!(
+            id,
+            EventId::Purifier | EventId::Transmorgrifier | EventId::UpgradeShrine
+        ) {
             if screen == 0 {
                 let chosen = self
                     .event
                     .as_ref()
                     .and_then(|event| event.options.get(*index))
-                    .cloned()
-                    .unwrap_or_default();
-                if chosen.contains("Pray") {
-                    let kind = match id.as_str() {
-                        "Purifier" => GridKind::Purge,
-                        "Transmorgrifier" => GridKind::Transform,
+                    .copied();
+                if chosen == Some(EventOption::Pray) {
+                    let kind = match id {
+                        EventId::Purifier => GridKind::Purge,
+                        EventId::Transmorgrifier => GridKind::Transform,
                         _ => GridKind::Upgrade,
                     };
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                     self.open_grid(kind, 1, true);
                     return;
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "World of Goop" {
+        if id == EventId::WorldOfGoop {
             if screen == 0 {
                 match *index {
                     0 => {
@@ -7010,14 +6630,14 @@ impl Game {
                 }
                 if let Some(event) = self.event.as_mut() {
                     event.screen = 1;
-                    event.options = vec!["[Leave]".into()];
+                    event.options = vec![EventOption::Leave];
                 }
             } else {
                 self.open_map();
             }
             return;
         }
-        if id == "Golden Idol" {
+        if id == EventId::GoldenIdol {
             match screen {
                 0 => {
                     if *index == 0 {
@@ -7036,14 +6656,14 @@ impl Game {
                             event.screen = 1;
                             event.data = vec![dmg, max_loss];
                             event.options = vec![
-                                "[Outrun] #rBecome #rCursed #r- #rInjury.".into(),
-                                format!("[Smash] #rTake #r{dmg} #rDamage."),
-                                format!("[Hide] #rLose #r{max_loss} #rMax #rHP."),
+                                EventOption::Outrun,
+                                EventOption::Smash,
+                                EventOption::Hide,
                             ];
                         }
                     } else if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 1 => {
@@ -7069,14 +6689,14 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Big Fish" {
+        if id == EventId::BigFish {
             match screen {
                 0 => {
                     match *index {
@@ -7101,65 +6721,63 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "The Cleric" {
+        if id == EventId::Cleric {
             match screen {
                 0 => {
                     let chosen = self
                         .event
                         .as_ref()
                         .and_then(|e| e.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
-                    if chosen.contains("Heal") {
+                        .copied();
+                    if chosen == Some(EventOption::Heal) {
                         let heal = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
                         self.player.gold -= 35;
                         self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
-                    } else if chosen.contains("Purify") {
+                    } else if chosen == Some(EventOption::Purify) {
                         let cost = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(50);
                         self.player.gold -= cost;
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         self.open_grid(GridKind::Purge, 1, true);
                     } else if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Living Wall" {
+        if id == EventId::LivingWall {
             match screen {
                 0 => {
                     let chosen = self
                         .event
                         .as_ref()
                         .and_then(|e| e.options.get(*index))
-                        .cloned()
-                        .unwrap_or_default();
+                        .copied();
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
-                    if chosen.contains("Forget") {
+                    if chosen == Some(EventOption::Forget) {
                         self.open_grid(GridKind::Purge, 1, true);
-                    } else if chosen.contains("Change") {
+                    } else if chosen == Some(EventOption::Change) {
                         self.open_grid(GridKind::Transform, 1, true);
-                    } else if chosen.contains("Grow") {
+                    } else if chosen == Some(EventOption::Grow) {
                         self.open_grid(GridKind::Upgrade, 1, true);
                     }
                 }
@@ -7167,13 +6785,13 @@ impl Game {
             }
             return;
         }
-        if id == "Back to Basics" {
+        if id == EventId::BackToBasics {
             match screen {
                 0 => {
                     if *index == 0 {
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         if self.player.deck.iter().any(|c| purgeable_card(c) && !c.in_bottle) {
                             self.open_grid(GridKind::Purge, 1, true);
@@ -7190,7 +6808,7 @@ impl Game {
                         }
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                     }
                 }
@@ -7198,14 +6816,14 @@ impl Game {
             }
             return;
         }
-        if id == "Shining Light" {
+        if id == EventId::ShiningLight {
             match screen {
                 0 => {
                     let enter = self
                         .event
                         .as_ref()
                         .and_then(|e| e.options.get(*index))
-                        .is_some_and(|s| s.contains("Enter") || s.contains("Upgrade"));
+                        .is_some_and(|option| *option == EventOption::Enter);
                     if enter {
                         let damage = self
                             .event
@@ -7232,16 +6850,15 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "MindBloom" {
-            let war = *index == 0
-                || label.as_deref().is_some_and(|l| l.contains("War") || l.contains("Fight"));
+        if id == EventId::MindBloom {
+            let war = *index == 0;
             if war {
                 let seed = self.rng.misc.random_long();
                 let mut bosses = [
@@ -7262,15 +6879,15 @@ impl Game {
             }
             return;
         }
-        if id == "SensoryStone" {
+        if id == EventId::SensoryStone {
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            "[Recall] 1".into(),
-                            "[Recall] 2".into(),
-                            "[Recall] 3".into(),
+                            EventOption::Recall(1),
+                            EventOption::Recall(2),
+                            EventOption::Recall(3),
                         ];
                     }
                 }
@@ -7296,7 +6913,7 @@ impl Game {
                     self.rewards.push(Reward::new(RewardKind::Card));
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                     let _ = n;
                     self.screen = Screen::CombatReward;
@@ -7305,15 +6922,15 @@ impl Game {
             }
             return;
         }
-        if id == "Falling" {
+        if id == EventId::Falling {
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
                         event.options = vec![
-                            "[Land]".into(),
-                            "[Channel]".into(),
-                            "[Strike]".into(),
+                            EventOption::Land,
+                            EventOption::Channel,
+                            EventOption::Strike,
                         ];
                     }
                 }
@@ -7331,19 +6948,19 @@ impl Game {
                     }
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 _ => self.open_map(),
             }
             return;
         }
-        if id == "Mushrooms" {
+        if id == EventId::Mushrooms {
             match screen {
                 0 if *index == 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
-                        event.options = vec!["[Fight]".into()];
+                        event.options = vec![EventOption::Fight];
                     }
                 }
                 0 => {
@@ -7352,7 +6969,7 @@ impl Game {
                     self.player.deck.push(Card::new(CardId::Parasite));
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Leave]".into()];
+                        event.options = vec![EventOption::Leave];
                     }
                 }
                 2 => {
@@ -7369,7 +6986,7 @@ impl Game {
             }
             return;
         }
-        if id == "Lab" {
+        if id == EventId::Lab {
             // Lab.buttonEffect INTRO: noCardsInRewards, 2 potions (3 below A15),
             // then CombatRewardScreen.open(). COMPLETE is the reward Proceed.
             match screen {
@@ -7390,7 +7007,7 @@ impl Game {
             }
             return;
         }
-        if id == "Woman in Blue" || id == "The Woman in Blue" {
+        if id == EventId::WomanInBlue {
             // WomanInBlue.buttonEffect INTRO: lose gold, add N potion RewardItems,
             // CombatRewardScreen.open(). RESULT Leave after Proceed.
             match screen {
@@ -7408,7 +7025,7 @@ impl Game {
                         }
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                         self.screen = Screen::CombatReward;
                     } else {
@@ -7419,7 +7036,7 @@ impl Game {
                         }
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
-                            event.options = vec!["[Leave]".into()];
+                            event.options = vec![EventOption::Leave];
                         }
                     }
                 }
@@ -7427,12 +7044,12 @@ impl Game {
             }
             return;
         }
-        if id == "Bonfire Elementals" {
+        if id == EventId::BonfireElementals {
             match screen {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec!["[Offer] Receive a reward based on the offer.".into()];
+                        event.options = vec![EventOption::Offer];
                     }
                 }
                 1 => {
@@ -7458,10 +7075,9 @@ impl Game {
             self.open_map();
             return;
         }
-        match id.as_str() {
-            "The Library" => {
-                if *index == 1 || matches!(action, Action::Choose { label: Some(l), .. } if l.contains("Sleep"))
-                {
+        match id {
+            EventId::Library => {
+                if *index == 1 {
                     let heal = self
                         .event
                         .as_ref()
@@ -7476,8 +7092,15 @@ impl Game {
                     return;
                 }
             }
-            "Ghosts" => {}
-            "WeMeetAgain" => {
+            EventId::Ghosts => {
+                if *index == 0 {
+                    let loss = ((self.player.max_hp as f32) * 0.5).ceil() as i32;
+                    let loss = loss.min(self.player.max_hp - 1).max(0);
+                    self.player.max_hp -= loss;
+                    self.player.hp = self.player.hp.min(self.player.max_hp);
+                }
+            }
+            EventId::WeMeetAgain => {
                 let gold_amt = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
                 let card_idx = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(-1);
                 let potion_slot = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(-1);
@@ -7485,9 +7108,8 @@ impl Game {
                     .event
                     .as_ref()
                     .and_then(|e| e.options.get(*index))
-                    .cloned()
-                    .unwrap_or_default();
-                if chosen.contains("Potion") {
+                    .copied();
+                if chosen == Some(EventOption::GivePotion) {
                     if potion_slot >= 0 {
                         if let Some(p) = self.player.potions.iter_mut().find(|p| p.slot == potion_slot) {
                             p.id = PotionId::Slot;
@@ -7496,12 +7118,12 @@ impl Game {
                     if let Some(id) = self.next_screenless_relic() {
                         self.gain_relic(id);
                     }
-                } else if chosen.contains("Gold") {
+                } else if chosen == Some(EventOption::GiveGold) {
                     self.player.gold -= gold_amt;
                     if let Some(id) = self.next_screenless_relic() {
                         self.gain_relic(id);
                     }
-                } else if chosen.contains("Card") {
+                } else if chosen == Some(EventOption::GiveCard) {
                     if card_idx >= 0 {
                         let idx = card_idx as usize;
                         if idx < self.player.deck.len() {
@@ -7517,7 +7139,7 @@ impl Game {
         }
         if let Some(event) = self.event.as_mut() {
             event.screen = 1;
-            event.options = vec!["[Leave]".into()];
+            event.options = vec![EventOption::Leave];
         }
     }
 
@@ -7744,14 +7366,8 @@ impl Game {
 
     fn step_hand_select(&mut self, action: &Action) {
         match action {
-            Action::Choose { index, label, .. } => {
-                let by_name = label.as_ref().and_then(|name| {
-                    self.player
-                        .hand
-                        .iter()
-                        .position(|c| c.sts_id() == name.as_str() || c.id.sts_id() == name.as_str())
-                });
-                let idx = by_name.unwrap_or(*index);
+            Action::Choose { index, .. } => {
+                let idx = *index;
                 if idx < self.player.hand.len() {
                     let mut card = self.player.hand.remove(idx);
                     if !self.exhaust_select && !self.put_on_deck_select && !self.gambling_select {
@@ -8119,52 +7735,13 @@ fn seek_draw_grid_indices(draw: &[Card]) -> Vec<usize> {
             CardRarity::CURSE => 5,
         }
     }
-    fn grid_name(c: &Card) -> String {
-        // CardNameComparator uses the localized AbstractCard.name, which is
-        // not always derived from the internal card ID. Keep the aliases that
-        // can enter a Defect run (its own pool, colorless/special cards, and
-        // curses) here so Seek publishes Java's exact grid order.
-        let mut name = match c.id {
-            CardId::All_For_One => "All for One".into(),
-            CardId::Auto_Shields => "Auto-Shields".into(),
-            CardId::BootSequence => "Boot Sequence".into(),
-            CardId::Gash => "Claw".into(),
-            CardId::Conserve_Battery => "Charge Battery".into(),
-            CardId::Defend_B | CardId::Defend_R | CardId::Defend_G | CardId::Defend_P => {
-                "Defend".into()
-            }
-            CardId::Lockon => "Bullseye".into(),
-            CardId::Steam_Power => "Overclock".into(),
-            CardId::Redo => "Recursion".into(),
-            CardId::Steam => "Steam Barrier".into(),
-            CardId::Strike_B | CardId::Strike_R | CardId::Strike_G | CardId::Strike_P => {
-                "Strike".into()
-            }
-            CardId::Turbo => "TURBO".into(),
-            CardId::Undo => "Equilibrium".into(),
-            CardId::Ghostly => "Apparition".into(),
-            CardId::HandOfGreed => "Hand of Greed".into(),
-            CardId::Jack_Of_All_Trades => "Jack of All Trades".into(),
-            CardId::PanicButton => "Panic Button".into(),
-            CardId::RitualDagger => "Ritual Dagger".into(),
-            CardId::ThroughViolence => "Through Violence".into(),
-            CardId::BecomeAlmighty => "Become Almighty".into(),
-            CardId::FameAndFortune => "Fame and Fortune".into(),
-            CardId::LiveForever => "Live Forever".into(),
-            CardId::AscendersBane => "Ascender's Bane".into(),
-            CardId::CurseOfTheBell => "Curse of the Bell".into(),
-            _ => c.sts_id().replace('_', " "),
-        };
-        // AbstractCard.upgradeName appends `+`, and CardNameComparator sorts
-        // the displayed name. This orders Defragment before Defragment+ even
-        // when the upgraded physical copy comes first in the shuffled pile.
-        if c.upgraded {
-            name.push('+');
-        }
-        name
-    }
     let mut idxs: Vec<usize> = (0..draw.len()).collect();
-    idxs.sort_by(|&a, &b| grid_name(&draw[a]).cmp(&grid_name(&draw[b])));
+    idxs.sort_by_key(|&index| {
+        crate::generated::card_name_order::card_name_order(
+            draw[index].id,
+            draw[index].upgraded,
+        )
+    });
     idxs.sort_by(|&a, &b| java_rarity_ord(draw[b].rarity()).cmp(&java_rarity_ord(draw[a].rarity())));
     idxs.sort_by(|&a, &b| {
         let sa = draw[a].card_type() == CardType::STATUS;
@@ -8176,24 +7753,24 @@ fn seek_draw_grid_indices(draw: &[Card]) -> Vec<usize> {
 
 /// MindBloom's third option follows `AbstractDungeon.floorNum % 50`, including
 /// the endless-mode cycle behavior retained by the base game.
-fn mind_bloom_options(floor: i32) -> Vec<String> {
+fn mind_bloom_options(floor: i32) -> Vec<EventOption> {
     let third = if floor % 50 <= 40 {
-        "[I am Rich]"
+        EventOption::Rich
     } else {
-        "[I am Healthy]"
+        EventOption::Healthy
     };
-    vec!["[I am War]".into(), "[I am Awake]".into(), third.into()]
+    vec![EventOption::War, EventOption::Awake, third]
 }
 
 #[cfg(test)]
 mod mind_bloom_tests {
-    use super::mind_bloom_options;
+    use super::{EventOption, mind_bloom_options};
 
     #[test]
     fn third_option_switches_from_rich_to_healthy_after_floor_forty() {
-        assert_eq!(mind_bloom_options(40)[2], "[I am Rich]");
-        assert_eq!(mind_bloom_options(41)[2], "[I am Healthy]");
-        assert_eq!(mind_bloom_options(91)[2], "[I am Healthy]");
-        assert_eq!(mind_bloom_options(100)[2], "[I am Rich]");
+        assert_eq!(mind_bloom_options(40)[2], EventOption::Rich);
+        assert_eq!(mind_bloom_options(41)[2], EventOption::Healthy);
+        assert_eq!(mind_bloom_options(91)[2], EventOption::Healthy);
+        assert_eq!(mind_bloom_options(100)[2], EventOption::Rich);
     }
 }

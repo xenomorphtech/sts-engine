@@ -479,10 +479,22 @@ pub fn game_side(game: &Game) -> Side {
             .iter()
             .map(|r| (r.id.sts_id().to_string(), r.counter))
             .collect(),
-        event: game.event.as_ref().map(|e| e.id.clone()).unwrap_or_default(),
+        event: game
+            .event
+            .as_ref()
+            .map(|event| event.id.sts_id().to_string())
+            .unwrap_or_default(),
         options: match game.screen {
-            Screen::Event => game.event.as_ref().map(|e| e.options.clone()).unwrap_or_default(),
-            Screen::Neow => game.neow_options.iter().map(|o| o.label.clone()).collect(),
+            Screen::Event => game
+                .event
+                .as_ref()
+                .map(|event| event.options.iter().map(|option| format!("{option:?}")).collect())
+                .unwrap_or_default(),
+            Screen::Neow => game
+                .neow_options
+                .iter()
+                .map(|option| format!("{:?}", option.kind))
+                .collect(),
             _ => Vec::new(),
         },
         rewards: game

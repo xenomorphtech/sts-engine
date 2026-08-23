@@ -1,4 +1,5 @@
 use crate::game::Game;
+use crate::ids::{CardId, EncounterId, RelicId};
 use crate::rng::RngSnapshot;
 use serde::Deserialize;
 use std::fs::File;
@@ -24,14 +25,14 @@ pub struct JavaState {
 pub struct JavaDungeon {
     pub act: i32,
     pub floor: i32,
-    pub boss: String,
-    pub monster_list: Vec<String>,
-    pub elite_monster_list: Vec<String>,
-    pub common_relic_pool: Vec<String>,
-    pub uncommon_relic_pool: Vec<String>,
-    pub rare_relic_pool: Vec<String>,
-    pub shop_relic_pool: Vec<String>,
-    pub boss_relic_pool: Vec<String>,
+    pub boss: EncounterId,
+    pub monster_list: Vec<EncounterId>,
+    pub elite_monster_list: Vec<EncounterId>,
+    pub common_relic_pool: Vec<RelicId>,
+    pub uncommon_relic_pool: Vec<RelicId>,
+    pub rare_relic_pool: Vec<RelicId>,
+    pub shop_relic_pool: Vec<RelicId>,
+    pub boss_relic_pool: Vec<RelicId>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,13 +40,13 @@ pub struct JavaPlayer {
     pub current_hp: i32,
     pub max_hp: i32,
     pub gold: i32,
-    pub relics: Vec<JavaNamed>,
-    pub master_deck: Vec<JavaNamed>,
+    pub relics: Vec<JavaNamed<RelicId>>,
+    pub master_deck: Vec<JavaNamed<CardId>>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavaNamed {
-    pub id: String,
+pub struct JavaNamed<T> {
+    pub id: T,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,8 +91,8 @@ pub fn compare_generation(game: &Game, java: &JavaEnvelope) -> ParityReport {
     check(
         &mut report,
         "boss",
-        game.dungeon.boss.as_str(),
-        java.state.dungeon.boss.as_str(),
+        game.dungeon.boss,
+        java.state.dungeon.boss,
     );
     check(
         &mut report,
@@ -108,32 +109,14 @@ pub fn compare_generation(game: &Game, java: &JavaEnvelope) -> ParityReport {
     check(
         &mut report,
         "common_relics",
-        game.dungeon
-            .common_relics
-            .iter()
-            .map(|id| id.sts_id())
-            .collect::<Vec<_>>(),
-        java.state
-            .dungeon
-            .common_relic_pool
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
+        game.dungeon.common_relics.as_ref(),
+        &java.state.dungeon.common_relic_pool,
     );
     check(
         &mut report,
         "uncommon_relics",
-        game.dungeon
-            .uncommon_relics
-            .iter()
-            .map(|id| id.sts_id())
-            .collect::<Vec<_>>(),
-        java.state
-            .dungeon
-            .uncommon_relic_pool
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
+        game.dungeon.uncommon_relics.as_ref(),
+        &java.state.dungeon.uncommon_relic_pool,
     );
     check_rng(&mut report, "monster", game.rng.monster.snapshot(), &java.state.rng.monster);
     check_rng(&mut report, "map", game.rng.map.snapshot(), &java.state.rng.map);

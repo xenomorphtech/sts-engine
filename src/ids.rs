@@ -1,6 +1,9 @@
 pub use crate::generated::card_ids::CardId;
 pub use crate::generated::relic_ids::RelicId;
 
+crate::string_id_serde!(CardId, sts_id, from_sts_id);
+crate::string_id_serde!(RelicId, sts_id, from_sts_id);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Character {
     Ironclad,
@@ -9,16 +12,19 @@ pub enum Character {
     Watcher,
 }
 
-impl Character {
-    pub fn sts_name(self) -> &'static str {
-        match self {
-            Character::Ironclad => "IRONCLAD",
-            Character::Silent => "THE_SILENT",
-            Character::Defect => "DEFECT",
-            Character::Watcher => "WATCHER",
-        }
+crate::string_id_map! {
+    Character,
+    STS_NAMES,
+    sts_name,
+    from_sts_name {
+        Character::Ironclad => "IRONCLAD" | "IC" | "IRON_CLAD",
+        Character::Silent => "THE_SILENT" | "SILENT" | "THE-SILENT",
+        Character::Defect => "DEFECT",
+        Character::Watcher => "WATCHER",
     }
+}
 
+impl Character {
     pub fn oracle_dir(self) -> &'static str {
         match self {
             Character::Ironclad => "ironclad",
@@ -29,13 +35,7 @@ impl Character {
     }
 
     pub fn from_cli(s: &str) -> Option<Self> {
-        match s.to_ascii_uppercase().as_str() {
-            "IRONCLAD" | "IC" => Some(Character::Ironclad),
-            "SILENT" | "THE_SILENT" | "THE-SILENT" => Some(Character::Silent),
-            "DEFECT" => Some(Character::Defect),
-            "WATCHER" => Some(Character::Watcher),
-            _ => None,
-        }
+        Self::from_sts_name(&s.to_ascii_uppercase())
     }
 }
 
@@ -117,39 +117,26 @@ pub enum RoomType {
     Empty,
 }
 
-impl RoomType {
-    pub fn java_class(self) -> &'static str {
-        match self {
-            RoomType::Monster => "com.megacrit.cardcrawl.rooms.MonsterRoom",
-            RoomType::Elite => "com.megacrit.cardcrawl.rooms.MonsterRoomElite",
-            RoomType::Event => "com.megacrit.cardcrawl.rooms.EventRoom",
-            RoomType::Rest => "com.megacrit.cardcrawl.rooms.RestRoom",
-            RoomType::Shop => "com.megacrit.cardcrawl.rooms.ShopRoom",
-            RoomType::Treasure => "com.megacrit.cardcrawl.rooms.TreasureRoom",
-            RoomType::Boss => "com.megacrit.cardcrawl.rooms.MonsterRoomBoss",
-            RoomType::BossTreasure => "com.megacrit.cardcrawl.rooms.TreasureRoomBoss",
-            RoomType::Victory => "com.megacrit.cardcrawl.rooms.VictoryRoom",
-            RoomType::Neow => "com.megacrit.cardcrawl.neow.NeowRoom",
-            RoomType::Empty => "com.megacrit.cardcrawl.rooms.EmptyRoom",
-        }
-    }
-
-    pub fn simple_name(self) -> &'static str {
-        match self {
-            RoomType::Monster => "MonsterRoom",
-            RoomType::Elite => "MonsterRoomElite",
-            RoomType::Event => "EventRoom",
-            RoomType::Rest => "RestRoom",
-            RoomType::Shop => "ShopRoom",
-            RoomType::Treasure => "TreasureRoom",
-            RoomType::Boss => "MonsterRoomBoss",
-            RoomType::BossTreasure => "TreasureRoomBoss",
-            RoomType::Victory => "VictoryRoom",
-            RoomType::Neow => "NeowRoom",
-            RoomType::Empty => "EmptyRoom",
-        }
+crate::string_id_map! {
+    RoomType,
+    JAVA_CLASSES,
+    java_class,
+    from_java_class {
+        RoomType::Monster => "com.megacrit.cardcrawl.rooms.MonsterRoom",
+        RoomType::Elite => "com.megacrit.cardcrawl.rooms.MonsterRoomElite",
+        RoomType::Event => "com.megacrit.cardcrawl.rooms.EventRoom",
+        RoomType::Rest => "com.megacrit.cardcrawl.rooms.RestRoom",
+        RoomType::Shop => "com.megacrit.cardcrawl.rooms.ShopRoom",
+        RoomType::Treasure => "com.megacrit.cardcrawl.rooms.TreasureRoom",
+        RoomType::Boss => "com.megacrit.cardcrawl.rooms.MonsterRoomBoss",
+        RoomType::BossTreasure => "com.megacrit.cardcrawl.rooms.TreasureRoomBoss",
+        RoomType::Victory => "com.megacrit.cardcrawl.rooms.VictoryRoom",
+        RoomType::Neow => "com.megacrit.cardcrawl.neow.NeowRoom",
+        RoomType::Empty => "com.megacrit.cardcrawl.rooms.EmptyRoom",
     }
 }
+
+crate::string_id_serde!(RoomType, java_class, from_java_class);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Act {
@@ -158,6 +145,124 @@ pub enum Act {
     Beyond = 3,
     Ending = 4,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum EventId {
+    AccursedBlacksmith,
+    Addict,
+    BackToBasics,
+    Beggar,
+    BigFish,
+    BonfireElementals,
+    Cleric,
+    Colosseum,
+    CursedTome,
+    DeadAdventurer,
+    Designer,
+    DrugDealer,
+    Duplicator,
+    FaceTrader,
+    Falling,
+    ForgottenAltar,
+    FountainOfCleansing,
+    Ghosts,
+    GoldenIdol,
+    GoldenShrine,
+    GoldenWing,
+    Joust,
+    KnowingSkull,
+    Lab,
+    LiarsGame,
+    Library,
+    LivingWall,
+    MaskedBandits,
+    MatchAndKeep,
+    Mausoleum,
+    MindBloom,
+    MoaiHead,
+    Mushrooms,
+    MysteriousSphere,
+    Nest,
+    Nloth,
+    NoteForYourself,
+    Purifier,
+    ScrapOoze,
+    SecretPortal,
+    SensoryStone,
+    ShiningLight,
+    SpireHeart,
+    TombOfLordRedMask,
+    Transmorgrifier,
+    UpgradeShrine,
+    Vampires,
+    WeMeetAgain,
+    WheelOfChange,
+    WindingHalls,
+    WomanInBlue,
+    WorldOfGoop,
+}
+
+crate::string_id_map! {
+    EventId,
+    STS_IDS,
+    sts_id,
+    from_sts_id {
+        EventId::AccursedBlacksmith => "Accursed Blacksmith",
+        EventId::Addict => "Addict",
+        EventId::BackToBasics => "Back to Basics",
+        EventId::Beggar => "Beggar",
+        EventId::BigFish => "Big Fish",
+        EventId::BonfireElementals => "Bonfire Elementals",
+        EventId::Cleric => "The Cleric",
+        EventId::Colosseum => "Colosseum",
+        EventId::CursedTome => "Cursed Tome",
+        EventId::DeadAdventurer => "Dead Adventurer",
+        EventId::Designer => "Designer",
+        EventId::DrugDealer => "Drug Dealer",
+        EventId::Duplicator => "Duplicator",
+        EventId::FaceTrader => "FaceTrader",
+        EventId::Falling => "Falling",
+        EventId::ForgottenAltar => "Forgotten Altar",
+        EventId::FountainOfCleansing => "Fountain of Cleansing",
+        EventId::Ghosts => "Ghosts",
+        EventId::GoldenIdol => "Golden Idol",
+        EventId::GoldenShrine => "Golden Shrine",
+        EventId::GoldenWing => "Golden Wing",
+        EventId::Joust => "The Joust",
+        EventId::KnowingSkull => "Knowing Skull",
+        EventId::Lab => "Lab",
+        EventId::LiarsGame => "Liars Game",
+        EventId::Library => "The Library",
+        EventId::LivingWall => "Living Wall",
+        EventId::MaskedBandits => "Masked Bandits",
+        EventId::MatchAndKeep => "Match and Keep!",
+        EventId::Mausoleum => "The Mausoleum",
+        EventId::MindBloom => "MindBloom",
+        EventId::MoaiHead => "The Moai Head",
+        EventId::Mushrooms => "Mushrooms",
+        EventId::MysteriousSphere => "Mysterious Sphere",
+        EventId::Nest => "Nest",
+        EventId::Nloth => "N'loth",
+        EventId::NoteForYourself => "NoteForYourself",
+        EventId::Purifier => "Purifier",
+        EventId::ScrapOoze => "Scrap Ooze",
+        EventId::SecretPortal => "SecretPortal",
+        EventId::SensoryStone => "SensoryStone",
+        EventId::ShiningLight => "Shining Light",
+        EventId::SpireHeart => "SpireHeart",
+        EventId::TombOfLordRedMask => "Tomb of Lord Red Mask",
+        EventId::Transmorgrifier => "Transmorgrifier",
+        EventId::UpgradeShrine => "Upgrade Shrine",
+        EventId::Vampires => "Vampires",
+        EventId::WeMeetAgain => "WeMeetAgain",
+        EventId::WheelOfChange => "Wheel of Change",
+        EventId::WindingHalls => "Winding Halls",
+        EventId::WomanInBlue => "The Woman in Blue" | "Woman in Blue",
+        EventId::WorldOfGoop => "World of Goop",
+    }
+}
+
+crate::string_id_serde!(EventId, sts_id, from_sts_id);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PowerId {
@@ -277,92 +382,52 @@ pub enum PotionId {
     EssenceOfDarkness,
 }
 
-impl PotionId {
-    pub fn sts_id(self) -> &'static str {
-        match self {
-            PotionId::Slot => "Potion Slot",
-            PotionId::Block => "Block Potion",
-            PotionId::Strength => "Strength Potion",
-            PotionId::Dexterity => "Dexterity Potion",
-            PotionId::Fire => "Fire Potion",
-            PotionId::Explosive => "Explosive Potion",
-            PotionId::Fear => "FearPotion",
-            PotionId::Weak => "Weak Potion",
-            PotionId::Attack => "AttackPotion",
-            PotionId::Skill => "SkillPotion",
-            PotionId::Power => "PowerPotion",
-            PotionId::Blood => "BloodPotion",
-            PotionId::Elixir => "ElixirPotion",
-            PotionId::HeartOfIron => "HeartOfIron",
-            PotionId::LiquidBronze => "LiquidBronze",
-            PotionId::Duplication => "DuplicationPotion",
-            PotionId::Energy => "Energy Potion",
-            PotionId::Swift => "Swift Potion",
-            PotionId::Colorless => "ColorlessPotion",
-            PotionId::BlessingOfTheForge => "BlessingOfTheForge",
-            PotionId::FruitJuice => "Fruit Juice",
-            PotionId::Regen => "Regen Potion",
-            PotionId::Speed => "SpeedPotion",
-            PotionId::Steroid => "SteroidPotion",
-            PotionId::Ancient => "Ancient Potion",
-            PotionId::GamblersBrew => "GamblersBrew",
-            PotionId::EssenceOfSteel => "EssenceOfSteel",
-            PotionId::DistilledChaos => "DistilledChaos",
-            PotionId::LiquidMemories => "LiquidMemories",
-            PotionId::Cultist => "CultistPotion",
-            PotionId::SneckoOil => "SneckoOil",
-            PotionId::Fairy => "FairyPotion",
-            PotionId::SmokeBomb => "SmokeBomb",
-            PotionId::EntropicBrew => "EntropicBrew",
-            PotionId::Focus => "FocusPotion",
-            PotionId::PotionOfCapacity => "PotionOfCapacity",
-            PotionId::EssenceOfDarkness => "EssenceOfDarkness",
-        }
-    }
-
-    pub fn from_sts_id(id: &str) -> Option<Self> {
-        Some(match id {
-            "Potion Slot" => PotionId::Slot,
-            "Block Potion" => PotionId::Block,
-            "Strength Potion" => PotionId::Strength,
-            "Dexterity Potion" => PotionId::Dexterity,
-            "Fire Potion" => PotionId::Fire,
-            "Explosive Potion" => PotionId::Explosive,
-            "FearPotion" => PotionId::Fear,
-            "Weak Potion" => PotionId::Weak,
-            "AttackPotion" => PotionId::Attack,
-            "SkillPotion" => PotionId::Skill,
-            "PowerPotion" => PotionId::Power,
-            "BloodPotion" => PotionId::Blood,
-            "ElixirPotion" => PotionId::Elixir,
-            "HeartOfIron" => PotionId::HeartOfIron,
-            "LiquidBronze" => PotionId::LiquidBronze,
-            "DuplicationPotion" => PotionId::Duplication,
-            "Energy Potion" => PotionId::Energy,
-            "Swift Potion" => PotionId::Swift,
-            "ColorlessPotion" => PotionId::Colorless,
-            "BlessingOfTheForge" => PotionId::BlessingOfTheForge,
-            "Fruit Juice" => PotionId::FruitJuice,
-            "Regen Potion" => PotionId::Regen,
-            "SpeedPotion" => PotionId::Speed,
-            "SteroidPotion" => PotionId::Steroid,
-            "Ancient Potion" => PotionId::Ancient,
-            "GamblersBrew" => PotionId::GamblersBrew,
-            "EssenceOfSteel" => PotionId::EssenceOfSteel,
-            "DistilledChaos" => PotionId::DistilledChaos,
-            "LiquidMemories" => PotionId::LiquidMemories,
-            "CultistPotion" => PotionId::Cultist,
-            "SneckoOil" => PotionId::SneckoOil,
-            "FairyPotion" => PotionId::Fairy,
-            "SmokeBomb" => PotionId::SmokeBomb,
-            "EntropicBrew" => PotionId::EntropicBrew,
-            "FocusPotion" => PotionId::Focus,
-            "PotionOfCapacity" => PotionId::PotionOfCapacity,
-            "EssenceOfDarkness" => PotionId::EssenceOfDarkness,
-            _ => return None,
-        })
+crate::string_id_map! {
+    PotionId,
+    STS_IDS,
+    sts_id,
+    from_sts_id {
+        PotionId::Slot => "Potion Slot",
+        PotionId::Block => "Block Potion",
+        PotionId::Strength => "Strength Potion",
+        PotionId::Dexterity => "Dexterity Potion",
+        PotionId::Fire => "Fire Potion",
+        PotionId::Explosive => "Explosive Potion",
+        PotionId::Fear => "FearPotion",
+        PotionId::Weak => "Weak Potion",
+        PotionId::Attack => "AttackPotion",
+        PotionId::Skill => "SkillPotion",
+        PotionId::Power => "PowerPotion",
+        PotionId::Blood => "BloodPotion",
+        PotionId::Elixir => "ElixirPotion",
+        PotionId::HeartOfIron => "HeartOfIron",
+        PotionId::LiquidBronze => "LiquidBronze",
+        PotionId::Duplication => "DuplicationPotion",
+        PotionId::Energy => "Energy Potion",
+        PotionId::Swift => "Swift Potion",
+        PotionId::Colorless => "ColorlessPotion",
+        PotionId::BlessingOfTheForge => "BlessingOfTheForge",
+        PotionId::FruitJuice => "Fruit Juice",
+        PotionId::Regen => "Regen Potion",
+        PotionId::Speed => "SpeedPotion",
+        PotionId::Steroid => "SteroidPotion",
+        PotionId::Ancient => "Ancient Potion",
+        PotionId::GamblersBrew => "GamblersBrew",
+        PotionId::EssenceOfSteel => "EssenceOfSteel",
+        PotionId::DistilledChaos => "DistilledChaos",
+        PotionId::LiquidMemories => "LiquidMemories",
+        PotionId::Cultist => "CultistPotion",
+        PotionId::SneckoOil => "SneckoOil",
+        PotionId::Fairy => "FairyPotion",
+        PotionId::SmokeBomb => "SmokeBomb",
+        PotionId::EntropicBrew => "EntropicBrew",
+        PotionId::Focus => "FocusPotion",
+        PotionId::PotionOfCapacity => "PotionOfCapacity",
+        PotionId::EssenceOfDarkness => "EssenceOfDarkness",
     }
 }
+
+crate::string_id_serde!(EncounterId, sts_key, from_sts_key);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MonsterId {
@@ -434,9 +499,11 @@ pub enum MonsterId {
     Unknown,
 }
 
-impl MonsterId {
-    pub fn sts_id(self) -> &'static str {
-        match self {
+crate::string_id_map! {
+    MonsterId,
+    STS_IDS,
+    sts_id,
+    from_sts_id {
             MonsterId::Cultist => "Cultist",
             MonsterId::JawWorm => "JawWorm",
             MonsterId::AcidSlimeS => "AcidSlime_S",
@@ -503,7 +570,6 @@ impl MonsterId {
             MonsterId::TheCollector => "TheCollector",
             MonsterId::TorchHead => "TorchHead",
             MonsterId::Unknown => "Unknown",
-        }
     }
 }
 
@@ -572,137 +638,101 @@ pub enum EncounterId {
     Collector,
 }
 
-impl EncounterId {
-    pub fn sts_key(self) -> &'static str {
-        match self {
-            EncounterId::Cultist => "Cultist",
-            EncounterId::JawWorm => "Jaw Worm",
-            EncounterId::TwoLouse => "2 Louse",
-            EncounterId::SmallSlimes => "Small Slimes",
-            EncounterId::BlueSlaver => "Blue Slaver",
-            EncounterId::GremlinGang => "Gremlin Gang",
-            EncounterId::Looter => "Looter",
-            EncounterId::LargeSlime => "Large Slime",
-            EncounterId::LotsOfSlimes => "Lots of Slimes",
-            EncounterId::ExordiumThugs => "Exordium Thugs",
-            EncounterId::ExordiumWildlife => "Exordium Wildlife",
-            EncounterId::RedSlaver => "Red Slaver",
-            EncounterId::ThreeLouse => "3 Louse",
-            EncounterId::TwoFungiBeasts => "2 Fungi Beasts",
-            EncounterId::MushroomLair => "The Mushroom Lair",
-            EncounterId::GremlinNob => "Gremlin Nob",
-            EncounterId::Lagavulin => "Lagavulin",
-            EncounterId::ThreeSentries => "3 Sentries",
-            EncounterId::Hexaghost => "Hexaghost",
-            EncounterId::TheGuardian => "The Guardian",
-            EncounterId::SlimeBoss => "Slime Boss",
-            EncounterId::ShieldAndSpear => "Shield and Spear",
-            EncounterId::CorruptHeart => "The Heart",
-            EncounterId::DonuAndDeca => "Donu and Deca",
-            EncounterId::SphericGuardian => "Spheric Guardian",
-            EncounterId::SphereAndTwoShapes => "Sphere and 2 Shapes",
-            EncounterId::Chosen => "Chosen",
-            EncounterId::CenturionAndHealer => "Centurion and Healer",
-            EncounterId::SnakePlant => "Snake Plant",
-            EncounterId::ShelledParasiteAndFungi => "Shelled Parasite and Fungi",
-            EncounterId::Automaton => "Automaton",
-            EncounterId::BookOfStabbing => "Book of Stabbing",
-            EncounterId::Slavers => "Slavers",
-            EncounterId::ColosseumSlavers => "Colosseum Slavers",
-            EncounterId::ColosseumNobs => "Colosseum Nobs",
-            EncounterId::GremlinLeader => "Gremlin Leader",
-            EncounterId::MaskedBandits => "Masked Bandits",
-            EncounterId::ThreeShapes => "3 Shapes",
-            EncounterId::FourShapes => "4 Shapes",
-            EncounterId::ThreeDarklings => "3 Darklings",
-            EncounterId::Transient => "Transient",
-            EncounterId::GiantHead => "Giant Head",
-            EncounterId::Nemesis => "Nemesis",
-            EncounterId::Reptomancer => "Reptomancer",
-            EncounterId::WrithingMass => "Writhing Mass",
-            EncounterId::SpireGrowth => "Spire Growth",
-            EncounterId::JawWormHorde => "Jaw Worm Horde",
-            EncounterId::AwakenedOne => "Awakened One",
-            EncounterId::TimeEater => "Time Eater",
-            EncounterId::TwoThieves => "2 Thieves",
-            EncounterId::ShellParasite => "Shell Parasite",
-            EncounterId::SentryAndSphere => "Sentry and Sphere",
-            EncounterId::CultistAndChosen => "Cultist and Chosen",
-            EncounterId::ThreeCultists => "3 Cultists",
-            EncounterId::Snecko => "Snecko",
-            EncounterId::ThreeByrds => "3 Byrds",
-            EncounterId::ChosenAndByrds => "Chosen and Byrds",
-            EncounterId::Champ => "Champ",
-            EncounterId::OrbWalker => "Orb Walker",
-            EncounterId::Maw => "Maw",
-            EncounterId::Collector => "Collector",
-        }
+crate::string_id_map! {
+    EncounterId,
+    STS_KEYS,
+    sts_key,
+    from_sts_key {
+EncounterId::Cultist => "Cultist",
+EncounterId::JawWorm => "Jaw Worm",
+EncounterId::TwoLouse => "2 Louse",
+EncounterId::SmallSlimes => "Small Slimes",
+EncounterId::BlueSlaver => "Blue Slaver",
+EncounterId::GremlinGang => "Gremlin Gang",
+EncounterId::Looter => "Looter",
+EncounterId::LargeSlime => "Large Slime",
+EncounterId::LotsOfSlimes => "Lots of Slimes",
+EncounterId::ExordiumThugs => "Exordium Thugs",
+EncounterId::ExordiumWildlife => "Exordium Wildlife",
+EncounterId::RedSlaver => "Red Slaver",
+EncounterId::ThreeLouse => "3 Louse",
+EncounterId::TwoFungiBeasts => "2 Fungi Beasts",
+EncounterId::MushroomLair => "The Mushroom Lair",
+EncounterId::GremlinNob => "Gremlin Nob",
+EncounterId::Lagavulin => "Lagavulin",
+EncounterId::ThreeSentries => "3 Sentries",
+EncounterId::Hexaghost => "Hexaghost" | "GHOST",
+EncounterId::TheGuardian => "The Guardian" | "GUARDIAN",
+EncounterId::SlimeBoss => "Slime Boss" | "SLIME",
+EncounterId::ShieldAndSpear => "Shield and Spear",
+EncounterId::CorruptHeart => "The Heart",
+EncounterId::DonuAndDeca => "Donu and Deca" | "DONUT",
+EncounterId::SphericGuardian => "Spheric Guardian",
+EncounterId::SphereAndTwoShapes => "Sphere and 2 Shapes",
+EncounterId::Chosen => "Chosen",
+EncounterId::CenturionAndHealer => "Centurion and Healer",
+EncounterId::SnakePlant => "Snake Plant",
+EncounterId::ShelledParasiteAndFungi => "Shelled Parasite and Fungi",
+EncounterId::Automaton => "Automaton" | "AUTOMATON",
+EncounterId::BookOfStabbing => "Book of Stabbing",
+EncounterId::Slavers => "Slavers",
+EncounterId::ColosseumSlavers => "Colosseum Slavers",
+EncounterId::ColosseumNobs => "Colosseum Nobs",
+EncounterId::GremlinLeader => "Gremlin Leader",
+EncounterId::MaskedBandits => "Masked Bandits",
+EncounterId::ThreeShapes => "3 Shapes",
+EncounterId::FourShapes => "4 Shapes",
+EncounterId::ThreeDarklings => "3 Darklings",
+EncounterId::Transient => "Transient",
+EncounterId::GiantHead => "Giant Head",
+EncounterId::Nemesis => "Nemesis",
+EncounterId::Reptomancer => "Reptomancer",
+EncounterId::WrithingMass => "Writhing Mass",
+EncounterId::SpireGrowth => "Spire Growth",
+EncounterId::JawWormHorde => "Jaw Worm Horde",
+EncounterId::AwakenedOne => "Awakened One" | "CROW",
+EncounterId::TimeEater => "Time Eater" | "WIZARD",
+EncounterId::TwoThieves => "2 Thieves",
+EncounterId::ShellParasite => "Shell Parasite",
+EncounterId::SentryAndSphere => "Sentry and Sphere",
+EncounterId::CultistAndChosen => "Cultist and Chosen",
+EncounterId::ThreeCultists => "3 Cultists",
+EncounterId::Snecko => "Snecko",
+EncounterId::ThreeByrds => "3 Byrds",
+EncounterId::ChosenAndByrds => "Chosen and Byrds",
+EncounterId::Champ => "Champ" | "CHAMP",
+EncounterId::OrbWalker => "Orb Walker",
+EncounterId::Maw => "Maw",
+EncounterId::Collector => "Collector" | "COLLECTOR",
+    }
+}
+
+#[cfg(test)]
+mod string_mapping_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    macro_rules! assert_round_trip {
+        ($type:ty, $table:ident, $to:ident, $from:ident) => {{
+            let mut canonical = HashSet::new();
+            for &(id, wire) in <$type>::$table {
+                assert!(canonical.insert(wire), "duplicate canonical value {wire:?}");
+                assert_eq!(id.$to(), wire);
+                assert_eq!(<$type>::$from(wire), Some(id));
+            }
+        }};
     }
 
-    pub fn from_sts_key(key: &str) -> Option<Self> {
-        Some(match key {
-            "Cultist" => EncounterId::Cultist,
-            "Jaw Worm" => EncounterId::JawWorm,
-            "2 Louse" => EncounterId::TwoLouse,
-            "Small Slimes" => EncounterId::SmallSlimes,
-            "Blue Slaver" => EncounterId::BlueSlaver,
-            "Gremlin Gang" => EncounterId::GremlinGang,
-            "Looter" => EncounterId::Looter,
-            "Large Slime" => EncounterId::LargeSlime,
-            "Lots of Slimes" => EncounterId::LotsOfSlimes,
-            "Exordium Thugs" => EncounterId::ExordiumThugs,
-            "Exordium Wildlife" => EncounterId::ExordiumWildlife,
-            "Red Slaver" => EncounterId::RedSlaver,
-            "3 Louse" => EncounterId::ThreeLouse,
-            "2 Fungi Beasts" => EncounterId::TwoFungiBeasts,
-            "The Mushroom Lair" => EncounterId::MushroomLair,
-            "Gremlin Nob" => EncounterId::GremlinNob,
-            "Lagavulin" => EncounterId::Lagavulin,
-            "3 Sentries" => EncounterId::ThreeSentries,
-            "Hexaghost" => EncounterId::Hexaghost,
-            "The Guardian" => EncounterId::TheGuardian,
-            "Slime Boss" => EncounterId::SlimeBoss,
-            "Shield and Spear" => EncounterId::ShieldAndSpear,
-            "The Heart" => EncounterId::CorruptHeart,
-            "Donu and Deca" => EncounterId::DonuAndDeca,
-            "Spheric Guardian" => EncounterId::SphericGuardian,
-            "Sphere and 2 Shapes" => EncounterId::SphereAndTwoShapes,
-            "Chosen" => EncounterId::Chosen,
-            "Centurion and Healer" => EncounterId::CenturionAndHealer,
-            "Snake Plant" => EncounterId::SnakePlant,
-            "Shelled Parasite and Fungi" => EncounterId::ShelledParasiteAndFungi,
-            "Automaton" => EncounterId::Automaton,
-            "Book of Stabbing" => EncounterId::BookOfStabbing,
-            "Slavers" => EncounterId::Slavers,
-            "Colosseum Slavers" => EncounterId::ColosseumSlavers,
-            "Colosseum Nobs" => EncounterId::ColosseumNobs,
-            "Gremlin Leader" => EncounterId::GremlinLeader,
-            "Masked Bandits" => EncounterId::MaskedBandits,
-            "3 Shapes" => EncounterId::ThreeShapes,
-            "4 Shapes" => EncounterId::FourShapes,
-            "3 Darklings" => EncounterId::ThreeDarklings,
-            "Transient" => EncounterId::Transient,
-            "Giant Head" => EncounterId::GiantHead,
-            "Nemesis" => EncounterId::Nemesis,
-            "Reptomancer" => EncounterId::Reptomancer,
-            "Writhing Mass" => EncounterId::WrithingMass,
-            "Spire Growth" => EncounterId::SpireGrowth,
-            "Jaw Worm Horde" => EncounterId::JawWormHorde,
-            "Awakened One" => EncounterId::AwakenedOne,
-            "Time Eater" => EncounterId::TimeEater,
-            "2 Thieves" => EncounterId::TwoThieves,
-            "Shell Parasite" => EncounterId::ShellParasite,
-            "Sentry and Sphere" => EncounterId::SentryAndSphere,
-            "Cultist and Chosen" => EncounterId::CultistAndChosen,
-            "3 Cultists" => EncounterId::ThreeCultists,
-            "Snecko" => EncounterId::Snecko,
-            "3 Byrds" => EncounterId::ThreeByrds,
-            "Chosen and Byrds" => EncounterId::ChosenAndByrds,
-            "Champ" => EncounterId::Champ,
-            "Orb Walker" => EncounterId::OrbWalker,
-            "Maw" => EncounterId::Maw,
-            "Collector" => EncounterId::Collector,
-            _ => return None,
-        })
+    #[test]
+    fn generated_string_boundaries_round_trip_their_canonical_tables() {
+        assert_round_trip!(Character, STS_NAMES, sts_name, from_sts_name);
+        assert_round_trip!(RoomType, JAVA_CLASSES, java_class, from_java_class);
+        assert_round_trip!(EventId, STS_IDS, sts_id, from_sts_id);
+        assert_round_trip!(PotionId, STS_IDS, sts_id, from_sts_id);
+        assert_round_trip!(MonsterId, STS_IDS, sts_id, from_sts_id);
+        assert_round_trip!(EncounterId, STS_KEYS, sts_key, from_sts_key);
+        assert_round_trip!(CardId, STS_IDS, sts_id, from_sts_id);
+        assert_round_trip!(RelicId, STS_IDS, sts_id, from_sts_id);
+        assert_eq!(RelicId::from_sts_id("Sacred Bark"), Some(RelicId::SacredBark));
     }
 }

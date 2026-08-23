@@ -2,7 +2,7 @@ use crate::generated::orders::{
     BLUE_RELIC_HASHMAP_ORDER, CARD_LIBRARY_HASHMAP_ORDER, RED_RELIC_HASHMAP_ORDER, SHARED_RELIC_HASHMAP_ORDER,
 };
 use crate::generated::relic_catalog::RELICS;
-use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, RelicId, RelicTier, RoomType};
+use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, EventId, RelicId, RelicTier, RoomType};
 use crate::java_util::shuffle_java;
 use crate::map::{
     assign_row, distribute_rooms, generate_dungeon, generate_room_types, DungeonMap, MAP_DENSITY, MAP_HEIGHT,
@@ -46,16 +46,14 @@ impl<T: Clone> AsRef<Vec<T>> for CowVec<T> {
 #[derive(Clone, Debug)]
 pub struct Dungeon {
     pub act: Act,
-    pub id: &'static str,
-    pub name: &'static str,
     pub floor: i32,
-    pub boss: String,
-    pub boss_list: CowVec<String>,
-    pub monster_list: CowVec<String>,
-    pub elite_list: CowVec<String>,
-    pub event_list: CowVec<String>,
-    pub shrine_list: CowVec<String>,
-    pub special_one_time: CowVec<String>,
+    pub boss: EncounterId,
+    pub boss_list: CowVec<EncounterId>,
+    pub monster_list: CowVec<EncounterId>,
+    pub elite_list: CowVec<EncounterId>,
+    pub event_list: CowVec<EventId>,
+    pub shrine_list: CowVec<EventId>,
+    pub special_one_time: CowVec<EventId>,
     pub common_relics: Arc<Vec<RelicId>>,
     pub uncommon_relics: Arc<Vec<RelicId>>,
     pub rare_relics: Arc<Vec<RelicId>>,
@@ -79,10 +77,8 @@ impl Dungeon {
     pub fn generate_exordium(seed: i64, rng: &mut RngSet, unlocks: &Unlocks, character: Character, ascension: i32) -> Self {
         let mut dungeon = Self {
             act: Act::Exordium,
-            id: "Exordium",
-            name: "Exordium",
             floor: 0,
-            boss: String::new(),
+            boss: EncounterId::Hexaghost,
             boss_list: CowVec::default(),
             monster_list: CowVec::default(),
             elite_list: CowVec::default(),
@@ -136,39 +132,35 @@ impl Dungeon {
         self.shrine_list.clear();
         match act {
             Act::City => {
-                self.id = "TheCity";
-                self.name = "The City";
                 generate_weighted(
                     &mut rng.monster,
                     &mut self.monster_list,
                     &[
-                        ("Spheric Guardian", 2.0),
-                        ("Chosen", 2.0),
-                        ("Shell Parasite", 2.0),
-                        ("3 Byrds", 2.0),
-                        ("2 Thieves", 2.0),
+                        (EncounterId::SphericGuardian, 2.0),
+                        (EncounterId::Chosen, 2.0),
+                        (EncounterId::ShellParasite, 2.0),
+                        (EncounterId::ThreeByrds, 2.0),
+                        (EncounterId::TwoThieves, 2.0),
                     ],
                     2,
                     false,
                 );
                 let strong = [
-                    ("Chosen and Byrds", 2.0),
-                    ("Sentry and Sphere", 2.0),
-                    ("Snake Plant", 6.0),
-                    ("Snecko", 4.0),
-                    ("Centurion and Healer", 6.0),
-                    ("Cultist and Chosen", 3.0),
-                    ("3 Cultists", 3.0),
-                    ("Shelled Parasite and Fungi", 3.0),
+                    (EncounterId::ChosenAndByrds, 2.0),
+                    (EncounterId::SentryAndSphere, 2.0),
+                    (EncounterId::SnakePlant, 6.0),
+                    (EncounterId::Snecko, 4.0),
+                    (EncounterId::CenturionAndHealer, 6.0),
+                    (EncounterId::CultistAndChosen, 3.0),
+                    (EncounterId::ThreeCultists, 3.0),
+                    (EncounterId::ShelledParasiteAndFungi, 3.0),
                 ];
-                let exclusions = first_strong_exclusions(
-                    self.monster_list.last().map(String::as_str).unwrap_or(""),
-                );
+                let exclusions = first_strong_exclusions(self.monster_list.last().copied());
                 let weights = normalize(&strong);
                 loop {
                     let picked = roll(&weights, rng.monster.random_float());
                     if !exclusions.iter().any(|e| *e == picked) {
-                        self.monster_list.push(picked.to_string());
+                        self.monster_list.push(picked);
                         break;
                     }
                 }
@@ -177,73 +169,75 @@ impl Dungeon {
                     &mut rng.monster,
                     &mut self.elite_list,
                     &[
-                        ("Gremlin Leader", 1.0),
-                        ("Slavers", 1.0),
-                        ("Book of Stabbing", 1.0),
+                        (EncounterId::GremlinLeader, 1.0),
+                        (EncounterId::Slavers, 1.0),
+                        (EncounterId::BookOfStabbing, 1.0),
                     ],
                     10,
                     true,
                 );
-                if !unlocks.boss_seen("CHAMP") {
-                    self.boss_list.push("Champ".into());
-                } else if !unlocks.boss_seen("AUTOMATON") {
-                    self.boss_list.push("Automaton".into());
-                } else if !unlocks.boss_seen("COLLECTOR") {
-                    self.boss_list.push("Collector".into());
+                if !unlocks.boss_seen(EncounterId::Champ) {
+                    self.boss_list.push(EncounterId::Champ);
+                } else if !unlocks.boss_seen(EncounterId::Automaton) {
+                    self.boss_list.push(EncounterId::Automaton);
+                } else if !unlocks.boss_seen(EncounterId::Collector) {
+                    self.boss_list.push(EncounterId::Collector);
                 } else {
-                    self.boss_list
-                        .extend(["Automaton", "Collector", "Champ"].map(str::to_string));
+                    self.boss_list.extend([
+                        EncounterId::Automaton,
+                        EncounterId::Collector,
+                        EncounterId::Champ,
+                    ]);
                     shuffle_java(&mut self.boss_list, rng.monster.random_long());
                 }
                 self.event_list.extend(
                     [
-                        "Addict",
-                        "Back to Basics",
-                        "Beggar",
-                        "Colosseum",
-                        "Cursed Tome",
-                        "Drug Dealer",
-                        "Forgotten Altar",
-                        "Ghosts",
-                        "Masked Bandits",
-                        "Nest",
-                        "The Library",
-                        "The Mausoleum",
-                        "Vampires",
+                        EventId::Addict,
+                        EventId::BackToBasics,
+                        EventId::Beggar,
+                        EventId::Colosseum,
+                        EventId::CursedTome,
+                        EventId::DrugDealer,
+                        EventId::ForgottenAltar,
+                        EventId::Ghosts,
+                        EventId::MaskedBandits,
+                        EventId::Nest,
+                        EventId::Library,
+                        EventId::Mausoleum,
+                        EventId::Vampires,
                     ]
-                    .map(str::to_string),
                 );
                 self.initialize_shrines();
                 rng.map = StsRandom::from_seed(seed.wrapping_add(2 * 100));
             }
             Act::Beyond => {
-                self.id = "TheBeyond";
-                self.name = "The Beyond";
                 generate_weighted(
                     &mut rng.monster,
                     &mut self.monster_list,
-                    &[("3 Darklings", 2.0), ("Orb Walker", 2.0), ("3 Shapes", 2.0)],
+                    &[
+                        (EncounterId::ThreeDarklings, 2.0),
+                        (EncounterId::OrbWalker, 2.0),
+                        (EncounterId::ThreeShapes, 2.0),
+                    ],
                     2,
                     false,
                 );
                 let strong = [
-                    ("Spire Growth", 1.0),
-                    ("Transient", 1.0),
-                    ("4 Shapes", 1.0),
-                    ("Maw", 1.0),
-                    ("Sphere and 2 Shapes", 1.0),
-                    ("Jaw Worm Horde", 1.0),
-                    ("3 Darklings", 1.0),
-                    ("Writhing Mass", 1.0),
+                    (EncounterId::SpireGrowth, 1.0),
+                    (EncounterId::Transient, 1.0),
+                    (EncounterId::FourShapes, 1.0),
+                    (EncounterId::Maw, 1.0),
+                    (EncounterId::SphereAndTwoShapes, 1.0),
+                    (EncounterId::JawWormHorde, 1.0),
+                    (EncounterId::ThreeDarklings, 1.0),
+                    (EncounterId::WrithingMass, 1.0),
                 ];
-                let exclusions = first_strong_exclusions(
-                    self.monster_list.last().map(String::as_str).unwrap_or(""),
-                );
+                let exclusions = first_strong_exclusions(self.monster_list.last().copied());
                 let weights = normalize(&strong);
                 loop {
                     let picked = roll(&weights, rng.monster.random_float());
                     if !exclusions.iter().any(|e| *e == picked) {
-                        self.monster_list.push(picked.to_string());
+                        self.monster_list.push(picked);
                         break;
                     }
                 }
@@ -251,46 +245,50 @@ impl Dungeon {
                 generate_weighted(
                     &mut rng.monster,
                     &mut self.elite_list,
-                    &[("Giant Head", 2.0), ("Nemesis", 2.0), ("Reptomancer", 2.0)],
+                    &[
+                        (EncounterId::GiantHead, 2.0),
+                        (EncounterId::Nemesis, 2.0),
+                        (EncounterId::Reptomancer, 2.0),
+                    ],
                     10,
                     true,
                 );
-                if !unlocks.boss_seen("CROW") {
-                    self.boss_list.push("Awakened One".into());
-                } else if !unlocks.boss_seen("DONUT") {
-                    self.boss_list.push("Donu and Deca".into());
-                } else if !unlocks.boss_seen("WIZARD") {
-                    self.boss_list.push("Time Eater".into());
+                if !unlocks.boss_seen(EncounterId::AwakenedOne) {
+                    self.boss_list.push(EncounterId::AwakenedOne);
+                } else if !unlocks.boss_seen(EncounterId::DonuAndDeca) {
+                    self.boss_list.push(EncounterId::DonuAndDeca);
+                } else if !unlocks.boss_seen(EncounterId::TimeEater) {
+                    self.boss_list.push(EncounterId::TimeEater);
                 } else {
-                    self.boss_list
-                        .extend(["Awakened One", "Time Eater", "Donu and Deca"].map(str::to_string));
+                    self.boss_list.extend([
+                        EncounterId::AwakenedOne,
+                        EncounterId::TimeEater,
+                        EncounterId::DonuAndDeca,
+                    ]);
                     shuffle_java(&mut self.boss_list, rng.monster.random_long());
                 }
                 self.event_list.extend(
                     [
-                        "Falling",
-                        "MindBloom",
-                        "The Moai Head",
-                        "Mysterious Sphere",
-                        "SensoryStone",
-                        "Tomb of Lord Red Mask",
-                        "Winding Halls",
+                        EventId::Falling,
+                        EventId::MindBloom,
+                        EventId::MoaiHead,
+                        EventId::MysteriousSphere,
+                        EventId::SensoryStone,
+                        EventId::TombOfLordRedMask,
+                        EventId::WindingHalls,
                     ]
-                    .map(str::to_string),
                 );
                 self.initialize_shrines();
                 rng.map = StsRandom::from_seed(seed.wrapping_add(3 * 200));
             }
             Act::Ending => {
-                self.id = "TheEnding";
-                self.name = "The Ending";
-                self.boss_list.push("The Heart".into());
-                self.elite_list.push("Shield and Spear".into());
+                self.boss_list.push(EncounterId::CorruptHeart);
+                self.elite_list.push(EncounterId::ShieldAndSpear);
                 // TheEnding still runs the AbstractDungeon constructor, which
                 // clears and rebuilds all five card pools before its special map.
                 self.initialize_card_pools(character, unlocks);
                 rng.map = StsRandom::from_seed(seed.wrapping_add(4 * 300));
-                self.boss = "The Heart".into();
+                self.boss = EncounterId::CorruptHeart;
                 self.map = Arc::new(crate::map::generate_ending_map());
                 let _ = rng.misc.random_int(1);
                 return;
@@ -316,32 +314,32 @@ impl Dungeon {
             monster,
             &mut self.monster_list,
             &[
-                ("Cultist", 2.0),
-                ("Jaw Worm", 2.0),
-                ("2 Louse", 2.0),
-                ("Small Slimes", 2.0),
+                (EncounterId::Cultist, 2.0),
+                (EncounterId::JawWorm, 2.0),
+                (EncounterId::TwoLouse, 2.0),
+                (EncounterId::SmallSlimes, 2.0),
             ],
             3,
             false,
         );
-        let exclusions = first_strong_exclusions(self.monster_list.last().map(String::as_str).unwrap_or(""));
+        let exclusions = first_strong_exclusions(self.monster_list.last().copied());
         let strong = [
-            ("Blue Slaver", 2.0),
-            ("Gremlin Gang", 1.0),
-            ("Looter", 2.0),
-            ("Large Slime", 2.0),
-            ("Lots of Slimes", 1.0),
-            ("Exordium Thugs", 1.5),
-            ("Exordium Wildlife", 1.5),
-            ("Red Slaver", 1.0),
-            ("3 Louse", 2.0),
-            ("2 Fungi Beasts", 2.0),
+            (EncounterId::BlueSlaver, 2.0),
+            (EncounterId::GremlinGang, 1.0),
+            (EncounterId::Looter, 2.0),
+            (EncounterId::LargeSlime, 2.0),
+            (EncounterId::LotsOfSlimes, 1.0),
+            (EncounterId::ExordiumThugs, 1.5),
+            (EncounterId::ExordiumWildlife, 1.5),
+            (EncounterId::RedSlaver, 1.0),
+            (EncounterId::ThreeLouse, 2.0),
+            (EncounterId::TwoFungiBeasts, 2.0),
         ];
         let weights = normalize(&strong);
         loop {
             let picked = roll(&weights, monster.random_float());
             if !exclusions.iter().any(|e| *e == picked) {
-                self.monster_list.push(picked.to_string());
+                self.monster_list.push(picked);
                 break;
             }
         }
@@ -349,30 +347,40 @@ impl Dungeon {
         generate_weighted(
             monster,
             &mut self.elite_list,
-            &[("Gremlin Nob", 1.0), ("Lagavulin", 1.0), ("3 Sentries", 1.0)],
+            &[
+                (EncounterId::GremlinNob, 1.0),
+                (EncounterId::Lagavulin, 1.0),
+                (EncounterId::ThreeSentries, 1.0),
+            ],
             10,
             true,
         );
     }
 
     fn initialize_boss(&mut self, monster: &mut StsRandom, unlocks: &Unlocks) {
-        if !unlocks.boss_seen("GUARDIAN") {
-            self.boss_list.push("The Guardian".into());
-        } else if !unlocks.boss_seen("GHOST") {
-            self.boss_list.push("Hexaghost".into());
-        } else if !unlocks.boss_seen("SLIME") {
-            self.boss_list.push("Slime Boss".into());
+        if !unlocks.boss_seen(EncounterId::TheGuardian) {
+            self.boss_list.push(EncounterId::TheGuardian);
+        } else if !unlocks.boss_seen(EncounterId::Hexaghost) {
+            self.boss_list.push(EncounterId::Hexaghost);
+        } else if !unlocks.boss_seen(EncounterId::SlimeBoss) {
+            self.boss_list.push(EncounterId::SlimeBoss);
         } else {
-            self.boss_list
-                .extend(["The Guardian", "Hexaghost", "Slime Boss"].map(str::to_string));
+            self.boss_list.extend([
+                EncounterId::TheGuardian,
+                EncounterId::Hexaghost,
+                EncounterId::SlimeBoss,
+            ]);
             shuffle_java(&mut self.boss_list, monster.random_long());
         }
         if self.boss_list.len() == 1 {
             let duplicate = self.boss_list[0].clone();
             self.boss_list.push(duplicate);
         } else if self.boss_list.is_empty() {
-            self.boss_list
-                .extend(["The Guardian", "Hexaghost", "Slime Boss"].map(str::to_string));
+            self.boss_list.extend([
+                EncounterId::TheGuardian,
+                EncounterId::Hexaghost,
+                EncounterId::SlimeBoss,
+            ]);
             shuffle_java(&mut self.boss_list, monster.random_long());
         }
         self.boss = self.boss_list[0].clone();
@@ -381,43 +389,41 @@ impl Dungeon {
     fn initialize_events(&mut self, ascension: i32) {
         self.event_list.extend(
             [
-                "Big Fish",
-                "The Cleric",
-                "Dead Adventurer",
-                "Golden Idol",
-                "Golden Wing",
-                "World of Goop",
-                "Liars Game",
-                "Living Wall",
-                "Mushrooms",
-                "Scrap Ooze",
-                "Shining Light",
+                EventId::BigFish,
+                EventId::Cleric,
+                EventId::DeadAdventurer,
+                EventId::GoldenIdol,
+                EventId::GoldenWing,
+                EventId::WorldOfGoop,
+                EventId::LiarsGame,
+                EventId::LivingWall,
+                EventId::Mushrooms,
+                EventId::ScrapOoze,
+                EventId::ShiningLight,
             ]
-            .map(str::to_string),
         );
         self.special_one_time.extend(
             [
-                "Accursed Blacksmith",
-                "Bonfire Elementals",
-                "Designer",
-                "Duplicator",
-                "FaceTrader",
-                "Fountain of Cleansing",
-                "Knowing Skull",
-                "Lab",
-                "N'loth",
-                "NoteForYourself",
-                "SecretPortal",
-                "The Joust",
-                "WeMeetAgain",
-                "The Woman in Blue",
+                EventId::AccursedBlacksmith,
+                EventId::BonfireElementals,
+                EventId::Designer,
+                EventId::Duplicator,
+                EventId::FaceTrader,
+                EventId::FountainOfCleansing,
+                EventId::KnowingSkull,
+                EventId::Lab,
+                EventId::Nloth,
+                EventId::NoteForYourself,
+                EventId::SecretPortal,
+                EventId::Joust,
+                EventId::WeMeetAgain,
+                EventId::WomanInBlue,
             ]
-            .map(str::to_string),
         );
         // NoteForYourself.isNoteForYourselfAvailable is false at A15+.
         // Removing it here preserves Java's subsequent special-event order.
         if ascension >= 15 {
-            self.special_one_time.retain(|event| event != "NoteForYourself");
+            self.special_one_time.retain(|event| *event != EventId::NoteForYourself);
         }
         self.initialize_shrines();
     }
@@ -426,25 +432,25 @@ impl Dungeon {
         // Exordium puts Wheel of Change last. TheCity and TheBeyond insert
         // it second (after Match and Keep!). Same index into tmp then picks
         // a different shrine (seed 8 Act 3: Golden Shrine vs Wheel of Change).
-        let shrines: &[&str] = match self.act {
+        let shrines: &[EventId] = match self.act {
             Act::Exordium => &[
-                "Match and Keep!",
-                "Golden Shrine",
-                "Transmorgrifier",
-                "Purifier",
-                "Upgrade Shrine",
-                "Wheel of Change",
+                EventId::MatchAndKeep,
+                EventId::GoldenShrine,
+                EventId::Transmorgrifier,
+                EventId::Purifier,
+                EventId::UpgradeShrine,
+                EventId::WheelOfChange,
             ],
             _ => &[
-                "Match and Keep!",
-                "Wheel of Change",
-                "Golden Shrine",
-                "Transmorgrifier",
-                "Purifier",
-                "Upgrade Shrine",
+                EventId::MatchAndKeep,
+                EventId::WheelOfChange,
+                EventId::GoldenShrine,
+                EventId::Transmorgrifier,
+                EventId::Purifier,
+                EventId::UpgradeShrine,
             ],
         };
-        self.shrine_list.extend(shrines.iter().map(|s| (*s).to_string()));
+        self.shrine_list.extend_from_slice(shrines);
     }
 
     fn initialize_card_pools(&mut self, character: Character, unlocks: &Unlocks) {
@@ -459,12 +465,9 @@ impl Dungeon {
             Character::Defect => crate::ids::CardColor::BLUE,
             Character::Watcher => crate::ids::CardColor::PURPLE,
         };
-        for sts_id in CARD_LIBRARY_HASHMAP_ORDER {
-            let Some(id) = CardId::from_sts_id(sts_id) else {
-                continue;
-            };
+        for &id in CARD_LIBRARY_HASHMAP_ORDER {
             let def = id.def();
-            if unlocks.card_locked(sts_id) {
+            if unlocks.card_locked(id) {
                 continue;
             }
             if def.color == wanted_color && def.rarity != CardRarity::BASIC {
@@ -476,10 +479,7 @@ impl Dungeon {
                 }
             }
         }
-        for sts_id in CARD_LIBRARY_HASHMAP_ORDER {
-            let Some(id) = CardId::from_sts_id(sts_id) else {
-                continue;
-            };
+        for &id in CARD_LIBRARY_HASHMAP_ORDER {
             let def = id.def();
             if def.color == crate::ids::CardColor::COLORLESS
                 && def.rarity != CardRarity::BASIC
@@ -492,14 +492,14 @@ impl Dungeon {
         // srcColorlessCardPool.addToBottom each colorlessCardPool card.
         self.src_colorless_cards = Arc::new(self.colorless_cards.as_ref().clone());
         Arc::make_mut(&mut self.src_colorless_cards).reverse();
-        for sts_id in CARD_LIBRARY_HASHMAP_ORDER {
-            let Some(id) = CardId::from_sts_id(sts_id) else {
-                continue;
-            };
+        for &id in CARD_LIBRARY_HASHMAP_ORDER {
             if id.def().card_type == crate::ids::CardType::CURSE
                 && !matches!(
-                    *sts_id,
-                    "Necronomicurse" | "AscendersBane" | "CurseOfTheBell" | "Pride"
+                    id,
+                    CardId::Necronomicurse
+                        | CardId::AscendersBane
+                        | CardId::CurseOfTheBell
+                        | CardId::Pride
                 )
             {
                 Arc::make_mut(&mut self.curse_cards).push(id);
@@ -593,7 +593,7 @@ impl Dungeon {
         if self.monster_list.is_empty() {
             None
         } else {
-            EncounterId::from_sts_key(&self.monster_list.remove(0))
+            Some(self.monster_list.remove(0))
         }
     }
 
@@ -601,7 +601,7 @@ impl Dungeon {
         if self.elite_list.is_empty() {
             None
         } else {
-            EncounterId::from_sts_key(&self.elite_list.remove(0))
+            Some(self.elite_list.remove(0))
         }
     }
 
@@ -634,7 +634,7 @@ impl Dungeon {
             }
             RelicTier::RARE => {
                 if self.rare_relics.is_empty() {
-                    return RelicId::from_sts_id("Circlet");
+                    return Some(RelicId::Circlet);
                 }
                 self.pop_relic(RelicTier::RARE, false)
             }
@@ -646,7 +646,7 @@ impl Dungeon {
             }
             RelicTier::BOSS => {
                 if self.boss_relics.is_empty() {
-                    return RelicId::from_sts_id("Red Circlet");
+                    return Some(RelicId::Red_Circlet);
                 }
                 self.pop_relic(RelicTier::BOSS, false)
             }
@@ -679,7 +679,7 @@ impl Dungeon {
             }
             RelicTier::RARE => {
                 if self.rare_relics.is_empty() {
-                    return RelicId::from_sts_id("Circlet");
+                    return Some(RelicId::Circlet);
                 }
                 self.pop_relic(RelicTier::RARE, true)
             }
@@ -691,7 +691,7 @@ impl Dungeon {
             }
             RelicTier::BOSS => {
                 if self.boss_relics.is_empty() {
-                    return RelicId::from_sts_id("Red Circlet");
+                    return Some(RelicId::Red_Circlet);
                 }
                 self.pop_relic(RelicTier::BOSS, false)
             }
@@ -776,76 +776,80 @@ pub fn relic_can_spawn(id: RelicId, floor: i32, act: Act, room: RoomType, player
 }
 
 fn populate_relic_pool(pool: &mut Vec<RelicId>, tier: RelicTier, character: Character, unlocks: &Unlocks) {
-    let id_to_tier: std::collections::HashMap<&str, RelicTier> =
-        RELICS.iter().map(|r| (r.sts_id, r.tier)).collect();
-    for id in SHARED_RELIC_HASHMAP_ORDER {
-        if id_to_tier.get(id) == Some(&tier) && !unlocks.relic_locked(id) {
-            pool.push(RelicId::from_sts_id(id).expect("generated shared relic id"));
+    for &id in SHARED_RELIC_HASHMAP_ORDER {
+        if RELICS[id as usize].tier == tier && !unlocks.relic_locked(id) {
+            pool.push(id);
         }
     }
     if character == Character::Ironclad {
-        for id in RED_RELIC_HASHMAP_ORDER {
-            if id_to_tier.get(id) == Some(&tier) && !unlocks.relic_locked(id) {
-                pool.push(RelicId::from_sts_id(id).expect("generated red relic id"));
+        for &id in RED_RELIC_HASHMAP_ORDER {
+            if RELICS[id as usize].tier == tier && !unlocks.relic_locked(id) {
+                pool.push(id);
             }
         }
     } else if character == Character::Defect {
-        for id in BLUE_RELIC_HASHMAP_ORDER {
-            if id_to_tier.get(id) == Some(&tier) && !unlocks.relic_locked(id) {
-                pool.push(RelicId::from_sts_id(id).expect("generated blue relic id"));
+        for &id in BLUE_RELIC_HASHMAP_ORDER {
+            if RELICS[id as usize].tier == tier && !unlocks.relic_locked(id) {
+                pool.push(id);
             }
         }
     }
 }
 
-fn first_strong_exclusions(last_weak: &str) -> Vec<&'static str> {
+fn first_strong_exclusions(last_weak: Option<EncounterId>) -> Vec<EncounterId> {
     match last_weak {
-        "Looter" => vec!["Exordium Thugs"],
-        "Blue Slaver" => vec!["Red Slaver", "Exordium Thugs"],
-        "2 Louse" => vec!["3 Louse"],
-        "Small Slimes" => vec!["Large Slime", "Lots of Slimes"],
-        "Spheric Guardian" => vec!["Sentry and Sphere"],
-        "3 Byrds" => vec!["Chosen and Byrds"],
-        "Chosen" => vec!["Chosen and Byrds", "Cultist and Chosen"],
-        "3 Darklings" => vec!["3 Darklings"],
-        "Orb Walker" => vec!["Orb Walker"],
-        "3 Shapes" => vec!["4 Shapes"],
+        Some(EncounterId::Looter) => vec![EncounterId::ExordiumThugs],
+        Some(EncounterId::BlueSlaver) => {
+            vec![EncounterId::RedSlaver, EncounterId::ExordiumThugs]
+        }
+        Some(EncounterId::TwoLouse) => vec![EncounterId::ThreeLouse],
+        Some(EncounterId::SmallSlimes) => {
+            vec![EncounterId::LargeSlime, EncounterId::LotsOfSlimes]
+        }
+        Some(EncounterId::SphericGuardian) => vec![EncounterId::SentryAndSphere],
+        Some(EncounterId::ThreeByrds) => vec![EncounterId::ChosenAndByrds],
+        Some(EncounterId::Chosen) => {
+            vec![EncounterId::ChosenAndByrds, EncounterId::CultistAndChosen]
+        }
+        Some(EncounterId::ThreeDarklings) => vec![EncounterId::ThreeDarklings],
+        Some(EncounterId::OrbWalker) => vec![EncounterId::OrbWalker],
+        Some(EncounterId::ThreeShapes) => vec![EncounterId::FourShapes],
         _ => Vec::new(),
     }
 }
 
-fn normalize(items: &[(&str, f32)]) -> Vec<(String, f32)> {
-    let mut sorted: Vec<(&str, f32)> = items.to_vec();
+fn normalize<T: Copy>(items: &[(T, f32)]) -> Vec<(T, f32)> {
+    let mut sorted = items.to_vec();
     sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     let total: f32 = sorted.iter().map(|i| i.1).sum();
     sorted
         .into_iter()
-        .map(|(n, w)| (n.to_string(), w / total))
+        .map(|(item, weight)| (item, weight / total))
         .collect()
 }
 
-fn roll(items: &[(String, f32)], roll: f32) -> &str {
+fn roll<T: Copy>(items: &[(T, f32)], roll: f32) -> T {
     let mut current = 0.0f32;
-    for (name, weight) in items {
+    for (item, weight) in items {
         current += *weight;
         if roll < current {
-            return name;
+            return *item;
         }
     }
-    items.last().map(|(n, _)| n.as_str()).unwrap_or("ERROR")
+    items.last().expect("weighted choice cannot be empty").0
 }
 
-fn generate_weighted(
+fn generate_weighted<T: Copy + PartialEq>(
     rng: &mut StsRandom,
-    dest: &mut Vec<String>,
-    raw: &[(&str, f32)],
+    dest: &mut Vec<T>,
+    raw: &[(T, f32)],
     count: i32,
     elites: bool,
 ) {
     let weights = normalize(raw);
     let mut i = 0;
     while i < count {
-        let picked = roll(&weights, rng.random_float()).to_string();
+        let picked = roll(&weights, rng.random_float());
         if dest.is_empty() {
             dest.push(picked);
             i += 1;

@@ -11,3 +11,4 @@ pub(crate) mod params;
 mod turnplan;
 
 pub use agent::HtnAgent;
+pub use turnplan::SearchStats;

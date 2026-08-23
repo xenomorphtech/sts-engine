@@ -1,6 +1,6 @@
 use sts_engine::game::{Game, Screen};
 use sts_engine::htn::HtnAgent;
-use sts_engine::ids::{Character, RoomType};
+use sts_engine::ids::{Character, EventId, RoomType};
 use sts_engine::{Action, Unlocks};
 
 const SEED: i64 = 979_071_298_687_117_498;
@@ -26,7 +26,7 @@ fn act_one_row_thirteen_leads_to_the_mandatory_row_fourteen_rest() {
     assert!(!choices.is_empty());
     assert!(
         choices.iter().all(|(_, y, room)| {
-            *y == Some(14) && room.as_deref() == Some("com.megacrit.cardcrawl.rooms.RestRoom")
+            *y == Some(14) && *room == Some(RoomType::Rest)
         }),
         "row 13 choices were {choices:?}"
     );
@@ -54,8 +54,5 @@ fn rust_htn_reaches_we_meet_again_on_act_one_floor_fourteen() {
 
     assert_eq!(game.dungeon.floor, 14);
     assert_eq!(game.screen, Screen::Event);
-    assert_eq!(
-        game.event.as_ref().map(|event| event.id.as_str()),
-        Some("WeMeetAgain")
-    );
+    assert_eq!(game.event.as_ref().map(|event| event.id), Some(EventId::WeMeetAgain));
 }

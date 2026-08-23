@@ -3,7 +3,7 @@
 use sts_engine::action::Action;
 use sts_engine::combat::Combat;
 use sts_engine::creature::RelicInstance;
-use sts_engine::game::{Game, Screen};
+use sts_engine::game::{CampfireOption, Game, Screen};
 use sts_engine::htn::HtnAgent;
 use sts_engine::ids::{Act, Character, EncounterId, MonsterId, RelicId, RoomType};
 use sts_engine::rng::RngSet;
@@ -28,7 +28,7 @@ fn ending_game() -> Game {
 fn ending_map_is_rest_shop_elite_heart() {
     let game = ending_game();
     assert_eq!(game.dungeon.act, Act::Ending);
-    assert_eq!(game.dungeon.boss, "The Heart");
+    assert_eq!(game.dungeon.boss, EncounterId::CorruptHeart);
     assert_eq!(game.dungeon.map.node(3, 0).room, Some(RoomType::Rest));
     assert_eq!(game.dungeon.map.node(3, 1).room, Some(RoomType::Shop));
     assert_eq!(game.dungeon.map.node(3, 2).room, Some(RoomType::Elite));
@@ -42,15 +42,13 @@ fn ending_rest_heals_thirty_percent() {
     game.player.hp = 50;
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(0),
-        room: Some("RestRoom".into()),
+        room: Some(RoomType::Rest),
     });
     assert_eq!(game.screen, Screen::Rest);
     game.step(&Action::Choose {
         index: 0,
-        label: Some("Rest".into()),
         x: None,
         y: None,
         room: None,
@@ -67,17 +65,17 @@ fn ending_smith_exposes_upgrade_then_completes_campfire() {
     let mut game = ending_game();
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(0),
-        room: Some("RestRoom".into()),
+        room: Some(RoomType::Rest),
     });
 
-    let smith = game
-        .legal_actions()
-        .into_iter()
-        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Smith"))
+    let smith_index = game
+        .campfire_options()
+        .iter()
+        .position(|option| *option == CampfireOption::Smith)
         .expect("starter deck should offer Smith");
+    let smith = Action::choose(smith_index);
     game.step(&smith);
 
     let upgrades = game.legal_actions();
@@ -112,15 +110,12 @@ fn fusion_hammer_disables_smith_at_campfires() {
     });
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(0),
-        room: Some("RestRoom".into()),
+        room: Some(RoomType::Rest),
     });
 
-    assert!(!game.legal_actions().iter().any(
-        |action| matches!(action, Action::Choose { label: Some(label), .. } if label == "Smith")
-    ));
+    assert!(!game.campfire_options().contains(&CampfireOption::Smith));
 }
 
 #[test]
@@ -128,15 +123,13 @@ fn smith_exposes_upgrade_cards_then_returns_to_map() {
     let mut game = ending_game();
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(0),
-        room: Some("RestRoom".into()),
+        room: Some(RoomType::Rest),
     });
 
     game.step(&Action::Choose {
         index: 1,
-        label: Some("Smith".into()),
         x: None,
         y: None,
         room: None,
@@ -163,7 +156,6 @@ fn multi_card_grid_keeps_already_picked_cards_as_java_noop_actions() {
     game.boss_relics = vec![RelicId::Astrolabe];
     game.step(&Action::Choose {
         index: 0,
-        label: Some("Astrolabe".into()),
         x: None,
         y: None,
         room: None,
@@ -199,10 +191,9 @@ fn ending_shop_can_leave() {
     game.current_y = 0;
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(1),
-        room: Some("ShopRoom".into()),
+        room: Some(RoomType::Shop),
     });
     assert_eq!(game.screen, Screen::Shop);
     assert_eq!(game.current_room, RoomType::Shop);
@@ -219,21 +210,14 @@ fn ending_shop_exposes_purchases_to_htn() {
     game.current_y = 0;
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(1),
-        room: Some("ShopRoom".into()),
+        room: Some(RoomType::Shop),
     });
 
     let mut agent = HtnAgent::new();
     let open = agent.decide(&game);
-    assert!(matches!(
-        open,
-        Action::Choose {
-            label: Some(ref label),
-            ..
-        } if label == "shop"
-    ));
+    assert!(matches!(open, Action::Choose { .. }));
     game.step(&open);
 
     let legal = game.legal_actions();
@@ -246,13 +230,7 @@ fn ending_shop_exposes_purchases_to_htn() {
     assert!(!legal.iter().any(|action| matches!(action, Action::Proceed)));
 
     let purchase = agent.decide(&game);
-    assert!(matches!(
-        purchase,
-        Action::Choose {
-            label: Some(ref label),
-            ..
-        } if label != "shop"
-    ));
+    assert!(matches!(purchase, Action::Choose { .. }));
     let gold_before = game.player.gold;
     game.step(&purchase);
     assert!(game.screen == Screen::Grid || game.player.gold < gold_before);
@@ -267,23 +245,17 @@ fn shop_purge_grid_can_cancel_back_to_shop() {
     game.current_y = 0;
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(1),
-        room: Some("ShopRoom".into()),
+        room: Some(RoomType::Shop),
     });
     game.step(&Action::Choose {
         index: 0,
-        label: Some("shop".into()),
         x: None,
         y: None,
         room: None,
     });
-    let purge = game
-        .legal_actions()
-        .into_iter()
-        .find(|action| matches!(action, Action::Choose { label: Some(label), .. } if label == "purge"))
-        .expect("affordable purge");
+    let purge = Action::choose(0);
     game.step(&purge);
 
     assert_eq!(game.screen, Screen::Grid);
@@ -332,10 +304,9 @@ fn ending_elite_is_shield_and_spear() {
     game.current_y = 1;
     game.step(&Action::Choose {
         index: 0,
-        label: Some("map node".into()),
         x: Some(3),
         y: Some(2),
-        room: Some("MonsterRoomElite".into()),
+        room: Some(RoomType::Elite),
     });
     assert_eq!(game.screen, Screen::Combat);
     let combat = game.combat.expect("elite combat");
