@@ -267,10 +267,10 @@ impl<'a> DeckPlan<'a> {
                 }
                 CardId::Capacitor
                     if p.focus > 0
-                        && p.channel >= 5
+                        && p.channel >= 3
                         && p.orb_slots + self.orb_slot_relics() == 0 =>
                 {
-                    Some(35)
+                    Some(65)
                 }
                 CardId::Consume if p.focus == 0 && p.orb_slots + self.orb_slot_relics() > 0 => {
                     Some(55)
@@ -842,6 +842,27 @@ mod tests {
         assert!(
             planned_card_score(&game, &focus, 0, 150)
                 > planned_card_score(&game, &filler, 211, 115)
+        );
+    }
+
+    #[test]
+    fn focused_orb_package_seeks_capacity_once_channels_fill_the_row() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        for id in [
+            CardId::Cold_Snap,
+            CardId::Coolheaded,
+            CardId::Ball_Lightning,
+            CardId::Defragment,
+        ] {
+            game.player.deck.push(Card::new(id));
+        }
+
+        let plan = DeckPlan::new(&game);
+        assert_eq!(plan.primary_package(), Some(DeckPackage::OrbFocus));
+        assert_eq!(
+            plan.package_completion_bonus(DeckPackage::OrbFocus, CardId::Capacitor),
+            Some(65)
         );
     }
 

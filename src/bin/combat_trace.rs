@@ -8,7 +8,7 @@
 
 use std::env;
 use sts_engine::card::Card;
-use sts_engine::creature::{Intent, Monster, Player};
+use sts_engine::creature::{Intent, Monster, OrbKind, Player};
 use sts_engine::htn::HtnAgent;
 use sts_engine::ids::{CardId, Character, MonsterId, PowerId, RelicId};
 use sts_engine::{seed_from_string, Action, Game, Screen, Unlocks};
@@ -68,6 +68,7 @@ struct TurnRow {
     unplayed: Vec<String>,
     monster_hp: i32,
     monster_hp_detail: String,
+    orb_queue: String,
     incoming_and_block: String,
     player_hp: i32,
 }
@@ -389,6 +390,23 @@ fn monster_hp_detail(game: &Game) -> String {
         .join("; ")
 }
 
+fn orb_queue(game: &Game) -> String {
+    if game.player.orbs.is_empty() {
+        return "—".to_string();
+    }
+    game.player
+        .orbs
+        .iter()
+        .map(|orb| match orb.kind {
+            OrbKind::Lightning => "L".to_string(),
+            OrbKind::Frost => "F".to_string(),
+            OrbKind::Dark => format!("D{}", orb.evoke.max(0)),
+            OrbKind::Plasma => "P".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" › ")
+}
+
 fn first_monster_name(game: &Game) -> String {
     game.combat
         .as_ref()
@@ -539,6 +557,7 @@ fn trace_current_fight(
                             unplayed: remaining,
                             monster_hp: 0,
                             monster_hp_detail: "0".to_string(),
+                            orb_queue: orb_queue(&game),
                             incoming_and_block: format!("Lethal / {}", game.player.block),
                             player_hp: game.player.hp,
                         });
@@ -547,6 +566,7 @@ fn trace_current_fight(
                 Action::EndTurn => {
                     let unplayed = hand_names(&game);
                     let incoming_and_block = incoming_and_block(&game);
+                    let orbs = orb_queue(&game);
                     step_and_observe(game, &action, floors);
                     *steps += 1;
                     completed_row = Some(TurnRow {
@@ -555,6 +575,7 @@ fn trace_current_fight(
                         unplayed,
                         monster_hp: monster_hp(&game),
                         monster_hp_detail: monster_hp_detail(&game),
+                        orb_queue: orbs,
                         incoming_and_block,
                         player_hp: game.player.hp,
                     });
@@ -595,6 +616,7 @@ fn trace_current_fight(
                     unplayed: fallback_unplayed,
                     monster_hp: monster_hp(game),
                     monster_hp_detail: monster_hp_detail(game),
+                    orb_queue: orb_queue(game),
                     incoming_and_block: fallback_incoming,
                     player_hp: game.player.hp,
                 });
@@ -737,6 +759,12 @@ fn render_table(rows: &[TurnRow], monster_name: &str, player_name: &str) -> Stri
             .max(monster_header.chars().count())
             .max(12),
         rows.iter()
+            .map(|row| row.orb_queue.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max("Orb queue".len())
+            .max(9),
+        rows.iter()
             .map(|row| row.incoming_and_block.chars().count())
             .max()
             .unwrap_or(0)
@@ -753,6 +781,7 @@ fn render_table(rows: &[TurnRow], monster_name: &str, player_name: &str) -> Stri
         "Turn".to_string(),
         "HTN plays".to_string(),
         monster_header,
+        "Orb queue".to_string(),
         "Incoming / block".to_string(),
         player_header,
     ];
@@ -783,9 +812,11 @@ fn render_table(rows: &[TurnRow], monster_name: &str, player_name: &str) -> Stri
         output.push_str("  ");
         append_cell(&mut output, &row.monster_hp_detail, widths[2], true);
         output.push_str("  ");
-        append_cell(&mut output, &row.incoming_and_block, widths[3], true);
+        append_cell(&mut output, &row.orb_queue, widths[3], false);
         output.push_str("  ");
-        append_cell(&mut output, &row.player_hp.to_string(), widths[4], true);
+        append_cell(&mut output, &row.incoming_and_block, widths[4], true);
+        output.push_str("  ");
+        append_cell(&mut output, &row.player_hp.to_string(), widths[5], true);
         output.push('\n');
 
         output.push_str("  ");
@@ -952,6 +983,7 @@ mod tests {
                 unplayed: vec!["Defend".to_string(), "Defend".to_string()],
                 monster_hp: 3,
                 monster_hp_detail: "3".to_string(),
+                orb_queue: "L › F".to_string(),
                 incoming_and_block: "6 / 0".to_string(),
                 player_hp: 40,
             }],
@@ -960,6 +992,7 @@ mod tests {
         );
         assert!(table.contains("Zap"));
         assert!(table.contains("Not played: Defend ×2"));
+        assert!(table.contains("L › F"));
     }
 
     #[test]

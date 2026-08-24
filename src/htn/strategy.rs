@@ -1462,14 +1462,7 @@ fn is_frost_source(id: CardId) -> bool {
 fn is_focus_source(id: CardId) -> bool {
     matches!(
         id,
-        CardId::Defragment
-            | CardId::Biased_Cognition
-            | CardId::Capacitor
-            | CardId::Consume
-            | CardId::Storm
-            | CardId::Echo_Form
-            | CardId::Creative_AI
-            | CardId::Heatsinks
+        CardId::Defragment | CardId::Biased_Cognition | CardId::Consume
     )
 }
 
@@ -2016,6 +2009,16 @@ mod tests {
         assert_eq!(a20.player.deck.len(), 11);
         assert_eq!(deck_metrics(&a0).size, 10);
         assert_eq!(deck_metrics(&a20).size, 10);
+    }
+
+    #[test]
+    fn focus_sources_are_cards_that_actually_produce_focus() {
+        assert!(is_focus_source(CardId::Defragment));
+        assert!(is_focus_source(CardId::Biased_Cognition));
+        assert!(is_focus_source(CardId::Consume));
+        assert!(!is_focus_source(CardId::Capacitor));
+        assert!(!is_focus_source(CardId::Storm));
+        assert!(!is_focus_source(CardId::Echo_Form));
     }
 
     #[test]

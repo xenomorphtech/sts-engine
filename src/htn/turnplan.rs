@@ -93,8 +93,11 @@ struct EvaluationContext<'a> {
 
 impl<'a> EvaluationContext<'a> {
     fn new(before: &'a Game) -> Self {
-        let turns_left = fight_length(fight_kind(before), before.dungeon.act);
-        let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
+        let full_fight_length = fight_length(fight_kind(before), before.dungeon.act);
+        let turns_left = remaining_fight_length(before);
+        // Immediate damage retains the encounter-level campaign value. Only
+        // continuation effects consume horizon as combat turns pass.
+        let damage_weight = params().dmg_base + params().dmg_per_turn * full_fight_length;
         let before_orb_value = orb_value(before, turns_left, damage_weight);
         let training = genetic_training(&before.player);
         let before_genetic_training = (training > 0).then_some(training);
@@ -1198,11 +1201,11 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
     value -= encounter_deadline_pressure(after);
     value -= collector_debuff_pressure(after);
     if !turn_advanced {
-        // Do not tax setup cards merely because their immediate block exceeds
-        // a quiet intent when a larger deterministic attack is imminent.
-        if scripted <= incoming {
-            value -= (effective_block - incoming).max(0) as f32 * p.overblock_penalty;
-        }
+        // A future scripted hit can justify Frost, Metallicize, Barricade, or
+        // other block that survives into the deadline. Ordinary block still
+        // expires this turn and must not crowd damage out of a race merely
+        // because a larger attack is approaching.
+        value -= expiring_overblock(after, incoming, effective_block) as f32 * p.overblock_penalty;
     } else if p.next_exposure_weight > 0.0 || p.next_block_tax > 0.0 {
         // EndTurn has already rolled the real next intents and drawn the real
         // next hand. Penalize exposed damage as well as block that consumes
@@ -1495,6 +1498,11 @@ fn persistent_block_bank(game: &Game) -> i32 {
     block
 }
 
+fn expiring_overblock(game: &Game, incoming: i32, effective_block: i32) -> i32 {
+    let expiring_block = (effective_block - persistent_block_bank(game)).max(0);
+    (effective_block - incoming).max(0).min(expiring_block)
+}
+
 fn fight_kind(game: &Game) -> FightKind {
     if game.current_room == RoomType::Boss {
         return FightKind::Boss;
@@ -1642,6 +1650,15 @@ fn encounter_target_priority(monsters: &[Monster], index: usize) -> f32 {
             | MonsterId::TheCollector
             | MonsterId::Donu
             | MonsterId::Deca
+            | MonsterId::SlaverRed
+            | MonsterId::SlaverBlue
+            | MonsterId::Taskmaster
+            | MonsterId::GremlinLeader
+            | MonsterId::GremlinFat
+            | MonsterId::GremlinTsundere
+            | MonsterId::GremlinThief
+            | MonsterId::GremlinWarrior
+            | MonsterId::GremlinWizard
     ) {
         return priority;
     }
@@ -1666,6 +1683,46 @@ fn encounter_target_priority(monsters: &[Monster], index: usize) -> f32 {
         }
         MonsterId::TheCollector if monster.hp <= monster.max_hp / 4 => {
             priority = 1.45;
+        }
+        MonsterId::SlaverRed | MonsterId::SlaverBlue | MonsterId::Taskmaster
+            if monsters
+                .iter()
+                .any(|other| other.alive() && other.id == MonsterId::Taskmaster) =>
+        {
+            // Red threatens Entangle and the largest single hit; once it is
+            // gone, Blue's Weak and 13 damage are more urgent than
+            // Taskmaster's slower Wound scaling.
+            priority = match monster.id {
+                MonsterId::SlaverRed => 1.6,
+                MonsterId::SlaverBlue => 1.2,
+                MonsterId::Taskmaster => 0.9,
+                _ => unreachable!(),
+            };
+        }
+        MonsterId::GremlinLeader
+        | MonsterId::GremlinFat
+        | MonsterId::GremlinTsundere
+        | MonsterId::GremlinThief
+        | MonsterId::GremlinWarrior
+        | MonsterId::GremlinWizard
+            if monsters
+                .iter()
+                .any(|other| other.alive() && other.id == MonsterId::GremlinLeader) =>
+        {
+            let living_minions = monsters
+                .iter()
+                .filter(|other| other.alive() && other.id != MonsterId::GremlinLeader)
+                .count();
+            priority = match monster.id {
+                MonsterId::GremlinLeader if living_minions > 0 => 0.75,
+                MonsterId::GremlinLeader => 1.0,
+                MonsterId::GremlinWizard => 1.6,
+                MonsterId::GremlinThief => 1.35,
+                MonsterId::GremlinWarrior => 1.3,
+                MonsterId::GremlinFat => 1.15,
+                MonsterId::GremlinTsundere => 1.1,
+                _ => unreachable!(),
+            };
         }
         MonsterId::Donu | MonsterId::Deca => {
             let donu = monsters
@@ -2952,6 +3009,12 @@ mod tests {
 
         game.combat.as_mut().unwrap().turn = 7;
         assert_eq!(remaining_fight_length(&game), params().fl_a1_boss - 6.0);
+        let context = EvaluationContext::new(&game);
+        assert_eq!(context.turns_left, params().fl_a1_boss - 6.0);
+        assert_eq!(
+            context.damage_weight,
+            params().dmg_base + params().dmg_per_turn * params().fl_a1_boss
+        );
     }
 
     #[test]
@@ -3010,6 +3073,23 @@ mod tests {
         // Orichalcum 6 + Metallicize 3 + Plated Armor 4 + two Frost passives
         // (existing + Frozen Core) at 4 each + Cables repeating the front 4.
         assert_eq!(end_of_turn_block(&game), 25);
+    }
+
+    #[test]
+    fn overblock_only_taxes_defense_that_expires_this_turn() {
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.player.block = 5;
+        assert_eq!(expiring_overblock(&game, 1, end_of_turn_block(&game)), 4);
+
+        *game.player.orbs = vec![Orb {
+            kind: OrbKind::Frost,
+            evoke: 5,
+        }];
+        assert_eq!(end_of_turn_block(&game), 7);
+        assert_eq!(expiring_overblock(&game, 1, end_of_turn_block(&game)), 5);
+
+        game.player.add_power(PowerId::Barricade, 1);
+        assert_eq!(expiring_overblock(&game, 1, end_of_turn_block(&game)), 0);
     }
 
     #[test]
@@ -3355,6 +3435,66 @@ mod tests {
         );
         assert!(target_priority(MonsterId::Cultist) > target_priority(MonsterId::AwakenedOne));
         assert!(target_priority(MonsterId::Donu) > target_priority(MonsterId::Deca));
+    }
+
+    #[test]
+    fn slavers_focus_red_before_blue_and_taskmaster() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        let combat = Combat::start(
+            EncounterId::Slavers,
+            &mut game.player,
+            &mut game.rng,
+            23,
+            2,
+            20,
+        );
+        let priority = |id| {
+            let index = combat
+                .monsters
+                .iter()
+                .position(|monster| monster.id == id)
+                .unwrap();
+            encounter_target_priority(&combat.monsters, index)
+        };
+
+        assert!(priority(MonsterId::SlaverRed) > priority(MonsterId::SlaverBlue));
+        assert!(priority(MonsterId::SlaverBlue) > priority(MonsterId::Taskmaster));
+        assert_eq!(target_priority(MonsterId::SlaverRed), 1.0);
+    }
+
+    #[test]
+    fn gremlin_leader_targets_minions_before_the_boss() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        let combat = Combat::start(
+            EncounterId::GremlinLeader,
+            &mut game.player,
+            &mut game.rng,
+            23,
+            2,
+            20,
+        );
+        let leader = combat
+            .monsters
+            .iter()
+            .position(|monster| monster.id == MonsterId::GremlinLeader)
+            .unwrap();
+        let minion = combat
+            .monsters
+            .iter()
+            .position(|monster| monster.id != MonsterId::GremlinLeader)
+            .unwrap();
+
+        assert!(
+            encounter_target_priority(&combat.monsters, minion)
+                > encounter_target_priority(&combat.monsters, leader)
+        );
+        assert_eq!(target_priority(MonsterId::GremlinTsundere), 0.8);
     }
 
     #[test]
