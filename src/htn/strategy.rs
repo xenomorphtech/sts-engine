@@ -1,5 +1,6 @@
 use crate::action::{Action, PotionOp};
 use crate::card::Card;
+use crate::creature::OrbKind;
 use crate::game::{CampfireOption, EventOption, Game, GridKind, RewardKind, Screen, ShopChoice};
 use crate::ids::{CardId, CardType, Character, EncounterId, EventId, PotionId, RelicId, RoomType};
 
@@ -138,11 +139,8 @@ fn room_value(
                     >= p.elite_strength_base
                         + p.elite_strength_slope * act as f32
                         + if game.ascension >= 15 { 2.0 } else { 0.0 };
-            let matchup = elite_matchup(
-                game.dungeon.elite_list.first().copied(),
-                metrics,
-                strength,
-            );
+            let matchup =
+                elite_matchup(game.dungeon.elite_list.first().copied(), metrics, strength);
             let mut v = if afford {
                 p.elite_value + matchup as f32
             } else {
@@ -300,44 +298,44 @@ pub fn combat_reward(game: &Game, legal: &[Action]) -> Action {
                 continue;
             };
             match reward.kind {
-            RewardKind::EmeraldKey => {
-                if keys_advance_win_condition(game) && !game.has_emerald_key() {
-                    return a.clone();
-                }
-            }
-            RewardKind::Gold(_) | RewardKind::StolenGold(_) | RewardKind::Relic(_) => {
-                return a.clone()
-            }
-            RewardKind::SapphireKey => {
-                if keys_advance_win_condition(game)
-                    && game.final_act_available()
-                    && !game.has_sapphire_key()
-                    && game.dungeon.act as i32 >= 2
-                {
-                    return a.clone();
-                }
-            }
-            RewardKind::Potion(id) => {
-                if empty_pots > 0 {
-                    return a.clone();
-                }
-                if let Some(slot) = potion_swap_slot(game, id) {
-                    if let Some(discard) = potion_discard_action(legal, slot) {
-                        return discard;
+                RewardKind::EmeraldKey => {
+                    if keys_advance_win_condition(game) && !game.has_emerald_key() {
+                        return a.clone();
                     }
                 }
-            }
-            RewardKind::Card => {
-                let best = game
-                    .card_reward
-                    .iter()
-                    .map(|c| score_card(game, c))
-                    .max()
-                    .unwrap_or(0);
-                if best as f32 >= params().pick_threshold {
-                    return a.clone();
+                RewardKind::Gold(_) | RewardKind::StolenGold(_) | RewardKind::Relic(_) => {
+                    return a.clone()
                 }
-            }
+                RewardKind::SapphireKey => {
+                    if keys_advance_win_condition(game)
+                        && game.final_act_available()
+                        && !game.has_sapphire_key()
+                        && game.dungeon.act as i32 >= 2
+                    {
+                        return a.clone();
+                    }
+                }
+                RewardKind::Potion(id) => {
+                    if empty_pots > 0 {
+                        return a.clone();
+                    }
+                    if let Some(slot) = potion_swap_slot(game, id) {
+                        if let Some(discard) = potion_discard_action(legal, slot) {
+                            return discard;
+                        }
+                    }
+                }
+                RewardKind::Card => {
+                    let best = game
+                        .card_reward
+                        .iter()
+                        .map(|c| score_card(game, c))
+                        .max()
+                        .unwrap_or(0);
+                    if best as f32 >= params().pick_threshold {
+                        return a.clone();
+                    }
+                }
             }
         }
     }
@@ -643,7 +641,11 @@ pub fn neow_choice(game: &Game, legal: &[Action]) -> Action {
 }
 
 pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
-    let event_options = game.event.as_ref().map(|event| event.options.as_slice()).unwrap_or(&[]);
+    let event_options = game
+        .event
+        .as_ref()
+        .map(|event| event.options.as_slice())
+        .unwrap_or(&[]);
     let mut choices: Vec<(&Action, EventOption)> = legal
         .iter()
         .filter_map(|action| match action {
@@ -704,9 +706,7 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
             | EventId::Duplicator
             | EventId::Transmorgrifier
             | EventId::GoldenShrine,
-        ) => {
-            pick(&[EventOption::Pray])
-        }
+        ) => pick(&[EventOption::Pray]),
         Some(EventId::AccursedBlacksmith) => pick(&[EventOption::Forge]),
         Some(EventId::ShiningLight) => {
             if hp_frac >= 0.7 {
@@ -852,7 +852,12 @@ fn match_and_keep_choice_from_state(
 
 fn event_hp_loss(game: &Game, option: EventOption) -> i32 {
     let event = game.event.as_ref();
-    let data = |index| event.and_then(|event| event.data.get(index)).copied().unwrap_or(0);
+    let data = |index| {
+        event
+            .and_then(|event| event.data.get(index))
+            .copied()
+            .unwrap_or(0)
+    };
     match (event.map(|event| event.id), option) {
         (Some(EventId::ScrapOoze), EventOption::ReachInside | EventOption::Deeper) => data(0),
         (Some(EventId::ShiningLight), EventOption::Enter) => data(0),
@@ -947,7 +952,9 @@ fn removal_score(card: &Card) -> i32 {
 /// Value of moving this card from a pile into the hand mid-combat
 /// (Hologram, Seek, Secret Technique).
 fn retrieve_score(game: &Game, card: &Card) -> i32 {
-    let mut s = defect_pick(card.id) + i32::from(card.upgraded) * 25;
+    let mut s = defect_pick(card.id)
+        + i32::from(card.upgraded) * 25
+        + queue_tool_retrieve_bonus(game, card);
     let incoming: i32 = game
         .combat
         .as_ref()
@@ -972,6 +979,32 @@ fn retrieve_score(game: &Game, card: &Card) -> i32 {
         s += 20;
     }
     s
+}
+
+/// Redo/Multi-Cast are Recursion's and Multi-Cast's internal queue tools.
+/// Their ordinary draft score understates a combat retrieval when the front
+/// orb has a prepared evoke or releases energy for the rest of the hand.
+fn queue_tool_retrieve_bonus(game: &Game, card: &Card) -> i32 {
+    let front = game.player.orbs.first();
+    match (card.id, front.map(|orb| orb.kind)) {
+        (CardId::Redo, Some(OrbKind::Dark)) => front.unwrap().evoke.max(6).min(240) * 2,
+        (CardId::Multi_Cast, Some(OrbKind::Dark)) => {
+            front.unwrap().evoke.max(6).min(160) * game.player.energy.max(1)
+        }
+        (CardId::Redo, Some(OrbKind::Plasma)) => 140,
+        (CardId::Multi_Cast, Some(OrbKind::Plasma)) => 180,
+        (CardId::Redo | CardId::Multi_Cast, Some(OrbKind::Lightning | OrbKind::Frost)) => 80,
+        (CardId::Undo, _)
+            if game
+                .player
+                .hand
+                .iter()
+                .any(|held| matches!(held.id, CardId::Redo | CardId::Multi_Cast)) =>
+        {
+            90
+        }
+        _ => 0,
+    }
 }
 
 pub fn hand_select(game: &Game, legal: &[Action]) -> Action {
@@ -1420,13 +1453,17 @@ fn boss_relic_rank(id: RelicId) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::creature::{Orb, OrbKind};
     use crate::unlocks::Unlocks;
 
     #[test]
     fn elite_matchups_reflect_deck_shape() {
         let weak = DeckMetrics::default();
         assert_eq!(elite_matchup(Some(EncounterId::GremlinNob), weak, 0), -60);
-        assert_eq!(elite_matchup(Some(EncounterId::ThreeSentries), weak, 0), -40);
+        assert_eq!(
+            elite_matchup(Some(EncounterId::ThreeSentries), weak, 0),
+            -40
+        );
 
         let prepared = DeckMetrics {
             aoe: 2,
@@ -1434,9 +1471,18 @@ mod tests {
             block_cards: 6,
             ..DeckMetrics::default()
         };
-        assert_eq!(elite_matchup(Some(EncounterId::GremlinNob), prepared, 6), 15);
-        assert_eq!(elite_matchup(Some(EncounterId::ThreeSentries), prepared, 6), 20);
-        assert_eq!(elite_matchup(Some(EncounterId::BookOfStabbing), prepared, 6), 15);
+        assert_eq!(
+            elite_matchup(Some(EncounterId::GremlinNob), prepared, 6),
+            15
+        );
+        assert_eq!(
+            elite_matchup(Some(EncounterId::ThreeSentries), prepared, 6),
+            20
+        );
+        assert_eq!(
+            elite_matchup(Some(EncounterId::BookOfStabbing), prepared, 6),
+            15
+        );
         assert_eq!(elite_matchup(Some(EncounterId::Slavers), prepared, 6), 10);
         assert_eq!(elite_matchup(Some(EncounterId::GiantHead), weak, 0), -50);
         assert_eq!(elite_matchup(Some(EncounterId::Nemesis), prepared, 6), 10);
@@ -1449,6 +1495,28 @@ mod tests {
         let claw_without_payoff = score_card(&game, &Card::new(CardId::Gash));
         game.player.deck.push(Card::new(CardId::All_For_One));
         assert!(score_card(&game, &Card::new(CardId::Gash)) > claw_without_payoff);
+    }
+
+    #[test]
+    fn retrieval_promotes_queue_tools_for_a_prepared_front_orb() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.player.energy = 3;
+        *game.player.orbs = vec![Orb {
+            kind: OrbKind::Dark,
+            evoke: 80,
+        }];
+
+        assert!(
+            retrieve_score(&game, &Card::new(CardId::Redo))
+                > retrieve_score(&game, &Card::new(CardId::Strike_B))
+        );
+        assert!(
+            retrieve_score(&game, &Card::new(CardId::Multi_Cast))
+                > retrieve_score(&game, &Card::new(CardId::Strike_B))
+        );
+
+        game.player.hand.push(Card::new(CardId::Multi_Cast));
+        assert!(queue_tool_retrieve_bonus(&game, &Card::new(CardId::Undo)) > 0);
     }
 
     #[test]
@@ -1677,13 +1745,14 @@ mod tests {
         use crate::game::EventState;
 
         let set_event =
-            |game: &mut Game,
-             id: EventId,
-             screen: i32,
-             options: &[EventOption],
-             data: Vec<i32>| {
+            |game: &mut Game, id: EventId, screen: i32, options: &[EventOption], data: Vec<i32>| {
                 game.screen = Screen::Event;
-                game.event = Some(EventState::policy_fixture(id, screen, options.to_vec(), data));
+                game.event = Some(EventState::policy_fixture(
+                    id,
+                    screen,
+                    options.to_vec(),
+                    data,
+                ));
             };
         let chosen_option = |game: &Game| match event_choice(game, &game.legal_actions()) {
             Action::Choose { index, .. } => game
