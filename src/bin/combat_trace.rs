@@ -67,6 +67,7 @@ struct TurnRow {
     plays: Vec<String>,
     unplayed: Vec<String>,
     monster_hp: i32,
+    monster_hp_detail: String,
     incoming_and_block: String,
     player_hp: i32,
 }
@@ -360,12 +361,58 @@ fn monster_hp(game: &Game) -> i32 {
         .unwrap_or(0)
 }
 
+fn monster_hp_detail(game: &Game) -> String {
+    let Some(combat) = game.combat.as_ref() else {
+        return "0".to_string();
+    };
+    let living: Vec<_> = combat
+        .monsters
+        .iter()
+        .filter(|monster| monster.alive())
+        .collect();
+    if living.len() <= 1 {
+        return living
+            .first()
+            .map(|monster| monster.hp.max(0).to_string())
+            .unwrap_or_else(|| "0".to_string());
+    }
+    living
+        .iter()
+        .map(|monster| {
+            format!(
+                "{} {}",
+                identifier_words(monster.id.sts_id()),
+                monster.hp.max(0)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn first_monster_name(game: &Game) -> String {
     game.combat
         .as_ref()
         .and_then(|combat| combat.monsters.first())
         .map(|monster| identifier_words(monster.id.sts_id()))
         .unwrap_or_else(|| "Monster".to_string())
+}
+
+fn target_name(game: &Game, target_index: Option<usize>) -> Option<String> {
+    let index = target_index?;
+    let combat = game.combat.as_ref()?;
+    if combat
+        .monsters
+        .iter()
+        .filter(|monster| monster.alive())
+        .count()
+        <= 1
+    {
+        return None;
+    }
+    combat
+        .monsters
+        .get(index)
+        .map(|monster| identifier_words(monster.id.sts_id()))
 }
 
 fn current_mob_names(game: &Game) -> Vec<String> {
@@ -461,12 +508,16 @@ fn trace_current_fight(
             let mut fallback_unplayed = hand_names(game);
             let fallback_incoming = incoming_and_block(game);
             match &action {
-                Action::Play { hand_index, .. } => {
+                Action::Play {
+                    hand_index,
+                    target_index,
+                } => {
                     let card = game.player.hand.get(*hand_index).ok_or_else(|| {
                         format!("HTN chose missing hand index {hand_index} on turn {turn}")
                     })?;
                     let card_id = card.id;
                     let mut name = card_name(card);
+                    let target = target_name(game, *target_index);
                     let block_before = game.player.block;
                     let mut remaining = hand_names(&game);
                     remaining.remove(*hand_index);
@@ -476,6 +527,10 @@ fn trace_current_fight(
                     if card_id == CardId::Stack {
                         name = format!("Stack for {}", (game.player.block - block_before).max(0));
                     }
+                    if let Some(target) = target {
+                        name.push_str(" → ");
+                        name.push_str(&target);
+                    }
                     plays.push(name);
                     if game.combat.is_none() {
                         completed_row = Some(TurnRow {
@@ -483,6 +538,7 @@ fn trace_current_fight(
                             plays: plays.clone(),
                             unplayed: remaining,
                             monster_hp: 0,
+                            monster_hp_detail: "0".to_string(),
                             incoming_and_block: format!("Lethal / {}", game.player.block),
                             player_hp: game.player.hp,
                         });
@@ -498,6 +554,7 @@ fn trace_current_fight(
                         plays: plays.clone(),
                         unplayed,
                         monster_hp: monster_hp(&game),
+                        monster_hp_detail: monster_hp_detail(&game),
                         incoming_and_block,
                         player_hp: game.player.hp,
                     });
@@ -505,7 +562,7 @@ fn trace_current_fight(
                 Action::Potion {
                     slot,
                     action: operation,
-                    ..
+                    target_index,
                 } => {
                     let potion = game
                         .player
@@ -513,7 +570,12 @@ fn trace_current_fight(
                         .get(*slot)
                         .map(|potion| identifier_words(potion.id.sts_id()))
                         .unwrap_or_else(|| format!("slot {slot}"));
-                    plays.push(format!("{operation:?} {potion}"));
+                    let mut name = format!("{operation:?} {potion}");
+                    if let Some(target) = target_name(game, *target_index) {
+                        name.push_str(" → ");
+                        name.push_str(&target);
+                    }
+                    plays.push(name);
                     step_and_observe(game, &action, floors);
                     *steps += 1;
                 }
@@ -532,6 +594,7 @@ fn trace_current_fight(
                     plays: plays.clone(),
                     unplayed: fallback_unplayed,
                     monster_hp: monster_hp(game),
+                    monster_hp_detail: monster_hp_detail(game),
                     incoming_and_block: fallback_incoming,
                     player_hp: game.player.hp,
                 });
@@ -645,7 +708,12 @@ fn append_cell(line: &mut String, value: &str, width: usize, right: bool) {
 }
 
 fn render_table(rows: &[TurnRow], monster_name: &str, player_name: &str) -> String {
-    let monster_header = format!("{monster_name} HP");
+    let multiple_enemies = rows.iter().any(|row| row.monster_hp_detail.contains(';'));
+    let monster_header = if multiple_enemies {
+        "Enemy HP".to_string()
+    } else {
+        format!("{monster_name} HP")
+    };
     let player_header = format!("{player_name} HP");
     let unplayed: Vec<String> = rows
         .iter()
@@ -663,7 +731,7 @@ fn render_table(rows: &[TurnRow], monster_name: &str, player_name: &str) -> Stri
             .max("HTN plays".len())
             .max(26),
         rows.iter()
-            .map(|row| row.monster_hp.to_string().len())
+            .map(|row| row.monster_hp_detail.chars().count())
             .max()
             .unwrap_or(0)
             .max(monster_header.chars().count())
@@ -713,7 +781,7 @@ fn render_table(rows: &[TurnRow], monster_name: &str, player_name: &str) -> Stri
         output.push_str("  ");
         append_cell(&mut output, &plays[index], widths[1], false);
         output.push_str("  ");
-        append_cell(&mut output, &row.monster_hp.to_string(), widths[2], true);
+        append_cell(&mut output, &row.monster_hp_detail, widths[2], true);
         output.push_str("  ");
         append_cell(&mut output, &row.incoming_and_block, widths[3], true);
         output.push_str("  ");
@@ -883,6 +951,7 @@ mod tests {
                 plays: vec!["Zap".to_string()],
                 unplayed: vec!["Defend".to_string(), "Defend".to_string()],
                 monster_hp: 3,
+                monster_hp_detail: "3".to_string(),
                 incoming_and_block: "6 / 0".to_string(),
                 player_hp: 40,
             }],

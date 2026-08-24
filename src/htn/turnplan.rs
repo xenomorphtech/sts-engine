@@ -1183,6 +1183,14 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
     value += phase_transitions as f32 * p.kill_bonus;
     value -= laga_wake_penalty;
     value -= unblocked * danger;
+    let no_block_turns = after.player.power_amount(PowerId::NoBlock).max(0);
+    if no_block_turns > 0 {
+        // Panic Button's block is immediate, while NoBlock covers the next
+        // two turns. Price the deterministic exposure so a harmless attack
+        // is not overblocked at the cost of a larger following hit.
+        let future_exposure = incoming.max(scripted).max(0) as f32;
+        value -= no_block_turns as f32 * future_exposure * danger * 0.45;
+    }
     if scripted > 0 {
         let bank = persistent_block_bank(after);
         value -= (scripted - bank).max(0) as f32 * p.spike_danger;
@@ -3309,6 +3317,33 @@ mod tests {
 
         game.player.energy = 1;
         assert_eq!(cheap_hand_block(&game), 7);
+    }
+
+    #[test]
+    fn panic_button_no_block_prices_the_following_attack() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut before = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        before.combat = Some(Combat::start(
+            EncounterId::Cultist,
+            &mut before.player,
+            &mut before.rng,
+            20,
+            3,
+            20,
+        ));
+        before.screen = Screen::Combat;
+        let monster = &mut before.combat.as_mut().unwrap().monsters[0];
+        monster.intent = crate::creature::Intent::Attack;
+        monster.intent_damage = 20;
+        monster.intent_base_damage = 20;
+        monster.intent_hits = 1;
+        let safe = before.clone();
+        let mut locked_out = before.clone();
+        locked_out.player.add_power(PowerId::NoBlock, 2);
+
+        assert!(score_state(&before, &safe) > score_state(&before, &locked_out));
     }
 
     #[test]

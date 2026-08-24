@@ -817,7 +817,18 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
                 None
             }
         }
-        Some(EventId::MaskedBandits) => pick(&[EventOption::Fight]),
+        Some(EventId::MaskedBandits) => {
+            let metrics = deck_metrics(game);
+            let multi_target_ready = metrics.aoe > 0
+                && (metrics.block_cards + metrics.frost_src >= 7 || metrics.scaling >= 3);
+            let orb_wall_ready = metrics.scaling >= 4 && metrics.frost_src >= 2;
+            let combat_ready = hp_frac >= 0.82 && (multi_target_ready || orb_wall_ready);
+            if combat_ready {
+                pick(&[EventOption::Fight])
+            } else {
+                pick(&[EventOption::Pay])
+            }
+        }
         _ => None,
     };
     if let Some(action) = selected {
@@ -2088,6 +2099,25 @@ mod tests {
             vec![],
         );
         assert_eq!(chosen_option(&game), EventOption::Study);
+
+        game.player.hp = 30;
+        game.player.gold = 108;
+        set_event(
+            &mut game,
+            EventId::MaskedBandits,
+            0,
+            &[EventOption::Pay, EventOption::Fight],
+            vec![],
+        );
+        assert_eq!(chosen_option(&game), EventOption::Pay);
+        game.player.hp = game.player.max_hp;
+        assert_eq!(chosen_option(&game), EventOption::Pay);
+        game.player.deck.extend([
+            Card::new(CardId::Electrodynamics),
+            Card::new(CardId::Glacier),
+            Card::new(CardId::Glacier),
+        ]);
+        assert_eq!(chosen_option(&game), EventOption::Fight);
 
         let strike = game
             .player
