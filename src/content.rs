@@ -744,6 +744,14 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Fission, false) | (CardId::Fission, true) => CardStats {
             cost: 0, damage: -1, block: -1, magic: 1, exhaust: true, ethereal: false, innate: false,
         },
+        (CardId::Meteor_Strike, false) => CardStats::attack(5, 24),
+        (CardId::Meteor_Strike, true) => CardStats::attack(5, 30),
+        (CardId::Hyperbeam, false) => CardStats {
+            cost: 2, damage: 26, block: -1, magic: 3, exhaust: false, ethereal: false, innate: false,
+        },
+        (CardId::Hyperbeam, true) => CardStats {
+            cost: 2, damage: 34, block: -1, magic: 3, exhaust: false, ethereal: false, innate: false,
+        },
         (CardId::Multi_Cast, false) | (CardId::Multi_Cast, true) => CardStats {
             cost: -1, damage: -1, block: -1, magic: -1, exhaust: false, ethereal: false, innate: false,
         },

@@ -16,6 +16,10 @@ pub struct Combat {
     pub smoked: bool,
     pub turn: i32,
     pub cards_played_this_turn: i32,
+    /// Number of distinct cards Echo Form has duplicated this turn. Copies
+    /// themselves increment `cards_played_this_turn`, so they need a separate
+    /// counter from the persistent EchoForm power amount.
+    pub echo_cards_duplicated_this_turn: i32,
     /// TimeWarpPower.callEndTurnEarlySequence after the twelfth card.
     pub force_end_turn: bool,
     pub skills_this_turn: i32,
@@ -305,7 +309,7 @@ impl Combat {
                 channeled.push(kind);
             }
         }
-        gain_start_of_turn_plasma_energy(player);
+        gain_start_of_turn_plasma_energy(player, 0);
         tick_inserter(player);
         if player.has_relic(RelicId::DataDisk) {
             player.add_power(PowerId::Focus, 1);
@@ -331,6 +335,7 @@ impl Combat {
             smoked: false,
             turn: 1,
             cards_played_this_turn: 0,
+            echo_cards_duplicated_this_turn: 0,
             skills_this_turn: 0,
             attacks_this_turn: 0,
             orange_pellets_mask: 0,
@@ -4895,6 +4900,11 @@ pub fn play_owned_card(
     } else {
         1
     };
+    let echo_form = player.power_amount(PowerId::EchoForm);
+    if combat.echo_cards_duplicated_this_turn < echo_form {
+        combat.echo_cards_duplicated_this_turn += 1;
+        plays += 1;
+    }
     if card.card_type() == CardType::POWER && player.power_amount(PowerId::Amplify) > 0 {
         plays += 1;
         if let Some(power) = player.powers.iter_mut().find(|p| p.id == PowerId::Amplify) {
@@ -5675,9 +5685,12 @@ fn apply_card_effect(
         }
         CardId::Multi_Cast => {
             // MulticastAction: if hasOrb, effect = energyOnUse (+2 Chemical X, +1 upgraded).
-            // EvokeWithoutRemoving (effect-1) times, then EvokeOrbAction (removes).
+            // use() spends EnergyPanel.totalCount before the queued
+            // EvokeWithoutRemoving/EvokeOrb actions run. Plasma energy from
+            // those evocations therefore remains available afterward.
             if !player.orbs.is_empty() {
-                let mut effect = energy_on_use(player, combat);
+                let spent = energy_on_use(player, combat);
+                let mut effect = spent;
                 if player.has_relic(RelicId::Chemical_X) {
                     effect += 2;
                 }
@@ -5685,14 +5698,24 @@ fn apply_card_effect(
                     effect += 1;
                 }
                 if effect > 0 {
+                    if !card.free_to_play_once {
+                        player.energy = (player.energy - spent).max(0);
+                    }
                     for _ in 0..(effect - 1) {
                         evoke_front(player, combat, rng, false);
                     }
                     evoke_front(player, combat, rng, true);
-                    if !card.free_to_play_once {
-                        player.energy = 0;
-                    }
                 }
+            }
+        }
+        CardId::Meteor_Strike => {
+            if let Some(i) = target {
+                if let Some(monster) = combat.monsters.get_mut(i) {
+                    damage_monster(monster, player, rng, dmg, 1);
+                }
+            }
+            for _ in 0..3 {
+                channel_orb(player, combat, rng, OrbKind::Plasma);
             }
         }
         CardId::Ball_Lightning => {
@@ -5844,9 +5867,11 @@ fn apply_card_effect(
         }
         CardId::Tempest => {
             // TempestAction: effect = energyOnUse, +2 Chemical X, +1 if upgraded.
-            // If effect > 0: ChannelAction(Lightning) * effect, then energy.use(total)
-            // unless freeToPlayOnce. X=0 unupgraded is a no-op besides exhaust.
-            let mut effect = energy_on_use(player, combat);
+            // use() spends EnergyPanel.totalCount before the queued
+            // ChannelActions run, so a forced Plasma evoke can leave energy.
+            // X=0 unupgraded is a no-op besides exhaust.
+            let spent = energy_on_use(player, combat);
+            let mut effect = spent;
             if player.has_relic(RelicId::Chemical_X) {
                 effect += 2;
             }
@@ -5854,11 +5879,11 @@ fn apply_card_effect(
                 effect += 1;
             }
             if effect > 0 {
+                if !card.free_to_play_once {
+                    player.energy = (player.energy - spent).max(0);
+                }
                 for _ in 0..effect {
                     channel_orb(player, combat, rng, OrbKind::Lightning);
-                }
-                if !card.free_to_play_once {
-                    player.energy = 0;
                 }
             }
         }
@@ -6061,8 +6086,6 @@ fn apply_card_effect(
             player.add_power(PowerId::DrawCard, card.base_magic.max(1) as i32);
         }
         CardId::Echo_Form => {
-            // Duplicated-card behavior is not modeled yet, but the power must
-            // still be represented in state identity and strategic scoring.
             player.add_power(PowerId::EchoForm, card.base_magic.max(1) as i32);
         }
         CardId::All_For_One => {
@@ -6484,6 +6507,17 @@ fn apply_card_effect(
                 for _ in 0..card.base_magic.max(1) {
                     channel_orb(player, combat, rng, OrbKind::Dark);
                 }
+            }
+        }
+        CardId::Hyperbeam => {
+            for monster in combat.monsters.iter_mut().filter(|monster| monster.alive()) {
+                damage_monster(monster, player, rng, dmg, 1);
+            }
+            resolve_darklings(combat);
+            // DamageAllEnemiesAction resolves before the queued Focus loss.
+            // Post-combat cleanup or player death drops that later action.
+            if player.hp > 0 && !combat.all_dead() {
+                player.add_power(PowerId::Focus, -(card.base_magic.max(3) as i32));
             }
         }
         CardId::Electrodynamics => {
@@ -7449,6 +7483,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         && combat.turn > 1
         && combat.cards_played_this_turn <= 3;
     combat.cards_played_this_turn = 0;
+    combat.echo_cards_duplicated_this_turn = 0;
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
         r.counter = 0;
     }
@@ -7555,7 +7590,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         player.add_power(PowerId::Focus, -bias);
     }
     player.energy = player.energy_master;
-    gain_start_of_turn_plasma_energy(player);
+    gain_start_of_turn_plasma_energy(player, loops);
     let energized = player.power_amount(PowerId::Energized);
     if energized > 0 {
         player.energy += energized;
@@ -7674,13 +7709,14 @@ fn tick_inserter(player: &mut Player) {
 }
 
 /// Plasma.onStartOfTurn grants one energy per Plasma orb. Gold-Plated Cables
-/// calls the front orb's start hook a second time.
-fn gain_start_of_turn_plasma_energy(player: &mut Player) {
+/// and each Loop stack call the front Plasma's start hook an additional time.
+fn gain_start_of_turn_plasma_energy(player: &mut Player, loop_triggers: i32) {
     let mut energy = player.orbs.iter().filter(|orb| orb.kind == OrbKind::Plasma).count() as i32;
-    if player.has_relic(RelicId::Cables)
-        && player.orbs.first().is_some_and(|orb| orb.kind == OrbKind::Plasma)
-    {
-        energy += 1;
+    if player.orbs.first().is_some_and(|orb| orb.kind == OrbKind::Plasma) {
+        if player.has_relic(RelicId::Cables) {
+            energy += 1;
+        }
+        energy += loop_triggers.max(0);
     }
     player.energy += energy;
 }
