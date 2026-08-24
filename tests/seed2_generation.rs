@@ -1,8 +1,8 @@
+use std::path::PathBuf;
 use sts_engine::game::Game;
 use sts_engine::ids::Character;
 use sts_engine::parity::{compare_generation, load_first_snapshot};
 use sts_engine::Unlocks;
-use std::path::PathBuf;
 
 fn snapshot_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -58,7 +58,10 @@ fn seed2_floor1_starter_shuffle_matches_java() {
         vec!["Defend_R", "Strike_R", "Strike_R", "Defend_R", "Defend_R"]
     );
     let draw: Vec<_> = player.draw.iter().map(|c| c.sts_id()).collect();
-    assert_eq!(draw, vec!["Bash", "Defend_R", "Strike_R", "Strike_R", "Strike_R"]);
+    assert_eq!(
+        draw,
+        vec!["Bash", "Defend_R", "Strike_R", "Strike_R", "Strike_R"]
+    );
     let _ = (Card::new(CardId::Strike_R), draw_cards_rng);
 }
 

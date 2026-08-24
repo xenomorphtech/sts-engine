@@ -5,6 +5,10 @@
 //! cargo run --release --bin sts-htn -- --seed 0 --count 100 --concurrent 6 --a0
 //! ```
 
+#[path = "htn/learned_deck.rs"]
+mod learned_deck;
+
+use learned_deck::LearnedDeckPolicy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
@@ -19,6 +23,22 @@ use sts_engine::htn::HtnAgent;
 use sts_engine::ids::{Character, PowerId, RoomType};
 use sts_engine::rng::StsRandom;
 use sts_engine::{Action, Unlocks};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeckPolicyMode {
+    Learned,
+    Htn,
+}
+
+impl DeckPolicyMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "rl" | "rled" | "learned" | "weights" => Some(Self::Learned),
+            "htn" | "pure-htn" | "pure_htn" => Some(Self::Htn),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -202,6 +222,7 @@ fn run_final_batch(
     ascension: i32,
     max_steps: usize,
     unlocks: &Unlocks,
+    learned_policy: Option<&LearnedDeckPolicy>,
 ) -> Vec<FinalState> {
     let next_offset = AtomicUsize::new(0);
     let mut states = thread::scope(|scope| {
@@ -217,7 +238,16 @@ fn run_final_batch(
                     let seed = seeds[offset];
                     local.push(FinalState::from_run(
                         seed,
-                        &run_seed(seed, character, ascension, max_steps, unlocks, false, false),
+                        &run_seed(
+                            seed,
+                            character,
+                            ascension,
+                            max_steps,
+                            unlocks,
+                            learned_policy,
+                            false,
+                            false,
+                        ),
                     ));
                 }
                 local
@@ -239,6 +269,7 @@ fn run_action_batch(
     ascension: i32,
     max_steps: usize,
     unlocks: &Unlocks,
+    learned_policy: Option<&LearnedDeckPolicy>,
 ) -> Vec<ActionLog> {
     let next_offset = AtomicUsize::new(0);
     let mut logs = thread::scope(|scope| {
@@ -252,7 +283,16 @@ fn run_action_batch(
                         break;
                     }
                     let seed = seeds[offset];
-                    let run = run_seed(seed, character, ascension, max_steps, unlocks, false, true);
+                    let run = run_seed(
+                        seed,
+                        character,
+                        ascension,
+                        max_steps,
+                        unlocks,
+                        learned_policy,
+                        false,
+                        true,
+                    );
                     local.push(ActionLog {
                         seed,
                         outcome: Some(run.outcome),
@@ -269,6 +309,159 @@ fn run_action_batch(
     });
     logs.sort_unstable_by_key(|log| log.seed);
     logs
+}
+
+fn replay_action_prefix(
+    log: &ActionLog,
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+) -> Game {
+    let mut game = Game::new(log.seed, character, ascension, unlocks.clone());
+    for action in &log.actions {
+        game.step(action);
+    }
+    game
+}
+
+fn at_a20_second_boss_start(game: &Game, ascension: i32) -> bool {
+    ascension == 20
+        && game.screen == Screen::Combat
+        && game.current_room == RoomType::Boss
+        && game.dungeon.act as i32 == 3
+        && game.dungeon.floor >= 51
+        && game.combat.is_some()
+        && game.player.hp > 0
+}
+
+fn second_boss_prefixes(
+    logs: &[ActionLog],
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+) -> Vec<ActionLog> {
+    let mut prefixes = Vec::new();
+    for log in logs {
+        let mut game = Game::new(log.seed, character, ascension, unlocks.clone());
+        for (index, action) in log.actions.iter().enumerate() {
+            game.step(action);
+            if at_a20_second_boss_start(&game, ascension) {
+                prefixes.push(ActionLog {
+                    seed: log.seed,
+                    outcome: None,
+                    actions: log.actions[..=index].to_vec(),
+                });
+                break;
+            }
+        }
+    }
+    prefixes
+}
+
+fn run_boss_gauntlet(
+    log: &ActionLog,
+    character: Character,
+    ascension: i32,
+    max_steps: usize,
+    unlocks: &Unlocks,
+) -> RunResult {
+    let mut game = replay_action_prefix(log, character, ascension, unlocks);
+    let mut agent = HtnAgent::new();
+    let mut steps = 0usize;
+    let mut diagnostics = RunDiagnostics::default();
+    diagnostics.a20_second_boss_entries = 1;
+    diagnostics.a20_second_boss_entry_hp_fraction =
+        f64::from(game.player.hp) / f64::from(game.player.max_hp.max(1));
+    let mut combat_progress = None;
+    let mut combat_stalemate = false;
+    let mut cleared = false;
+
+    while game.combat.is_some()
+        && game.player.hp > 0
+        && game.screen != Screen::Terminal
+        && steps < max_steps
+    {
+        if combat_has_stalled(&game, &mut combat_progress) {
+            combat_stalemate = true;
+            diagnostics.combat_stalemates = 1;
+            break;
+        }
+        let action = agent.decide(&game);
+        if matches!(action, Action::Quit) {
+            break;
+        }
+        let screen_before = game.screen;
+        game.step(&action);
+        steps += 1;
+        if screen_before == Screen::Combat
+            && game.screen == Screen::CombatReward
+            && game.current_room == RoomType::Boss
+            && game.dungeon.act as i32 == 3
+            && game.dungeon.floor >= 51
+            && game.player.hp > 0
+        {
+            diagnostics.a20_second_boss_clears = 1;
+            cleared = true;
+            break;
+        }
+    }
+
+    let outcome = if cleared {
+        Outcome::Win
+    } else {
+        completed_outcome(&game).unwrap_or_else(|| {
+            if combat_stalemate {
+                Outcome::Loss
+            } else if steps >= max_steps {
+                Outcome::Capped
+            } else {
+                Outcome::Stopped
+            }
+        })
+    };
+    record_late_boss_failure(&game, &mut diagnostics, outcome);
+    RunResult {
+        game,
+        steps,
+        outcome,
+        diagnostics,
+        actions: Vec::new(),
+    }
+}
+
+fn run_boss_gauntlet_batch(
+    logs: &[ActionLog],
+    concurrent: usize,
+    character: Character,
+    ascension: i32,
+    max_steps: usize,
+    unlocks: &Unlocks,
+) -> Vec<SeedDetail> {
+    let next_offset = AtomicUsize::new(0);
+    let mut details = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(concurrent.min(logs.len()));
+        for _ in 0..concurrent.min(logs.len()) {
+            workers.push(scope.spawn(|| {
+                let mut local = Vec::new();
+                loop {
+                    let offset = next_offset.fetch_add(1, Ordering::Relaxed);
+                    if offset >= logs.len() {
+                        break;
+                    }
+                    let log = &logs[offset];
+                    let run = run_boss_gauntlet(log, character, ascension, max_steps, unlocks);
+                    local.push(SeedDetail::from_run(log.seed, &run));
+                }
+                local
+            }));
+        }
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("HTN worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    details.sort_unstable_by_key(|detail| detail.seed);
+    details
 }
 
 fn replay_action_batch(
@@ -296,13 +489,8 @@ fn replay_action_batch(
                         game.step(action);
                         steps += 1;
                     }
-                    let outcome = if game.done && game.player.hp > 0 && game.screen != Screen::Terminal {
-                            Outcome::Win
-                        } else if game.player.hp <= 0 {
-                            Outcome::Loss
-                        } else {
-                            log.outcome.unwrap_or(Outcome::Stopped)
-                        };
+                    let outcome = completed_outcome(&game)
+                        .unwrap_or_else(|| log.outcome.unwrap_or(Outcome::Stopped));
                     let run = RunResult {
                         game,
                         steps,
@@ -367,6 +555,16 @@ impl Outcome {
     }
 }
 
+fn completed_outcome(game: &Game) -> Option<Outcome> {
+    if game.done && game.player.hp > 0 {
+        Some(Outcome::Win)
+    } else if game.player.hp <= 0 {
+        Some(Outcome::Loss)
+    } else {
+        None
+    }
+}
+
 struct RunResult {
     game: Game,
     steps: usize,
@@ -423,7 +621,12 @@ fn tally_orb_step(before: &[(usize, i32)], after: &[(usize, i32)]) {
     let mut split = None;
     for j in 0..=before.len() {
         let kept = &before[j..];
-        if after.len() >= kept.len() && kept.iter().map(|o| o.0).eq(after[..kept.len()].iter().map(|o| o.0)) {
+        if after.len() >= kept.len()
+            && kept
+                .iter()
+                .map(|o| o.0)
+                .eq(after[..kept.len()].iter().map(|o| o.0))
+        {
             split = Some(j);
             break;
         }
@@ -485,6 +688,15 @@ struct RunDiagnostics {
     treasures: usize,
     bosses: usize,
     boss_entry_hp: Vec<String>,
+    a20_second_boss_entries: usize,
+    a20_second_boss_entry_hp_fraction: f64,
+    a20_second_boss_clears: usize,
+    final_boss_entries: usize,
+    final_boss_entry_hp_fraction: f64,
+    last_boss_fights: usize,
+    last_boss_remaining_hp: i64,
+    last_boss_damage_fraction: f64,
+    combat_stalemates: usize,
     rested: usize,
     smithed: usize,
     recalled: usize,
@@ -495,7 +707,10 @@ struct SeedDetail {
     seed: i64,
     outcome: Outcome,
     steps: usize,
+    act_achieved: i32,
     floor_achieved: i32,
+    player_died: bool,
+    death_room: RoomType,
     monsters_with_hp: String,
     diagnostics: RunDiagnostics,
     final_focus: i32,
@@ -526,7 +741,10 @@ impl SeedDetail {
             seed,
             outcome: run.outcome,
             steps: run.steps,
+            act_achieved: run.game.dungeon.act as i32,
             floor_achieved: run.game.dungeon.floor,
+            player_died: run.game.player.hp <= 0,
+            death_room: run.game.current_room,
             monsters_with_hp,
             diagnostics: run.diagnostics.clone(),
             final_focus: run.game.player.power_amount(PowerId::Focus),
@@ -567,6 +785,17 @@ struct BatchStats {
     steps: usize,
     max_floor_achieved: i32,
     floor_achieved_sum: i64,
+    a20_second_boss_entries: usize,
+    a20_second_boss_entry_hp_fraction_sum: f64,
+    a20_second_boss_clears: usize,
+    final_boss_entries: usize,
+    final_boss_entry_hp_fraction_sum: f64,
+    last_boss_fights: usize,
+    last_boss_remaining_hp_sum: i64,
+    last_boss_damage_fraction_sum: f64,
+    combat_stalemates: usize,
+    deaths_by_act: [usize; 4],
+    deaths_by_act_and_room: [[usize; 4]; 4],
 }
 
 impl BatchStats {
@@ -574,12 +803,55 @@ impl BatchStats {
         self.steps += detail.steps;
         self.max_floor_achieved = self.max_floor_achieved.max(detail.floor_achieved);
         self.floor_achieved_sum += i64::from(detail.floor_achieved);
+        self.a20_second_boss_entries += detail.diagnostics.a20_second_boss_entries;
+        self.a20_second_boss_entry_hp_fraction_sum +=
+            detail.diagnostics.a20_second_boss_entry_hp_fraction;
+        self.a20_second_boss_clears += detail.diagnostics.a20_second_boss_clears;
+        self.final_boss_entries += detail.diagnostics.final_boss_entries;
+        self.final_boss_entry_hp_fraction_sum += detail.diagnostics.final_boss_entry_hp_fraction;
+        self.last_boss_fights += detail.diagnostics.last_boss_fights;
+        self.last_boss_remaining_hp_sum += detail.diagnostics.last_boss_remaining_hp;
+        self.last_boss_damage_fraction_sum += detail.diagnostics.last_boss_damage_fraction;
+        self.combat_stalemates += detail.diagnostics.combat_stalemates;
+        if let Some(index) =
+            death_act_index(detail.outcome, detail.player_died, detail.act_achieved)
+        {
+            self.deaths_by_act[index] += 1;
+            self.deaths_by_act_and_room[index][death_room_index(detail.death_room)] += 1;
+        }
         match detail.outcome {
             Outcome::Win => self.wins += 1,
             Outcome::Loss => self.losses += 1,
             Outcome::Capped => self.capped += 1,
             Outcome::Stopped => self.stopped += 1,
         }
+    }
+}
+
+fn death_act_index(outcome: Outcome, player_died: bool, act: i32) -> Option<usize> {
+    if outcome != Outcome::Loss || !player_died || !(1..=4).contains(&act) {
+        return None;
+    }
+    Some((act - 1) as usize)
+}
+
+fn death_room_index(room: RoomType) -> usize {
+    match room {
+        RoomType::Monster => 0,
+        RoomType::Elite => 1,
+        RoomType::Boss => 2,
+        _ => 3,
+    }
+}
+
+fn print_death_layer(label: &str, total: usize, rooms: [usize; 4]) {
+    let [normal, elite, boss, other] = rooms;
+    if other == 0 {
+        println!("{label}: {total} deaths (normal={normal} elite={elite} boss={boss})");
+    } else {
+        println!(
+            "{label}: {total} deaths (normal={normal} elite={elite} boss={boss} other={other})"
+        );
     }
 }
 
@@ -612,6 +884,7 @@ fn run_batch(
     ascension: i32,
     max_steps: usize,
     unlocks: &Unlocks,
+    learned_policy: Option<&LearnedDeckPolicy>,
     collect_diagnostics: bool,
 ) -> Vec<SeedDetail> {
     let count = seeds.len();
@@ -626,6 +899,7 @@ fn run_batch(
                     ascension,
                     max_steps,
                     unlocks,
+                    learned_policy,
                     collect_diagnostics,
                     false,
                 );
@@ -653,6 +927,7 @@ fn run_batch(
                         ascension,
                         max_steps,
                         unlocks,
+                        learned_policy,
                         collect_diagnostics,
                         false,
                     );
@@ -670,61 +945,143 @@ fn run_batch(
     details
 }
 
+const MAX_TURNS_WITHOUT_ENEMY_HP_PROGRESS: i32 = 60;
+
+fn combat_has_stalled(game: &Game, progress: &mut Option<(i32, i32)>) -> bool {
+    let Some(combat) = &game.combat else {
+        *progress = None;
+        return false;
+    };
+    let remaining_hp: i32 = combat
+        .monsters
+        .iter()
+        .filter(|monster| monster.alive() && !monster.half_dead)
+        .map(|monster| monster.hp.max(0))
+        .sum();
+    match *progress {
+        Some((_last_progress_turn, best_remaining_hp)) if remaining_hp < best_remaining_hp => {
+            *progress = Some((combat.turn, remaining_hp));
+            false
+        }
+        Some((last_progress_turn, _)) => {
+            combat.turn.saturating_sub(last_progress_turn) >= MAX_TURNS_WITHOUT_ENEMY_HP_PROGRESS
+        }
+        None => {
+            *progress = Some((combat.turn, remaining_hp));
+            false
+        }
+    }
+}
+
+fn record_late_boss_failure(game: &Game, diagnostics: &mut RunDiagnostics, outcome: Outcome) {
+    let is_late_boss = game.current_room == RoomType::Boss
+        && ((game.dungeon.act as i32 == 3 && game.dungeon.floor >= 51)
+            || game.dungeon.act as i32 == 4);
+    if outcome == Outcome::Win || !is_late_boss {
+        return;
+    }
+    if let Some(combat) = &game.combat {
+        let remaining_hp: i64 = combat
+            .monsters
+            .iter()
+            .filter(|monster| monster.hp > 0 && !monster.dead && !monster.escaped)
+            .map(|monster| i64::from(monster.hp))
+            .sum();
+        let total_max_hp: i64 = combat
+            .monsters
+            .iter()
+            .filter(|monster| !monster.escaped)
+            .map(|monster| i64::from(monster.max_hp.max(0)))
+            .sum();
+        diagnostics.last_boss_fights = 1;
+        diagnostics.last_boss_remaining_hp = remaining_hp;
+        diagnostics.last_boss_damage_fraction = if total_max_hp > 0 {
+            (1.0 - remaining_hp as f64 / total_max_hp as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+    }
+}
+
 fn run_seed(
     seed: i64,
     character: Character,
     ascension: i32,
     max_steps: usize,
     unlocks: &Unlocks,
+    learned_policy: Option<&LearnedDeckPolicy>,
     collect_diagnostics: bool,
     collect_actions: bool,
 ) -> RunResult {
     let mut game = Game::new(seed, character, ascension, unlocks.clone());
     let mut agent = HtnAgent::new();
+    let mut learned_run = learned_policy.map(LearnedDeckPolicy::start_run);
     let mut steps = 0usize;
     let mut diagnostics = RunDiagnostics::default();
     let mut actions = Vec::new();
+    let mut combat_progress: Option<(i32, i32)> = None;
+    let mut combat_stalemate = false;
 
     while !game.done && game.player.hp > 0 && game.screen != Screen::Terminal && steps < max_steps {
-        let action = agent.decide(&game);
+        if combat_has_stalled(&game, &mut combat_progress) {
+            combat_stalemate = true;
+            diagnostics.combat_stalemates = 1;
+            break;
+        }
+        // Always advance the HTN agent's internal bookkeeping. On supported
+        // deck-building screens the learned policy replaces only its proposed
+        // action; combat, routing, events, and unsupported grids stay pure HTN.
+        let htn_action = agent.decide(&game);
+        let action = learned_run
+            .as_mut()
+            .and_then(|policy| policy.decide(&game))
+            .unwrap_or(htn_action);
         if matches!(action, sts_engine::Action::Quit) {
             break;
         }
         let screen_before = game.screen;
-        if collect_diagnostics && screen_before == Screen::Map {
+        if screen_before == Screen::Map {
             if let sts_engine::Action::Choose {
                 room: Some(room), ..
             } = &action
             {
                 let room = room_type(room);
-                match room {
-                    RoomType::Monster => diagnostics.monsters += 1,
-                    RoomType::Elite => diagnostics.elites += 1,
-                    RoomType::Rest => diagnostics.rests += 1,
-                    RoomType::Event => diagnostics.events += 1,
-                    RoomType::Shop => diagnostics.shops += 1,
-                    RoomType::Treasure | RoomType::BossTreasure => diagnostics.treasures += 1,
-                    RoomType::Boss => {
-                        diagnostics.bosses += 1;
-                        diagnostics.boss_entry_hp.push(format!(
-                            "{}:{}/{}",
-                            game.dungeon.act as i32, game.player.hp, game.player.max_hp
-                        ));
+                if room == RoomType::Boss {
+                    diagnostics.bosses += 1;
+                    diagnostics.boss_entry_hp.push(format!(
+                        "{}:{}/{}",
+                        game.dungeon.act as i32, game.player.hp, game.player.max_hp
+                    ));
+                    if game.dungeon.act as i32 == 4 {
+                        diagnostics.final_boss_entries += 1;
+                        diagnostics.final_boss_entry_hp_fraction +=
+                            f64::from(game.player.hp) / f64::from(game.player.max_hp.max(1));
                     }
-                    _ => {}
                 }
-                let symbol = match room {
-                    RoomType::Monster => 'M',
-                    RoomType::Elite => 'E',
-                    RoomType::Rest => 'R',
-                    RoomType::Event => '?',
-                    RoomType::Shop => '$',
-                    RoomType::Treasure | RoomType::BossTreasure => 'T',
-                    RoomType::Boss => 'B',
-                    _ => '-',
-                };
-                let act_index = (game.dungeon.act as usize).saturating_sub(1).min(3);
-                diagnostics.paths[act_index].push(symbol);
+                if collect_diagnostics {
+                    match room {
+                        RoomType::Monster => diagnostics.monsters += 1,
+                        RoomType::Elite => diagnostics.elites += 1,
+                        RoomType::Rest => diagnostics.rests += 1,
+                        RoomType::Event => diagnostics.events += 1,
+                        RoomType::Shop => diagnostics.shops += 1,
+                        RoomType::Treasure | RoomType::BossTreasure => diagnostics.treasures += 1,
+                        RoomType::Boss => {}
+                        _ => {}
+                    }
+                    let symbol = match room {
+                        RoomType::Monster => 'M',
+                        RoomType::Elite => 'E',
+                        RoomType::Rest => 'R',
+                        RoomType::Event => '?',
+                        RoomType::Shop => '$',
+                        RoomType::Treasure | RoomType::BossTreasure => 'T',
+                        RoomType::Boss => 'B',
+                        _ => '-',
+                    };
+                    let act_index = (game.dungeon.act as usize).saturating_sub(1).min(3);
+                    diagnostics.paths[act_index].push(symbol);
+                }
             }
         } else if collect_diagnostics && screen_before == Screen::Rest {
             if let sts_engine::Action::Choose {
@@ -747,12 +1104,7 @@ fn run_seed(
                 let choice = label.clone().unwrap_or_else(|| format!("#{index}"));
                 let mut key = format!("{}|{}", event.id, choice);
                 key.truncate(80);
-                *ORB_STATS
-                    .events
-                    .lock()
-                    .unwrap()
-                    .entry(key)
-                    .or_insert(0) += 1;
+                *ORB_STATS.events.lock().unwrap().entry(key).or_insert(0) += 1;
             }
         }
         let orbs_before: Option<Vec<(usize, i32)>> = if screen_before == Screen::Combat {
@@ -777,6 +1129,27 @@ fn run_seed(
             None
         };
         game.step(&action);
+        if ascension == 20
+            && screen_before == Screen::CombatReward
+            && game.screen == Screen::Combat
+            && game.current_room == RoomType::Boss
+            && game.dungeon.act as i32 == 3
+            && game.dungeon.floor >= 51
+        {
+            diagnostics.a20_second_boss_entries += 1;
+            diagnostics.a20_second_boss_entry_hp_fraction +=
+                f64::from(game.player.hp) / f64::from(game.player.max_hp.max(1));
+        }
+        if ascension == 20
+            && screen_before == Screen::Combat
+            && game.screen == Screen::CombatReward
+            && game.current_room == RoomType::Boss
+            && game.dungeon.act as i32 == 3
+            && game.dungeon.floor >= 51
+            && game.player.hp > 0
+        {
+            diagnostics.a20_second_boss_clears += 1;
+        }
         if let Some(before) = orbs_before {
             let after: Vec<(usize, i32)> = game
                 .player
@@ -792,15 +1165,16 @@ fn run_seed(
         steps += 1;
     }
 
-    let outcome = if game.done && game.player.hp > 0 && game.screen != Screen::Terminal {
-        Outcome::Win
-    } else if game.player.hp <= 0 {
-        Outcome::Loss
-    } else if steps >= max_steps {
-        Outcome::Capped
-    } else {
-        Outcome::Stopped
-    };
+    let outcome = completed_outcome(&game).unwrap_or_else(|| {
+        if combat_stalemate {
+            Outcome::Loss
+        } else if steps >= max_steps {
+            Outcome::Capped
+        } else {
+            Outcome::Stopped
+        }
+    });
+    record_late_boss_failure(&game, &mut diagnostics, outcome);
 
     RunResult {
         game,
@@ -931,6 +1305,10 @@ fn print_batch(
     let steps_per_second = stats.steps as f64 / seconds;
     let win_rate = stats.wins as f64 * 100.0 / count as f64;
     let mean_floor_achieved = stats.floor_achieved_sum as f64 / count as f64;
+    let mean_a20_second_boss_entry_hp_fraction =
+        stats.a20_second_boss_entry_hp_fraction_sum / count as f64;
+    let mean_final_boss_entry_hp_fraction = stats.final_boss_entry_hp_fraction_sum / count as f64;
+    let mean_last_boss_damage_fraction = stats.last_boss_damage_fraction_sum / count as f64;
     let cohort = if let Some(source) = random_source {
         format!("cohort=random seed_source={source}")
     } else {
@@ -940,8 +1318,30 @@ fn print_batch(
             seeds.last().copied().unwrap_or(0)
         )
     };
+    println!("WR: {:.2}% ({}/{})", win_rate, stats.wins, count);
+    println!("mean_floor_achieved = {:.2}", mean_floor_achieved);
+    print_death_layer(
+        "act 1",
+        stats.deaths_by_act[0],
+        stats.deaths_by_act_and_room[0],
+    );
+    print_death_layer(
+        "act 2",
+        stats.deaths_by_act[1],
+        stats.deaths_by_act_and_room[1],
+    );
+    print_death_layer(
+        "act 3",
+        stats.deaths_by_act[2],
+        stats.deaths_by_act_and_room[2],
+    );
+    print_death_layer(
+        "heart",
+        stats.deaths_by_act[3],
+        stats.deaths_by_act_and_room[3],
+    );
     println!(
-        "character={:?} asc={} seeds={} concurrent={} {} wins={} losses={} capped={} stopped={} win_rate={:.2}% max_floor_achieved={} mean_floor_achieved={:.2} steps={} max_steps={} elapsed={:.6}s seeds/s={:.1} steps/s={:.0}",
+        "character={:?} asc={} seeds={} concurrent={} {} wins={} losses={} capped={} stopped={} combat_stalemates={} win_rate={:.2}% max_floor_achieved={} mean_floor_achieved={:.2} a20_second_boss_entries={} mean_a20_second_boss_entry_hp_fraction={:.4} a20_second_boss_clears={} final_boss_entries={} mean_final_boss_entry_hp_fraction={:.4} last_boss_fights={} last_boss_remaining_hp_sum={} mean_last_boss_damage_fraction={:.4} steps={} max_steps={} elapsed={:.6}s seeds/s={:.1} steps/s={:.0}",
         character,
         ascension,
         count,
@@ -951,58 +1351,56 @@ fn print_batch(
         stats.losses,
         stats.capped,
         stats.stopped,
+        stats.combat_stalemates,
         win_rate,
         stats.max_floor_achieved,
         mean_floor_achieved,
+        stats.a20_second_boss_entries,
+        mean_a20_second_boss_entry_hp_fraction,
+        stats.a20_second_boss_clears,
+        stats.final_boss_entries,
+        mean_final_boss_entry_hp_fraction,
+        stats.last_boss_fights,
+        stats.last_boss_remaining_hp_sum,
+        mean_last_boss_damage_fraction,
         stats.steps,
         max_steps,
         seconds,
         seeds_per_second,
         steps_per_second,
     );
-    print_orb_stats();
-    if diagnostics {
-        println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining\tnormals\telites\trests\tevents\tshops\ttreasures\tbosses\tboss_entry_hp\trested\tsmithed\trecalled\tact1_path\tact2_path\tact3_path\tact4_path\tfinal_focus\tfinal_orbs\tfinal_relics\tfinal_deck");
-    } else {
-        println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining");
+    if !diagnostics {
+        return;
     }
+    print_orb_stats();
+    println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining\tnormals\telites\trests\tevents\tshops\ttreasures\tbosses\tboss_entry_hp\trested\tsmithed\trecalled\tact1_path\tact2_path\tact3_path\tact4_path\tfinal_focus\tfinal_orbs\tfinal_relics\tfinal_deck");
     for detail in details {
-        if diagnostics {
-            println!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                detail.seed,
-                detail.outcome.label(),
-                detail.floor_achieved,
-                detail.monsters_with_hp,
-                detail.diagnostics.monsters,
-                detail.diagnostics.elites,
-                detail.diagnostics.rests,
-                detail.diagnostics.events,
-                detail.diagnostics.shops,
-                detail.diagnostics.treasures,
-                detail.diagnostics.bosses,
-                detail.diagnostics.boss_entry_hp.join(","),
-                detail.diagnostics.rested,
-                detail.diagnostics.smithed,
-                detail.diagnostics.recalled,
-                detail.diagnostics.paths[0],
-                detail.diagnostics.paths[1],
-                detail.diagnostics.paths[2],
-                detail.diagnostics.paths[3],
-                detail.final_focus,
-                detail.final_orbs,
-                detail.final_relics,
-                detail.final_deck,
-            );
-        } else {
-            println!(
-                "{}\t{}\t{}\t{}",
-                detail.seed,
-                detail.outcome.label(),
-                detail.floor_achieved,
-                detail.monsters_with_hp
-            );
-        }
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            detail.seed,
+            detail.outcome.label(),
+            detail.floor_achieved,
+            detail.monsters_with_hp,
+            detail.diagnostics.monsters,
+            detail.diagnostics.elites,
+            detail.diagnostics.rests,
+            detail.diagnostics.events,
+            detail.diagnostics.shops,
+            detail.diagnostics.treasures,
+            detail.diagnostics.bosses,
+            detail.diagnostics.boss_entry_hp.join(","),
+            detail.diagnostics.rested,
+            detail.diagnostics.smithed,
+            detail.diagnostics.recalled,
+            detail.diagnostics.paths[0],
+            detail.diagnostics.paths[1],
+            detail.diagnostics.paths[2],
+            detail.diagnostics.paths[3],
+            detail.final_focus,
+            detail.final_orbs,
+            detail.final_relics,
+            detail.final_deck,
+        );
     }
 }
 
@@ -1018,6 +1416,11 @@ fn main() {
     let mut compare_jsonl: Option<PathBuf> = None;
     let mut actions_jsonl: Option<PathBuf> = None;
     let mut replay_actions_jsonl: Option<PathBuf> = None;
+    let mut boss_prefix_jsonl: Option<PathBuf> = None;
+    let mut boss_gauntlet_jsonl: Option<PathBuf> = None;
+    let mut deck_policy_mode = DeckPolicyMode::Learned;
+    let mut deck_policy_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tools/draft_policy_synergy_a20.json");
     let mut randomize = false;
     let mut random_source: Option<i64> = None;
     let mut args = env::args().skip(1);
@@ -1051,6 +1454,27 @@ fn main() {
             "--compare-jsonl" => compare_jsonl = args.next().map(PathBuf::from),
             "--actions-jsonl" => actions_jsonl = args.next().map(PathBuf::from),
             "--replay-actions-jsonl" => replay_actions_jsonl = args.next().map(PathBuf::from),
+            "--boss-prefix-jsonl" => boss_prefix_jsonl = args.next().map(PathBuf::from),
+            "--boss-gauntlet-jsonl" => boss_gauntlet_jsonl = args.next().map(PathBuf::from),
+            "--deck-policy" => {
+                let Some(value) = args.next() else {
+                    eprintln!("--deck-policy requires rl or htn");
+                    std::process::exit(2);
+                };
+                let Some(mode) = DeckPolicyMode::parse(&value) else {
+                    eprintln!("invalid --deck-policy {value:?}; expected rl or htn");
+                    std::process::exit(2);
+                };
+                deck_policy_mode = mode;
+            }
+            "--pure-htn" => deck_policy_mode = DeckPolicyMode::Htn,
+            "--deck-policy-path" => {
+                let Some(path) = args.next() else {
+                    eprintln!("--deck-policy-path requires a checkpoint path");
+                    std::process::exit(2);
+                };
+                deck_policy_path = PathBuf::from(path);
+            }
             "--random-seeds" => randomize = true,
             "--seed-source" => {
                 random_source = args.next().and_then(|s| s.parse().ok());
@@ -1058,7 +1482,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH] [--replay-actions-jsonl PATH]\n\nBatch mode runs seeds in one process and prints aggregate throughput, win rate, and per-seed results. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl optionally accumulates only each seed's actions in memory and writes them once after the batch. --replay-actions-jsonl bypasses HTN and replays that action log; combine it with --compare-jsonl for an engine-only exact gate. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
+                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--deck-policy rl|htn] [--pure-htn] [--deck-policy-path PATH] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH | --boss-prefix-jsonl PATH] [--replay-actions-jsonl PATH | --boss-gauntlet-jsonl PATH]\n\nThe default --deck-policy rl uses the learned checkpoint for deck-building decisions and HTN for fights, routing, events, and unsupported selections. --deck-policy htn (or --pure-htn) uses HTN for every decision. --deck-policy-path selects another learned checkpoint. Batch mode runs seeds in one process and prints aggregate throughput, win rate, and per-seed results. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl writes complete policy action logs. --boss-prefix-jsonl writes replayable prefixes ending at exact A20 second-boss entry. --boss-gauntlet-jsonl replays those prefixes and evaluates only the second-boss fight, reporting a gauntlet clear as a win. --replay-actions-jsonl bypasses policy selection and replays a complete action log; combine it with --compare-jsonl for an engine-only exact gate. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; long combats with 60 turns of no enemy HP progress are scored as stalemate losses."
                 );
                 return;
             }
@@ -1078,18 +1502,70 @@ fn main() {
         eprintln!("--concurrent must be greater than zero");
         std::process::exit(2);
     }
-    let write_modes = usize::from(fixture_jsonl.is_some()) + usize::from(actions_jsonl.is_some());
+    let write_modes = usize::from(fixture_jsonl.is_some())
+        + usize::from(actions_jsonl.is_some())
+        + usize::from(boss_prefix_jsonl.is_some());
     if write_modes > 1
         || (compare_jsonl.is_some() && write_modes > 0)
         || (replay_actions_jsonl.is_some() && write_modes > 0)
+        || (boss_gauntlet_jsonl.is_some() && write_modes > 0)
+        || (boss_gauntlet_jsonl.is_some() && replay_actions_jsonl.is_some())
     {
-        eprintln!("choose only one of --fixture-jsonl, --compare-jsonl, and --actions-jsonl");
+        eprintln!("choose only one fixture, action-log, boss-prefix, replay, or gauntlet mode");
         std::process::exit(2);
     }
 
     // Load the profile-backed unlock data once, then clone the in-memory value
     // into each fresh game. No assets or profile files are reloaded per seed.
     let unlocks = Unlocks::fixture();
+    if let Some(gauntlet_path) = boss_gauntlet_jsonl {
+        let logs = match load_action_log(&gauntlet_path) {
+            Ok(logs) if !logs.is_empty() => logs,
+            Ok(_) => {
+                eprintln!("{} contains no boss prefixes", gauntlet_path.display());
+                std::process::exit(2);
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        };
+        if let Some(invalid) = logs.iter().find(|log| {
+            !at_a20_second_boss_start(
+                &replay_action_prefix(log, character, ascension, &unlocks),
+                ascension,
+            )
+        }) {
+            eprintln!(
+                "{} seed {} does not end at an A20 second-boss entry",
+                gauntlet_path.display(),
+                invalid.seed
+            );
+            std::process::exit(2);
+        }
+        let seeds: Vec<i64> = logs.iter().map(|log| log.seed).collect();
+        let start = Instant::now();
+        let details =
+            run_boss_gauntlet_batch(&logs, concurrent, character, ascension, max_steps, &unlocks);
+        let elapsed = start.elapsed();
+        let mut stats = BatchStats::default();
+        for detail in &details {
+            stats.record(detail);
+        }
+        print_batch(
+            character,
+            &seeds,
+            None,
+            concurrent,
+            ascension,
+            max_steps,
+            &stats,
+            &details,
+            elapsed,
+            diagnostics,
+        );
+        return;
+    }
     if let Some(actions_path) = replay_actions_jsonl {
         let logs = match load_action_log(&actions_path) {
             Ok(logs) if !logs.is_empty() => logs,
@@ -1121,6 +1597,36 @@ fn main() {
         );
         return;
     }
+    let learned_policy = match deck_policy_mode {
+        DeckPolicyMode::Htn => {
+            eprintln!("deck_policy=htn");
+            None
+        }
+        DeckPolicyMode::Learned => {
+            if character != Character::Defect {
+                eprintln!(
+                    "--deck-policy rl currently supports DEFECT only; use --deck-policy htn for {:?}",
+                    character
+                );
+                std::process::exit(2);
+            }
+            let policy = match LearnedDeckPolicy::load(&deck_policy_path) {
+                Ok(policy) => policy,
+                Err(message) => {
+                    eprintln!("{message}");
+                    std::process::exit(2);
+                }
+            };
+            eprintln!(
+                "deck_policy=rl generation={} source={} checkpoint={}",
+                policy.generation(),
+                policy.weight_source(),
+                deck_policy_path.display()
+            );
+            Some(policy)
+        }
+    };
+    let learned_policy = learned_policy.as_ref();
     let random_source = if randomize {
         Some(random_source.unwrap_or_else(|| {
             let nanos = SystemTime::now()
@@ -1137,15 +1643,28 @@ fn main() {
     } else {
         consecutive_seeds(seed, count)
     };
-    if let Some(path) = actions_jsonl {
+    if actions_jsonl.is_some() || boss_prefix_jsonl.is_some() {
         let start = Instant::now();
         let logs = run_action_batch(
-            &seeds, concurrent, character, ascension, max_steps, &unlocks,
+            &seeds,
+            concurrent,
+            character,
+            ascension,
+            max_steps,
+            &unlocks,
+            learned_policy,
         );
+        let (path, logs, label) = if let Some(path) = boss_prefix_jsonl {
+            let prefixes = second_boss_prefixes(&logs, character, ascension, &unlocks);
+            (path, prefixes, "A20 second-boss prefixes")
+        } else {
+            (actions_jsonl.unwrap(), logs, "action logs")
+        };
         match write_action_log(&path, &logs) {
             Ok(()) => eprintln!(
-                "wrote {} action logs to {} in {:.3}s",
+                "wrote {} {} to {} in {:.3}s",
                 logs.len(),
+                label,
                 path.display(),
                 start.elapsed().as_secs_f64()
             ),
@@ -1159,7 +1678,13 @@ fn main() {
     if fixture_jsonl.is_some() || compare_jsonl.is_some() {
         let start = Instant::now();
         let states = run_final_batch(
-            &seeds, concurrent, character, ascension, max_steps, &unlocks,
+            &seeds,
+            concurrent,
+            character,
+            ascension,
+            max_steps,
+            &unlocks,
+            learned_policy,
         );
         let result = if let Some(path) = fixture_jsonl {
             write_fixture(&path, &states)
@@ -1186,6 +1711,7 @@ fn main() {
             ascension,
             max_steps,
             &unlocks,
+            learned_policy,
             diagnostics,
             false,
         );
@@ -1201,6 +1727,7 @@ fn main() {
         ascension,
         max_steps,
         &unlocks,
+        learned_policy,
         diagnostics,
     );
     let elapsed = start.elapsed();
@@ -1220,4 +1747,42 @@ fn main() {
         elapsed,
         diagnostics,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_state_with_live_player_is_a_completed_win() {
+        let mut game = Game::new(0, Character::Defect, 20, Unlocks::all());
+        game.done = true;
+        game.screen = Screen::Terminal;
+        game.player.hp = 1;
+
+        assert_eq!(completed_outcome(&game), Some(Outcome::Win));
+    }
+
+    #[test]
+    fn dead_player_is_a_completed_loss() {
+        let mut game = Game::new(0, Character::Defect, 20, Unlocks::all());
+        game.done = true;
+        game.screen = Screen::Terminal;
+        game.player.hp = 0;
+
+        assert_eq!(completed_outcome(&game), Some(Outcome::Loss));
+    }
+
+    #[test]
+    fn death_layers_count_only_actual_player_deaths() {
+        assert_eq!(death_act_index(Outcome::Loss, true, 1), Some(0));
+        assert_eq!(death_act_index(Outcome::Loss, true, 4), Some(3));
+        assert_eq!(death_act_index(Outcome::Loss, false, 3), None);
+        assert_eq!(death_act_index(Outcome::Capped, true, 2), None);
+        assert_eq!(death_act_index(Outcome::Loss, true, 5), None);
+        assert_eq!(death_room_index(RoomType::Monster), 0);
+        assert_eq!(death_room_index(RoomType::Elite), 1);
+        assert_eq!(death_room_index(RoomType::Boss), 2);
+        assert_eq!(death_room_index(RoomType::Event), 3);
+    }
 }

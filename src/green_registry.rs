@@ -246,8 +246,12 @@ impl GreenRegistry {
             .append(true)
             .open(&path)
             .map_err(|e| e.to_string())?;
-        writeln!(f, "{}", serde_json::to_string(line).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())
+        writeln!(
+            f,
+            "{}",
+            serde_json::to_string(line).map_err(|e| e.to_string())?
+        )
+        .map_err(|e| e.to_string())
     }
 
     pub fn record_green(&mut self, seed: &str, last_ok: usize, snaps: usize, sts_seed: i64) {

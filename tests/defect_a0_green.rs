@@ -3,11 +3,11 @@
 //! The file `exact-text-sim/runtime/oracles/defect/a0/green_registry.jsonl`
 //! is the source of truth. Do not keep a Rust array of seeds.
 
+use std::path::PathBuf;
 use sts_engine::green_registry::{GreenRegistry, GreenStatus};
 use sts_engine::ids::Character;
 use sts_engine::walk::{default_config, walk_oracle};
 use sts_engine::Unlocks;
-use std::path::PathBuf;
 
 fn registry_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -935,8 +935,14 @@ fn hex_does_not_insert_dazed_on_cold_snap() {
     player.energy = 3;
     player.max_orbs = 2;
     player.orbs = vec![
-        Orb { kind: OrbKind::Frost, evoke: 9 },
-        Orb { kind: OrbKind::Lightning, evoke: 12 },
+        Orb {
+            kind: OrbKind::Frost,
+            evoke: 9,
+        },
+        Orb {
+            kind: OrbKind::Lightning,
+            evoke: 12,
+        },
     ];
     player.add_power(PowerId::Hex, 1);
     player.add_power(PowerId::Focus, 4);
@@ -947,8 +953,14 @@ fn hex_does_not_insert_dazed_on_cold_snap() {
     });
     let mut combat = Combat::start(EncounterId::Cultist, &mut player, &mut rng, 29, 213, 0);
     player.orbs = vec![
-        Orb { kind: OrbKind::Frost, evoke: 9 },
-        Orb { kind: OrbKind::Lightning, evoke: 12 },
+        Orb {
+            kind: OrbKind::Frost,
+            evoke: 9,
+        },
+        Orb {
+            kind: OrbKind::Lightning,
+            evoke: 12,
+        },
     ];
     player.max_orbs = 2;
     player.hand = vec![
@@ -1018,12 +1030,19 @@ fn autoplay_dazed_skips_hex_and_ink_bottle() {
         "Hex must not fire on unplayable Dazed autoplay"
     );
     assert_eq!(
-        player.discard.iter().filter(|c| c.id == CardId::Dazed).count(),
+        player
+            .discard
+            .iter()
+            .filter(|c| c.id == CardId::Dazed)
+            .count(),
         1,
         "Dazed autoplay still discards via UseCardAction"
     );
     assert!(
-        !player.discard.iter().any(|c| c.id == CardId::Dazed && c.free_to_play_once),
+        !player
+            .discard
+            .iter()
+            .any(|c| c.id == CardId::Dazed && c.free_to_play_once),
         "UseCardAction clears freeToPlayOnce so All For One does not retrieve Dazed"
     );
 }

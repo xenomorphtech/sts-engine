@@ -25,7 +25,14 @@ fn defect_starter_loadout() {
 fn cracked_core_channels_lightning_at_battle_start() {
     let mut player = sts_engine::creature::Player::defect();
     let mut rng = RngSet::generate_seeds(2);
-    let combat = Combat::start(sts_engine::ids::EncounterId::Cultist, &mut player, &mut rng, 1, 2, 0);
+    let combat = Combat::start(
+        sts_engine::ids::EncounterId::Cultist,
+        &mut player,
+        &mut rng,
+        1,
+        2,
+        0,
+    );
     assert_eq!(player.orbs.len(), 1);
     assert_eq!(player.orbs[0].kind, OrbKind::Lightning);
     assert!(!combat.monsters.is_empty());
@@ -77,8 +84,10 @@ fn htn_emits_legal_actions_for_defect_and_ironclad() {
                 break;
             }
             assert!(
-                legal.iter().any(|a| std::mem::discriminant(a) == std::mem::discriminant(&action)
-                    || *a == action),
+                legal.iter().any(
+                    |a| std::mem::discriminant(a) == std::mem::discriminant(&action)
+                        || *a == action
+                ),
                 "{character:?} HTN chose {action:?} not in {legal:?}"
             );
             game.step(&action);
@@ -340,7 +349,12 @@ fn emerald_elite_max_hp_uses_gdx_round() {
 fn acid_slime_l_a17_move_lockstep() {
     // AcidSlime_L A17 getMove uses num<70 and randomBoolean(0.6), not M's
     // num<80 / 0.5. 420468/982689 were slam vs Java Weak lick.
-    for (seed, min_ok) in [("420468", 45), ("982689", 48), ("220939", 52), ("439068", 52)] {
+    for (seed, min_ok) in [
+        ("420468", 45),
+        ("982689", 48),
+        ("220939", 52),
+        ("439068", 52),
+    ] {
         let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
         match walk_oracle(&cfg) {
             Ok(_) => {}
@@ -536,7 +550,12 @@ fn curl_up_boot_after_block_lockstep() {
 fn woman_in_blue_reward_screen_lockstep() {
     // 809652 / 706888 / 874370: Woman in Blue opens CombatReward with
     // PotionHelper potions, then Proceed returns to the event Leave.
-    for (seed, min_ok) in [("809652", 17), ("706888", 19), ("874370", 19), ("217337", 20)] {
+    for (seed, min_ok) in [
+        ("809652", 17),
+        ("706888", 19),
+        ("874370", 19),
+        ("217337", 20),
+    ] {
         let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 20);
         match walk_oracle(&cfg) {
             Ok(_) => {}

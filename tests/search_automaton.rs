@@ -1,15 +1,19 @@
 //! Search a winning Bronze Automaton line from a recorded prefix.
 
+use std::path::PathBuf;
 use sts_engine::action::Action;
 use sts_engine::game::{Game, Screen};
 use sts_engine::ids::{Character, MonsterId};
 use sts_engine::Unlocks;
-use std::path::PathBuf;
 
 fn auto_hp(game: &Game) -> i32 {
     game.combat
         .as_ref()
-        .and_then(|c| c.monsters.iter().find(|m| m.id == MonsterId::BronzeAutomaton))
+        .and_then(|c| {
+            c.monsters
+                .iter()
+                .find(|m| m.id == MonsterId::BronzeAutomaton)
+        })
         .map(|m| m.hp)
         .unwrap_or(0)
 }
@@ -131,7 +135,8 @@ fn search_seed2_automaton() {
         player_dead(&game)
     );
     if auto_dead(&game) && !player_dead(&game) {
-        let out = PathBuf::from("/tmp/grok-goal-bb496ccd9352/implementer/automaton-win.commands.jsonl");
+        let out =
+            PathBuf::from("/tmp/grok-goal-bb496ccd9352/implementer/automaton-win.commands.jsonl");
         let mut lines: Vec<String> = cmds[..start]
             .iter()
             .map(|a| serde_json::to_string(a).unwrap())

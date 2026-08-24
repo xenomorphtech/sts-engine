@@ -1407,7 +1407,7 @@ fn max_copies(id: CardId) -> i32 {
     }
 }
 
-fn upgrade_score(id: CardId) -> i32 {
+pub(crate) fn upgrade_score(id: CardId) -> i32 {
     if let Some(v) = params().upgrade.get(id.sts_id()) {
         return *v as i32;
     }

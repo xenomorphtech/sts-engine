@@ -89,13 +89,19 @@ fn ending_smith_exposes_upgrade_then_completes_campfire() {
         .expect("an upgradeable card")
         .clone();
     game.step(&upgrade);
-    assert_eq!(game.player.deck.iter().filter(|card| card.upgraded).count(), 0);
+    assert_eq!(
+        game.player.deck.iter().filter(|card| card.upgraded).count(),
+        0
+    );
     assert_eq!(game.legal_actions(), vec![Action::Proceed, Action::Skip]);
 
     // The first Proceed confirms the upgrade grid; the second leaves the
     // completed RestRoom, matching CampfireSmithEffect's two stable states.
     game.step(&Action::Proceed);
-    assert_eq!(game.player.deck.iter().filter(|card| card.upgraded).count(), 1);
+    assert_eq!(
+        game.player.deck.iter().filter(|card| card.upgraded).count(),
+        1
+    );
     assert_eq!(game.screen, Screen::Rest);
     assert_eq!(game.legal_actions(), vec![Action::Proceed]);
     game.step(&Action::Proceed);

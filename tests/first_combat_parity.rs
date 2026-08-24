@@ -1,13 +1,13 @@
 //! Snapshot-level parity for seed 2's opening Cultist fight.
 
 use serde::Deserialize;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use sts_engine::action::Action;
 use sts_engine::game::Game;
 use sts_engine::ids::Character;
 use sts_engine::Unlocks;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -57,11 +57,12 @@ struct Power {
 
 fn load_java() -> (Vec<Envelope>, Vec<Action>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../exact-text-sim/runtime");
-    let snaps: Vec<Envelope> = BufReader::new(File::open(root.join("act1-seed2-final-pruned.jsonl")).unwrap())
-        .lines()
-        .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
-        .take(29)
-        .collect();
+    let snaps: Vec<Envelope> =
+        BufReader::new(File::open(root.join("act1-seed2-final-pruned.jsonl")).unwrap())
+            .lines()
+            .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
+            .take(29)
+            .collect();
     let cmds = sts_engine::load_commands(root.join("act1-seed2.commands.jsonl")).unwrap();
     (snaps, cmds)
 }
@@ -85,8 +86,16 @@ fn seed2_cultist_fight_matches_java() {
         if seq == 7 || seq == 9 {
             eprintln!(
                 "seq{seq} rust disc={:?} draw={:?} hand={:?}",
-                game.player.discard.iter().map(|c| c.sts_id()).collect::<Vec<_>>(),
-                game.player.draw.iter().map(|c| c.sts_id()).collect::<Vec<_>>(),
+                game.player
+                    .discard
+                    .iter()
+                    .map(|c| c.sts_id())
+                    .collect::<Vec<_>>(),
+                game.player
+                    .draw
+                    .iter()
+                    .map(|c| c.sts_id())
+                    .collect::<Vec<_>>(),
                 hand
             );
         }
@@ -129,11 +138,17 @@ fn turn3_reshuffle_permutation() {
     let mut rng = StsRandom::from_seed(2 + 1);
     let _ = rng.random_long(); // combat-start shuffle
     let seed = rng.random_long();
-    let mut pile = vec!["Strike_R","Strike_R","Defend_R","Defend_R","Defend_R","Defend_R","Bash","Strike_R","Strike_R","Strike_R"];
+    let mut pile = vec![
+        "Strike_R", "Strike_R", "Defend_R", "Defend_R", "Defend_R", "Defend_R", "Bash", "Strike_R",
+        "Strike_R", "Strike_R",
+    ];
     shuffle_java(&mut pile, seed);
     eprintln!("shuffled {:?}", pile);
     let hand: Vec<_> = pile.iter().rev().take(5).cloned().collect();
     let draw: Vec<_> = pile.iter().rev().skip(5).cloned().collect();
     eprintln!("drawn-from-end hand {:?} draw {:?}", hand, draw);
-    assert_eq!(hand, vec!["Strike_R","Defend_R","Strike_R","Strike_R","Bash"]);
+    assert_eq!(
+        hand,
+        vec!["Strike_R", "Defend_R", "Strike_R", "Strike_R", "Bash"]
+    );
 }

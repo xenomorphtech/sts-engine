@@ -120,7 +120,11 @@ impl Display for WalkFail {
         )?;
         writeln!(f, "mismatched: {}", self.mismatched.join(", "))?;
         if let Some(cmd) = &self.last_cmd {
-            writeln!(f, "last command [{:?}]: {cmd:?}", self.command_index.saturating_sub(1))?;
+            writeln!(
+                f,
+                "last command [{:?}]: {cmd:?}",
+                self.command_index.saturating_sub(1)
+            )?;
         }
         if !self.cmds_around.is_empty() {
             writeln!(f, "commands around fail:")?;
@@ -145,10 +149,18 @@ fn write_side(f: &mut Formatter<'_>, s: &Side) -> std::fmt::Result {
         s.screen, s.room, s.act, s.floor, s.hp, s.gold, s.block
     )?;
     writeln!(f, "  deck={:?}", s.deck)?;
-    writeln!(f, "  relics={:?} pots={:?} powers={:?}", s.relics, s.potions, s.powers)?;
+    writeln!(
+        f,
+        "  relics={:?} pots={:?} powers={:?}",
+        s.relics, s.potions, s.powers
+    )?;
     writeln!(f, "  mons={:?} hand={:?}", s.mons, s.hand)?;
     if !s.draw.is_empty() || !s.discard.is_empty() || !s.exhaust.is_empty() {
-        writeln!(f, "  draw={:?} disc={:?} exh={:?}", s.draw, s.discard, s.exhaust)?;
+        writeln!(
+            f,
+            "  draw={:?} disc={:?} exh={:?}",
+            s.draw, s.discard, s.exhaust
+        )?;
     }
     if !s.relic_counters.is_empty() {
         writeln!(f, "  relic_counters={:?}", s.relic_counters)?;
@@ -274,9 +286,10 @@ fn java_intents_published(snap: &Envelope) -> bool {
     let Some(combat) = snap.state.combat.as_ref() else {
         return false;
     };
-    combat.monsters.iter().any(|m| {
-        m.current_hp > 0 && m.intent.as_deref().is_some_and(|intent| intent != "DEBUG")
-    })
+    combat
+        .monsters
+        .iter()
+        .any(|m| m.current_hp > 0 && m.intent.as_deref().is_some_and(|intent| intent != "DEBUG"))
 }
 
 fn parse_envelope(line: &str) -> Result<Option<Envelope>, serde_json::Error> {
@@ -307,7 +320,11 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
     if !cfg.states.exists() || !cfg.commands.exists() {
         return Err(dummy_fail(
             &cfg.name,
-            &format!("missing {} or {}", cfg.states.display(), cfg.commands.display()),
+            &format!(
+                "missing {} or {}",
+                cfg.states.display(),
+                cfg.commands.display()
+            ),
         ));
     }
     let cmds = load_commands(&cfg.commands).map_err(|e| dummy_fail(&cfg.name, &e.to_string()))?;
@@ -320,7 +337,10 @@ pub fn walk_oracle(cfg: &WalkConfig) -> Result<WalkOk, WalkFail> {
     let first: Envelope = match parse_envelope(&first_line) {
         Ok(Some(e)) => e,
         Ok(None) => {
-            return Err(dummy_fail(&cfg.name, "first state line is stall_diag / missing boundary"));
+            return Err(dummy_fail(
+                &cfg.name,
+                "first state line is stall_diag / missing boundary",
+            ));
         }
         Err(e) => {
             let head = first_line.chars().take(180).collect::<String>();
@@ -449,8 +469,18 @@ pub fn game_side(game: &Game) -> Side {
         hp: game.player.hp,
         gold: game.player.gold,
         block: game.player.block,
-        deck: game.player.deck.iter().map(|c| c.sts_id().to_string()).collect(),
-        relics: game.player.relics.iter().map(|r| r.id.sts_id().to_string()).collect(),
+        deck: game
+            .player
+            .deck
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect(),
+        relics: game
+            .player
+            .relics
+            .iter()
+            .map(|r| r.id.sts_id().to_string())
+            .collect(),
         potions: game
             .player
             .potions
@@ -467,21 +497,54 @@ pub fn game_side(game: &Game) -> Side {
         mons: game
             .combat
             .as_ref()
-            .map(|c| c.monsters.iter().map(|m| (m.id.sts_id().to_string(), m.hp)).collect())
+            .map(|c| {
+                c.monsters
+                    .iter()
+                    .map(|m| (m.id.sts_id().to_string(), m.hp))
+                    .collect()
+            })
             .unwrap_or_default(),
-        hand: game.player.hand.iter().map(|c| c.sts_id().to_string()).collect(),
-        draw: game.player.draw.iter().map(|c| c.sts_id().to_string()).collect(),
-        discard: game.player.discard.iter().map(|c| c.sts_id().to_string()).collect(),
-        exhaust: game.player.exhaust.iter().map(|c| c.sts_id().to_string()).collect(),
+        hand: game
+            .player
+            .hand
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect(),
+        draw: game
+            .player
+            .draw
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect(),
+        discard: game
+            .player
+            .discard
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect(),
+        exhaust: game
+            .player
+            .exhaust
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect(),
         relic_counters: game
             .player
             .relics
             .iter()
             .map(|r| (r.id.sts_id().to_string(), r.counter))
             .collect(),
-        event: game.event.as_ref().map(|e| e.id.clone()).unwrap_or_default(),
+        event: game
+            .event
+            .as_ref()
+            .map(|e| e.id.clone())
+            .unwrap_or_default(),
         options: match game.screen {
-            Screen::Event => game.event.as_ref().map(|e| e.options.clone()).unwrap_or_default(),
+            Screen::Event => game
+                .event
+                .as_ref()
+                .map(|e| e.options.clone())
+                .unwrap_or_default(),
             Screen::Neow => game.neow_options.iter().map(|o| o.label.clone()).collect(),
             _ => Vec::new(),
         },
@@ -501,8 +564,16 @@ pub fn game_side(game: &Game) -> Side {
                 }
             })
             .collect(),
-        card_reward: game.card_reward.iter().map(|c| c.sts_id().to_string()).collect(),
-        pending: game.pending_cards.iter().map(|c| c.sts_id().to_string()).collect(),
+        card_reward: game
+            .card_reward
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect(),
+        pending: game
+            .pending_cards
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect(),
         overlay,
         rng: rust_rng(game),
     }
@@ -554,8 +625,16 @@ const RNG_STREAMS: &[(&str, &'static str)] = &[
 fn rng_mismatches(rust: &[(String, String)], java: &[(String, String)]) -> Vec<&'static str> {
     let mut out = Vec::new();
     for (name, label) in RNG_STREAMS {
-        let r = rust.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
-        let j = java.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
+        let r = rust
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, d)| d.as_str())
+            .unwrap_or("");
+        let j = java
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, d)| d.as_str())
+            .unwrap_or("");
         if r != j {
             out.push(*label);
         }
@@ -606,7 +685,12 @@ fn java_side(snap: &Envelope) -> Side {
         mons: st
             .combat
             .as_ref()
-            .map(|c| c.monsters.iter().map(|m| (m.id.clone(), m.current_hp)).collect())
+            .map(|c| {
+                c.monsters
+                    .iter()
+                    .map(|m| (m.id.clone(), m.current_hp))
+                    .collect()
+            })
             .unwrap_or_default(),
         hand: st
             .combat
@@ -645,8 +729,8 @@ fn java_side(snap: &Envelope) -> Side {
 }
 
 pub fn java_side_from_value(value: &Value) -> Result<Side, String> {
-    let envelope: Envelope =
-        serde_json::from_value(value.clone()).map_err(|error| format!("invalid Java observation: {error}"))?;
+    let envelope: Envelope = serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid Java observation: {error}"))?;
     Ok(java_side(&envelope))
 }
 
@@ -676,7 +760,10 @@ fn java_event(room: &Value) -> (String, Vec<String>) {
             let slot = o.get("slot").and_then(Value::as_i64).unwrap_or(-1);
             let text = o.get("text").and_then(Value::as_str).unwrap_or("");
             let dis = o.get("disabled").and_then(Value::as_bool).unwrap_or(false);
-            opts.push(format!("{slot}{} {text}", if dis { " [locked]" } else { "" }));
+            opts.push(format!(
+                "{slot}{} {text}",
+                if dis { " [locked]" } else { "" }
+            ));
         }
     }
     (class, opts)
@@ -697,10 +784,7 @@ fn java_cards(screen: &Value) -> Vec<String> {
 fn java_rewards(room: &Value, screen: &Value) -> (Vec<String>, Vec<String>) {
     let mut out = Vec::new();
     let mut cards = Vec::new();
-    let lists = [
-        screen.get("rewards"),
-        room.get("rewards"),
-    ];
+    let lists = [screen.get("rewards"), room.get("rewards")];
     for list in lists.into_iter().flatten() {
         if let Some(arr) = list.as_array() {
             for r in arr {
@@ -733,7 +817,9 @@ fn java_rewards(room: &Value, screen: &Value) -> (Vec<String>, Vec<String>) {
                         if let Some(arr) = r.get("cards").and_then(Value::as_array) {
                             cards = arr
                                 .iter()
-                                .filter_map(|c| c.get("id").and_then(Value::as_str).map(str::to_string))
+                                .filter_map(|c| {
+                                    c.get("id").and_then(Value::as_str).map(str::to_string)
+                                })
                                 .collect();
                         }
                     }
@@ -755,10 +841,22 @@ fn java_grid(screen: &Value) -> String {
     }
     format!(
         "GRID purge={} upgrade={} transform={} confirm={} num={}",
-        screen.get("for_purge").and_then(Value::as_bool).unwrap_or(false),
-        screen.get("for_upgrade").and_then(Value::as_bool).unwrap_or(false),
-        screen.get("for_transform").and_then(Value::as_bool).unwrap_or(false),
-        screen.get("confirm_screen_up").and_then(Value::as_bool).unwrap_or(false),
+        screen
+            .get("for_purge")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        screen
+            .get("for_upgrade")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        screen
+            .get("for_transform")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        screen
+            .get("confirm_screen_up")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         screen.get("num_cards").and_then(Value::as_i64).unwrap_or(0)
     )
 }
@@ -851,10 +949,18 @@ pub fn oracle_paths(character: Character, seed: &str, ascension: i32) -> (PathBu
             return pair;
         }
     }
-    (preferred.join("states.jsonl"), preferred.join("commands.jsonl"))
+    (
+        preferred.join("states.jsonl"),
+        preferred.join("commands.jsonl"),
+    )
 }
 
-pub fn default_config(character: Character, seed: &str, unlocks: Unlocks, ascension: i32) -> WalkConfig {
+pub fn default_config(
+    character: Character,
+    seed: &str,
+    unlocks: Unlocks,
+    ascension: i32,
+) -> WalkConfig {
     let (states, commands) = oracle_paths(character, seed, ascension);
     WalkConfig {
         name: format!("{}-s{seed}", character.oracle_dir()),

@@ -1,5 +1,5 @@
-use sts_engine::{load_commands, Unlocks};
 use std::path::PathBuf;
+use sts_engine::{load_commands, Unlocks};
 
 fn commands_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -15,7 +15,8 @@ fn seed2_replay_reaches_act2() {
     }
     let commands = load_commands(&path).expect("commands");
     assert_eq!(commands.len(), 269);
-    let mut game = sts_engine::game::Game::new(2, sts_engine::Character::Ironclad, 0, Unlocks::fixture());
+    let mut game =
+        sts_engine::game::Game::new(2, sts_engine::Character::Ironclad, 0, Unlocks::fixture());
     for (i, action) in commands.iter().enumerate() {
         let before = format!(
             "seq={i} screen={:?} floor={} hp={} hand={} energy={} gold={} deck={}",
@@ -50,7 +51,11 @@ fn seed2_replay_reaches_act2() {
         game.player.max_hp,
         game.player.gold,
         game.player.deck.len(),
-        game.player.relics.iter().map(|r| r.id.sts_id()).collect::<Vec<_>>(),
+        game.player
+            .relics
+            .iter()
+            .map(|r| r.id.sts_id())
+            .collect::<Vec<_>>(),
         game.done
     );
     assert!(

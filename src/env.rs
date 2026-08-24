@@ -40,7 +40,8 @@ impl TrainEnv {
         if let Some(action) = legal.get(action_index) {
             self.game.step(action);
         }
-        let done = self.game.done || self.game.player.hp <= 0 || self.game.screen == Screen::Terminal;
+        let done =
+            self.game.done || self.game.player.hp <= 0 || self.game.screen == Screen::Terminal;
         let reward = if self.game.player.hp <= 0 {
             -1.0
         } else if self.game.dungeon.act as i32 >= 2 {

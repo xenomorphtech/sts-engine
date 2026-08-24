@@ -135,16 +135,51 @@ pub fn compare_generation(game: &Game, java: &JavaEnvelope) -> ParityReport {
             .map(String::as_str)
             .collect::<Vec<_>>(),
     );
-    check_rng(&mut report, "monster", game.rng.monster.snapshot(), &java.state.rng.monster);
-    check_rng(&mut report, "map", game.rng.map.snapshot(), &java.state.rng.map);
-    check_rng(&mut report, "relic", game.rng.relic.snapshot(), &java.state.rng.relic);
-    check_rng(&mut report, "misc", game.rng.misc.snapshot(), &java.state.rng.misc);
-    check(&mut report, "hp", game.player.hp, java.state.player.current_hp);
-    check(&mut report, "gold", game.player.gold, java.state.player.gold);
+    check_rng(
+        &mut report,
+        "monster",
+        game.rng.monster.snapshot(),
+        &java.state.rng.monster,
+    );
+    check_rng(
+        &mut report,
+        "map",
+        game.rng.map.snapshot(),
+        &java.state.rng.map,
+    );
+    check_rng(
+        &mut report,
+        "relic",
+        game.rng.relic.snapshot(),
+        &java.state.rng.relic,
+    );
+    check_rng(
+        &mut report,
+        "misc",
+        game.rng.misc.snapshot(),
+        &java.state.rng.misc,
+    );
+    check(
+        &mut report,
+        "hp",
+        game.player.hp,
+        java.state.player.current_hp,
+    );
+    check(
+        &mut report,
+        "gold",
+        game.player.gold,
+        java.state.player.gold,
+    );
     report
 }
 
-fn check<T: PartialEq + std::fmt::Debug>(report: &mut ParityReport, name: &str, got: T, expected: T) {
+fn check<T: PartialEq + std::fmt::Debug>(
+    report: &mut ParityReport,
+    name: &str,
+    got: T,
+    expected: T,
+) {
     if got != expected {
         report
             .mismatches
@@ -153,7 +188,10 @@ fn check<T: PartialEq + std::fmt::Debug>(report: &mut ParityReport, name: &str, 
 }
 
 fn check_rng(report: &mut ParityReport, name: &str, got: RngSnapshot, expected: &JavaRng) {
-    if got.counter != expected.counter || got.state0 != expected.state0 || got.state1 != expected.state1 {
+    if got.counter != expected.counter
+        || got.state0 != expected.state0
+        || got.state1 != expected.state1
+    {
         report.mismatches.push(format!(
             "{name} rng: got {}/{}/{} expected {}/{}/{}",
             got.counter, got.state0, got.state1, expected.counter, expected.state0, expected.state1

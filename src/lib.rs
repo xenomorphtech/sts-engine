@@ -9,6 +9,7 @@ pub mod card;
 pub mod combat;
 pub mod content;
 pub mod creature;
+pub mod draft;
 pub mod dungeon;
 pub mod env;
 pub mod game;
@@ -26,6 +27,10 @@ pub mod unlocks;
 pub mod walk;
 
 pub use action::Action;
+pub use draft::{
+    BossCombatBatch, BossDraftBatch, BossDraftEnv, BossFightResult, BossSuiteResult,
+    DraftCombatObservation, DraftConfig, DraftObservation,
+};
 pub use env::TrainEnv;
 pub use game::{Game, Screen};
 pub use ids::Character;

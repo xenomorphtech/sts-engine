@@ -5,12 +5,12 @@
 //! cargo run --release --bin sts-parity -- --states path/states.jsonl --commands path/commands.jsonl
 //! ```
 
-use sts_engine::ids::Character;
-use sts_engine::walk::{default_config, walk_oracle, WalkConfig};
-use sts_engine::Unlocks;
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use sts_engine::ids::Character;
+use sts_engine::walk::{default_config, walk_oracle, WalkConfig};
+use sts_engine::Unlocks;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -32,7 +32,10 @@ fn run(args: &[String]) -> Result<(), String> {
         .or_else(|| flag(args, "-c"))
         .and_then(|s| Character::from_cli(&s))
         .unwrap_or(Character::Defect);
-    let unlocks = match flag(args, "--unlocks").unwrap_or_else(|| "fixture".into()).as_str() {
+    let unlocks = match flag(args, "--unlocks")
+        .unwrap_or_else(|| "fixture".into())
+        .as_str()
+    {
         "all" => Unlocks::all(),
         _ => Unlocks::fixture(),
     };
@@ -41,7 +44,9 @@ fn run(args: &[String]) -> Result<(), String> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let compare_rng = args.iter().any(|a| a == "--rng");
-    let mut cfg = if let (Some(states), Some(commands)) = (flag(args, "--states"), flag(args, "--commands")) {
+    let mut cfg = if let (Some(states), Some(commands)) =
+        (flag(args, "--states"), flag(args, "--commands"))
+    {
         WalkConfig {
             name: flag(args, "--name").unwrap_or_else(|| "parity".into()),
             states: PathBuf::from(states),

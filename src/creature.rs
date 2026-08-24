@@ -198,7 +198,8 @@ impl Player {
         }
         if ascension >= 10 {
             // Observed ExactTextSim master_deck lists AscendersBane first.
-            self.deck.insert(0, crate::card::Card::new(crate::ids::CardId::AscendersBane));
+            self.deck
+                .insert(0, crate::card::Card::new(crate::ids::CardId::AscendersBane));
         }
         if ascension >= 11 {
             // Ascension 11 reduces the base potion capacity from three slots
@@ -209,7 +210,11 @@ impl Player {
     }
 
     pub fn power_amount(&self, id: PowerId) -> i32 {
-        self.powers.iter().find(|p| p.id == id).map(|p| p.amount).unwrap_or(0)
+        self.powers
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.amount)
+            .unwrap_or(0)
     }
 
     pub fn add_power(&mut self, id: PowerId, amount: i32) {
@@ -480,7 +485,11 @@ impl Monster {
     }
 
     pub fn power_amount(&self, id: PowerId) -> i32 {
-        self.powers.iter().find(|p| p.id == id).map(|p| p.amount).unwrap_or(0)
+        self.powers
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.amount)
+            .unwrap_or(0)
     }
 
     pub fn add_power(&mut self, id: PowerId, amount: i32) {

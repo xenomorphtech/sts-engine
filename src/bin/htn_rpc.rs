@@ -159,7 +159,9 @@ fn handle_request(
         json_response(200, json!({"status": "ok"}))
     } else if method == Method::Post && url == "/v1/sessions" {
         match read_json(&mut request)
-            .and_then(|value| serde_json::from_value::<CreateRequest>(value).map_err(|error| error.to_string()))
+            .and_then(|value| {
+                serde_json::from_value::<CreateRequest>(value).map_err(|error| error.to_string())
+            })
             .and_then(|body| {
                 let seed = parse_seed(&body.seed)?;
                 let character = parse_character(&body.character)?;
@@ -177,7 +179,10 @@ fn handle_request(
                 refresh_decision(&mut session);
                 let observation = observation(&session);
                 let id = next_id.fetch_add(1, Ordering::Relaxed).to_string();
-                sessions.lock().expect("session mutex poisoned").insert(id.clone(), session);
+                sessions
+                    .lock()
+                    .expect("session mutex poisoned")
+                    .insert(id.clone(), session);
                 json_response(201, json!({"session_id": id, "observation": observation}))
             }
             Err(message) => json_response(400, json!({"error": message})),
@@ -199,21 +204,25 @@ fn handle_request(
                     json_response(404, json!({"error": "unknown session"}))
                 }
             }
-            (Method::Post, Some("step")) => match read_json(&mut request)
-                .and_then(|value| serde_json::from_value::<StepRequest>(value).map_err(|error| error.to_string()))
-            {
+            (Method::Post, Some("step")) => match read_json(&mut request).and_then(|value| {
+                serde_json::from_value::<StepRequest>(value).map_err(|error| error.to_string())
+            }) {
                 Ok(body) => {
                     let mut sessions = sessions.lock().expect("session mutex poisoned");
                     match sessions.get_mut(id) {
                         None => json_response(404, json!({"error": "unknown session"})),
-                        Some(session) if session.pending_decision.as_ref() != Some(&body.action) => json_response(
-                            409,
-                            json!({
-                                "error": "action is not the current HTN decision",
-                                "decision": session.pending_decision,
-                                "action": body.action,
-                            }),
-                        ),
+                        Some(session)
+                            if session.pending_decision.as_ref() != Some(&body.action) =>
+                        {
+                            json_response(
+                                409,
+                                json!({
+                                    "error": "action is not the current HTN decision",
+                                    "decision": session.pending_decision,
+                                    "action": body.action,
+                                }),
+                            )
+                        }
                         Some(session) => {
                             session.game.step(&body.action);
                             session.steps += 1;
@@ -225,7 +234,10 @@ fn handle_request(
                 Err(message) => json_response(400, json!({"error": message})),
             },
             (Method::Post, Some("compare")) => match read_json(&mut request)
-                .and_then(|value| serde_json::from_value::<CompareRequest>(value).map_err(|error| error.to_string()))
+                .and_then(|value| {
+                    serde_json::from_value::<CompareRequest>(value)
+                        .map_err(|error| error.to_string())
+                })
                 .and_then(|body| java_side_from_value(&body.observation))
             {
                 Ok(java) => {

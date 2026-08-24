@@ -16,10 +16,38 @@
 <li><strong>Per-dimension step sizes (SNES-style, not full CMA).</strong> Full-λ signed rank utilities (bottom half negative) instead of top-4-only; mean update via utilities; log-σ update <code>log σ_d += η_σ · Σ u_i (ε²_{i,d} − 1)</code> with η_σ ≈ 0.06. Replaces frozen hand-set SPEC sigmas — the ~1pp/20gens crawl is the classic signature of per-dim scale mismatch under one global multiplier.</li>
 <li><strong>Global sigma schedule:</strong> validation-slope controller (hold while 12-gen moving average rises ≥ ~8 wins/2000; step 0.6 → 0.45 → 0.3 on stall; floor ~0.25 where eval noise dominates).</li>
 <li><strong>Anneal the floor weight:</strong> <code>FLOOR_WEIGHT = max(0.5, 6·(1 − winrate))</code> — nearly redundant at 62% wins, crucial at &lt;15% (the A20 warm start), where floor carries most of the gradient. Optional dense term: mean boss-entry HP fraction (the measured win/loss discriminator) at weight ~0.3.</li>
-<li><strong>Shift budget from seeds to directions:</strong> λ=20 (10 mirrored pairs) × 300 seeds = same 6,000 sims/gen. Paired-difference variance scales with the seed-flip rate, not binomial win-count variance — 300 shared seeds lose little ranking fidelity while ~doubling direction coverage. Floor: ~250 seeds.</li>
+<li><strong>Shift budget from seeds to directions:</strong> λ=24 (12 mirrored pairs) × 250 seeds = 6,000 sims/gen. Paired-difference variance scales with the seed-flip rate, not binomial win-count variance — 250 shared seeds retain the ranking floor while broadening direction coverage.</li>
 <li><strong>Bake protocol: average the last k=8 generation means, never argmax over validations</strong> (the current <code>best</code> argmax over ~27 noisy fixed-cohort validations inflates ~1.5–2pp — the live trap). Honest number from a never-touched cohort at bake time.</li>
-<li><strong>A20: warm-start from A0 params</strong> (hundreds of gens of transferable knowledge), reset sigma to 1.0 for ~30 gens, high floor weight. Two baked files selected by ascension (<code>params_default.json</code> / <code>params_a20.json</code>); do <em>not</em> multi-objective A0+A20 into one vector.</li>
+<li><strong>A20: warm-start from A0 params</strong> (hundreds of gens of transferable knowledge), reset sigma to 1.0 for ~30 gens, high floor weight. After promotion, use the constraint-tested A20 bake as the shared A0/A20 default; retain <code>params_default.json</code> only as an explicit legacy regression baseline through <code>STS_HTN_PARAMS</code>.</li>
 </ol>
+
+<h2>A20 conversion campaign (live)</h2>
+<div class="card">
+<p><strong>ES v4 trainer implemented:</strong> <code>tools/opt_params4.py</code> now defaults to A20, warm-starts from the A0 bake until an A20 bake exists, and uses 24 mirrored candidates × 250 common-random-number seeds. It implements full-population signed rank utilities, SNES per-dimension sigmas, the 30-generation A20 exploration hold plus validation-slope global schedule, dynamic floor weight, fresh checkpoint cohorts, resumable staged-dimension activation, and one-candidate-per-machine SSH fan-out. The engine summary exposes exact A20 second-boss entries and clears, Heart entry HP, the raw sum of remaining late-boss HP, normalized damage completion, and bounded combat stalemates. These turn sparse late-boss visits into rank signal while keeping “entered,” “cleared,” and “won the run” unambiguous.</p>
+<pre><code>python3 tools/opt_params4.py train --generations 80
+# add machines without changing the optimizer:
+python3 tools/opt_params4.py train --generations 80 \
+  --remote worker1=/opt/sts/sts-htn,concurrent=24 \
+  --remote worker2=/opt/sts/sts-htn,concurrent=24
+
+# regenerate a stationary conversion curriculum from a reach policy:
+STS_HTN_PARAMS=tools/params_a20.json target/release/sts-htn \
+  --a20 --count 10000 --concurrent 12 \
+  --seed-source 496357118204682917 \
+  --boss-prefix-jsonl tools/a20_second_boss_gauntlet.jsonl
+python3 tools/opt_params4.py train --generations 80 \
+  --state tools/opt_state_a20_reach_v4.json \
+  --start-params tools/params_a20.json \
+  --boss-gauntlet tools/a20_second_boss_gauntlet.jsonl \
+  --gauntlet-weight 0.10 --reach-weight 1500
+
+# only after the tail is ready; this runs paired fresh 10k A20 cohorts:
+python3 tools/opt_params4.py bake --honest-count 10000</code></pre>
+<p>The completed conversion state is <code>tools/opt_state_a20_v4.json</code>; the broadened reach state is <code>tools/opt_state_a20_reach_v4.json</code>, and the bake target remains <code>tools/params_a20.json</code>. There is deliberately no <code>best</code> checkpoint field: the bake is the component-wise average of the last eight generation means, and its honest cohort is recorded with an exact paired McNemar result against that phase's starting bake. New parameter paths can be added to the starting JSON during a resume and activated cumulatively with <code>--stage-file</code>. Reach weight, boss-gauntlet path, and gauntlet weight are persisted in the resume state; exposing batches A–D in Rust remains separate work.</p>
+<p><strong>Live checkpoint (2026-08-22, generation 30): honest A20 bake promoted.</strong> An outcome-accounting bug was fixed: successful non-key Act 3 runs end on <code>Screen::Terminal</code> with a live player and had incorrectly been labeled <code>stopped</code>. Generation 30 completed the full-sigma warm-up with a fresh 14/2,000 mean result versus 5/2,000 baseline (paired 13/4, p=0.049), 50 versus 34 second-boss entries, and mean floor 26.19 versus 25.50; global sigma then stepped from 1.0 to 0.6. The required eight-generation tail average was evaluated once on the never-used source <code>7574968670955182578</code>: 65/10,000 A20 wins (0.65%) versus 44/10,000 (0.44%), mean floor 26.30 versus 25.54, second-boss entries 242 versus 235, and clears 65 versus 44 (conditional conversion 26.9% versus 18.7%). Paired candidate-only/baseline-only wins were 49/28, exact McNemar p=0.0220. The promoted vector is <code>tools/params_a20.json</code>. A fixed 10,000-run baseline capture produced 217 replayable second-boss prefixes; baseline clears 47/217 (21.7%) and blended-search top samples reached 57/217. The next phase restarts at sigma 1.0 with every dimension active, gives second-boss entry rate an explicit 1,500-point fitness coefficient, and reduces replay conversion weight from 0.35 to 0.10 so better reach is always rewarded. Regenerate the gauntlet after the next stable incumbent, and keep the neural-policy branch closed until ES flattens.</p>
+<p><strong>Shared-default A0 check:</strong> on paired source <code>610392847561234098</code>, the promoted A20 policy won 3,073/5,000 A0 runs (61.46%) versus 2,990/5,000 (59.80%) for the legacy A0 bake. Candidate-only/baseline-only flips were 739/656, exact McNemar p=0.0281. The A20 vector is therefore the implicit policy at both ascensions; the legacy vector remains available only by explicit environment override.</p>
+<p><strong>Broadened reach checkpoint (generation 12):</strong> the first validation at generation 6 was neutral-negative (48/2,000 entries and 12 wins versus 55 entries and 13 wins), so it was not promoted. On the next untouched two-cohort validation, the generation-12 mean reached the second boss 63/2,000 times versus 54/2,000 for the promoted starting bake (+16.7%), with 20 versus 18 wins and mean floor 26.69 versus 26.52. Paired win flips were 12/10 (p=0.832), so the win delta is not significant; the useful result is increased reach without an observed completion tradeoff. Keep the state at full sigma 1.0 and require the normal eight-mean tail plus a fresh honest bake before replacing <code>params_a20.json</code>.</p>
+</div>
 
 <h2>Vector extensions (staged)</h2>
 <div class="tablewrap"><table>
@@ -34,7 +62,7 @@
 <h2>Curriculum design</h2>
 <ol>
 <li><strong>Tier 1 — boss-weighted cohorts (no engine changes):</strong> tabulate conditional win rate by boss from 10k-seed fixtures; build generation cohorts over-weighting the worst boss ~2×. Structural (fixed property of the seed), hence stationary — no cohort adaptation.</li>
-<li><strong>Tier 2 — boss-gauntlet fitness (snapshot harness):</strong> run the incumbent to a boss-entry predicate, snapshot the <code>Game</code>, evaluate candidate <em>combat</em> params on the fight alone (win + HP retained). ~10× cheaper and far less noisy → an order of magnitude more signal for combat dims. <strong>Staged EM loop:</strong> freeze draft/map dims → tune combat on the gauntlet → re-freeze → tune draft/map on full runs → regenerate fixtures from the new incumbent (prevents adaptation to stale decks).</li>
+<li><strong>Tier 2 — boss-gauntlet fitness (implemented with replayable prefixes):</strong> run the incumbent to the exact A20 second-boss predicate, store the deterministic action prefix, replay it to reconstruct the <code>Game</code>, then evaluate candidate combat behavior on the fight alone (clear + normalized damage + remaining HP). The current 217-fight gauntlet replays in about five seconds on 12 local workers, providing far denser conversion signal than 300 full runs. <strong>Staged EM loop:</strong> use weight 0.35 for conversion, then broaden with weight 0.10 plus an explicit positive second-boss-entry term before regenerating prefixes from a later incumbent.</li>
 <li><strong>Tier 3:</strong> same harness for elite fights and Act 3 hallway spikes; plus one campaign with <code>elite_value/penalty</code> sigma ×3 to probe the elite-heavy basin the ES declined.</li>
 </ol>
 

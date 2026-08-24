@@ -2,7 +2,9 @@ use crate::card::Card;
 use crate::content::encounter_monsters;
 use crate::creature::{power_is_debuff, Intent, Monster, Orb, OrbKind, Player};
 use crate::dungeon::Dungeon;
-use crate::ids::{CardId, CardRarity, CardTarget, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId};
+use crate::ids::{
+    CardId, CardRarity, CardTarget, CardType, EncounterId, MonsterId, PotionId, PowerId, RelicId,
+};
 use crate::java_util::shuffle_java;
 use crate::rng::RngSet;
 
@@ -156,7 +158,11 @@ impl Combat {
         }
         // AncientTeaSet.atTurnStart: first turn after RestRoom.onPlayerEntry (counter == -2)
         // GainEnergyAction(2) only. No extra draw.
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ancient_Tea_Set) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Ancient_Tea_Set)
+        {
             if r.counter == -2 {
                 r.counter = -1;
                 player.energy += 2;
@@ -174,10 +180,18 @@ impl Combat {
         if !player.has_relic(RelicId::Toolbox) {
             draw_opening_hand(player, rng);
         }
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::HornCleat) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::HornCleat)
+        {
             r.counter = 0;
         }
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::CaptainsWheel) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::CaptainsWheel)
+        {
             r.counter = 0;
         }
         if player.has_relic(RelicId::Anchor) {
@@ -203,16 +217,28 @@ impl Combat {
             player.add_power(PowerId::Artifact, 1);
         }
         // StoneCalendar.atBattleStart: counter = 0, then atTurnStart ++.
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::StoneCalendar)
+        {
             r.counter = 0;
         }
         // VelvetChoker.atBattleStart / atTurnStart: the visible counter is
         // the number of cards successfully played this turn.
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Velvet_Choker)
+        {
             r.counter = 0;
         }
         if player.has_relic(RelicId::Happy_Flower) {
-            if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Happy_Flower) {
+            if let Some(r) = player
+                .relics
+                .iter_mut()
+                .find(|r| r.id == RelicId::Happy_Flower)
+            {
                 r.counter += 1;
                 if r.counter == 3 {
                     r.counter = 0;
@@ -224,7 +250,11 @@ impl Combat {
         if player.has_relic(RelicId::Bag_of_Preparation) {
             let _ = draw_cards_rng(player, 2, Some(rng));
         }
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Letter_Opener) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Letter_Opener)
+        {
             r.counter = 0;
         }
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
@@ -233,7 +263,11 @@ impl Combat {
         if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
             r.counter = 0;
         }
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Ornamental_Fan)
+        {
             r.counter = 0;
         }
         if player
@@ -244,7 +278,11 @@ impl Combat {
             player.add_power(PowerId::PenNib, 1);
         }
         // CentennialPuzzle.atPreBattle: usedThisCombat = false.
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Centennial_Puzzle) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Centennial_Puzzle)
+        {
             r.used_up = false;
         }
         // BloodVial.atBattleStart: HealAction(player, player, 2). addToTop, so
@@ -293,10 +331,7 @@ impl Combat {
             player.add_power(PowerId::Thorns, 3);
         }
         // MercuryHourglass.atTurnStart: DamageAllEnemiesAction THORNS 3.
-        let dead_before_hourglass = monsters
-            .iter()
-            .filter(|m| m.dead || m.half_dead)
-            .count();
+        let dead_before_hourglass = monsters.iter().filter(|m| m.dead || m.half_dead).count();
         if player.has_relic(RelicId::Mercury_Hourglass) {
             for m in monsters.iter_mut().filter(|m| m.alive()) {
                 deal_thorns(m, rng, 3);
@@ -355,10 +390,7 @@ impl Combat {
 
     fn is_minion(&self, id: MonsterId) -> bool {
         match id {
-            MonsterId::Cultist => self
-                .monsters
-                .iter()
-                .any(|m| m.id == MonsterId::AwakenedOne),
+            MonsterId::Cultist => self.monsters.iter().any(|m| m.id == MonsterId::AwakenedOne),
             MonsterId::BronzeOrb => self
                 .monsters
                 .iter()
@@ -367,10 +399,7 @@ impl Combat {
                 .monsters
                 .iter()
                 .any(|m| m.id == MonsterId::TheCollector),
-            MonsterId::Dagger => self
-                .monsters
-                .iter()
-                .any(|m| m.id == MonsterId::Reptomancer),
+            MonsterId::Dagger => self.monsters.iter().any(|m| m.id == MonsterId::Reptomancer),
             MonsterId::GremlinFat
             | MonsterId::GremlinTsundere
             | MonsterId::GremlinThief
@@ -497,7 +526,11 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
             let base = if monster.ascension >= 2 { 4 } else { 3 };
             monster.add_power(
                 PowerId::Thorns,
-                if monster.ascension >= 17 { base + 3 } else { base },
+                if monster.ascension >= 17 {
+                    base + 3
+                } else {
+                    base
+                },
             );
         }
         MonsterId::Exploder => {
@@ -556,7 +589,13 @@ fn apply_prebattle(monster: &mut Monster, rng: &mut RngSet) {
     }
 }
 
-fn apply_group_move(combat: &mut Combat, idx: usize, id: MonsterId, used_move: i32, rng: &mut RngSet) {
+fn apply_group_move(
+    combat: &mut Combat,
+    idx: usize,
+    id: MonsterId,
+    used_move: i32,
+    rng: &mut RngSet,
+) {
     match (id, used_move) {
         (MonsterId::Healer, 2) => {
             let heal = if combat.ascension >= 17 { 20 } else { 16 };
@@ -1448,7 +1487,12 @@ impl Monster {
                     }
                 }
             }
-            MonsterId::SpikeSlimeS => self.set_move(1, Intent::Attack, if self.ascension >= 2 { 6 } else { 5 }, 1),
+            MonsterId::SpikeSlimeS => self.set_move(
+                1,
+                Intent::Attack,
+                if self.ascension >= 2 { 6 } else { 5 },
+                1,
+            ),
             MonsterId::SpikeSlimeM => {
                 let dmg = if self.ascension >= 2 { 10 } else { 8 };
                 if self.ascension >= 17 {
@@ -2321,10 +2365,7 @@ impl Monster {
                 if self.hp < self.max_hp / 2 && !self.split_triggered {
                     self.split_triggered = true;
                     self.set_move(7, Intent::Buff, 0, 1);
-                } else if !self.last_move(3)
-                    && !self.last_move_before(3)
-                    && self.split_triggered
-                {
+                } else if !self.last_move(3) && !self.last_move_before(3) && self.split_triggered {
                     self.set_move(3, Intent::Attack, 10, 2);
                 } else if num_turns == 4 && !self.split_triggered {
                     self.set_move(6, Intent::Debuff, 0, 1);
@@ -2697,7 +2738,10 @@ impl Monster {
             }
             (MonsterId::SlaverRed, 3) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 9 } else { 8 }, 1);
-                player.add_power_from_monster(PowerId::Vulnerable, if ascension >= 17 { 2 } else { 1 });
+                player.add_power_from_monster(
+                    PowerId::Vulnerable,
+                    if ascension >= 17 { 2 } else { 1 },
+                );
             }
             (MonsterId::Looter, 1) => {
                 if self.extra == 0 {
@@ -2804,7 +2848,10 @@ impl Monster {
                 self.set_move(3, Intent::AttackDefend, lunge, 1);
             }
             (MonsterId::BanditBear, 2) => {
-                player.add_power_from_monster(PowerId::Dexterity, if ascension >= 17 { -4 } else { -2 });
+                player.add_power_from_monster(
+                    PowerId::Dexterity,
+                    if ascension >= 17 { -4 } else { -2 },
+                );
                 let lunge = if ascension >= 2 { 10 } else { 9 };
                 self.set_move(3, Intent::AttackDefend, lunge, 1);
             }
@@ -2943,7 +2990,13 @@ impl Monster {
                 self.hp = 0;
                 self.dead = true;
                 self.set_move(3, Intent::Unknown, 0, 1);
-                return Some(split_into(MonsterId::AcidSlimeM, hp, rng, self.ascension, self.offset_x));
+                return Some(split_into(
+                    MonsterId::AcidSlimeM,
+                    hp,
+                    rng,
+                    self.ascension,
+                    self.offset_x,
+                ));
             }
             (MonsterId::SpikeSlimeL, 1) => {
                 let _ = hit_player(player, self, rng, if ascension >= 2 { 18 } else { 16 }, 1);
@@ -2959,7 +3012,13 @@ impl Monster {
                 self.hp = 0;
                 self.dead = true;
                 self.set_move(3, Intent::Unknown, 0, 1);
-                return Some(split_into(MonsterId::SpikeSlimeM, hp, rng, self.ascension, self.offset_x));
+                return Some(split_into(
+                    MonsterId::SpikeSlimeM,
+                    hp,
+                    rng,
+                    self.ascension,
+                    self.offset_x,
+                ));
             }
 
             (MonsterId::SphericGuardian, 1) => {
@@ -3483,7 +3542,13 @@ impl Monster {
             }
             _ => {
                 if self.intent_damage > 0 {
-                    hit_player(player, self, rng, self.intent_damage, self.intent_hits.max(1));
+                    hit_player(
+                        player,
+                        self,
+                        rng,
+                        self.intent_damage,
+                        self.intent_hits.max(1),
+                    );
                 }
             }
         }
@@ -3491,7 +3556,10 @@ impl Monster {
         // justApplied flag preserves the stack through the immediately
         // following end-of-round pass, making every other player turn
         // intangible.
-        if self.id == MonsterId::Nemesis && self.alive() && self.power_amount(PowerId::Intangible) == 0 {
+        if self.id == MonsterId::Nemesis
+            && self.alive()
+            && self.power_amount(PowerId::Intangible) == 0
+        {
             self.add_power(PowerId::Intangible, 1);
             if let Some(power) = self.powers.iter_mut().find(|p| p.id == PowerId::Intangible) {
                 power.just_applied = true;
@@ -3638,7 +3706,13 @@ fn looter_steal(monster: &mut Monster, player: &mut Player, amt: i32) {
     monster.stolen_gold += steal;
 }
 
-fn split_into(child: MonsterId, hp: i32, rng: &mut RngSet, ascension: i32, parent_x: i32) -> Vec<Monster> {
+fn split_into(
+    child: MonsterId,
+    hp: i32,
+    rng: &mut RngSet,
+    ascension: i32,
+    parent_x: i32,
+) -> Vec<Monster> {
     let mut left = spawn_monster_at_hp(child, hp, ascension);
     let mut right = spawn_monster_at_hp(child, hp, ascension);
     left.offset_x = parent_x - 134;
@@ -3747,8 +3821,6 @@ fn next_reptomancer_summon_slots(monsters: &[Monster]) -> Option<[i32; 2]> {
     Some([first, available.next().unwrap_or(i32::MIN)])
 }
 
-
-
 /// TungstenRod.onLoseHpLast after decrementBlock / Buffer: incoming HP loss -1 if > 0.
 pub fn on_lose_hp_last(player: &Player, damage: i32) -> i32 {
     if damage > 0 && player.has_relic(RelicId::TungstenRod) {
@@ -3795,7 +3867,11 @@ fn try_cheat_death(player: &mut Player) -> bool {
     if let Some(slot) = player.potions.iter().position(|p| p.id == PotionId::Fairy) {
         // FairyPotion.use heals getPotency percent; AbstractPotion.getPotency
         // doubles the base 30 while Sacred Bark is held.
-        let potency = if player.has_relic(RelicId::SacredBark) { 60 } else { 30 };
+        let potency = if player.has_relic(RelicId::SacredBark) {
+            60
+        } else {
+            30
+        };
         let heal = (player.max_hp * potency) / 100;
         player.hp = heal.max(1).min(player.max_hp);
         player.potions[slot].id = PotionId::Slot;
@@ -3834,11 +3910,22 @@ fn buffer_absorb(player: &mut Player, dmg: i32) -> i32 {
     0
 }
 
-fn hit_player(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base: i32, hits: i32) -> i32 {
+fn hit_player(
+    player: &mut Player,
+    monster: &mut Monster,
+    rng: &mut RngSet,
+    base: i32,
+    hits: i32,
+) -> i32 {
     hit_player_inner(player, monster, rng, base, hits, false)
 }
 
-fn hit_player_vampire(player: &mut Player, monster: &mut Monster, rng: &mut RngSet, base: i32) -> i32 {
+fn hit_player_vampire(
+    player: &mut Player,
+    monster: &mut Monster,
+    rng: &mut RngSet,
+    base: i32,
+) -> i32 {
     hit_player_inner(player, monster, rng, base, 1, true)
 }
 
@@ -3889,7 +3976,11 @@ fn hit_player_inner(
         dmg = on_lose_hp_last(player, dmg);
         if dmg > 0 {
             player.hp -= dmg;
-            if let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::PlatedArmor) {
+            if let Some(p) = player
+                .powers
+                .iter_mut()
+                .find(|p| p.id == PowerId::PlatedArmor)
+            {
                 p.amount -= 1;
                 if p.amount <= 0 {
                     player.powers.retain(|x| x.id != PowerId::PlatedArmor);
@@ -3948,7 +4039,11 @@ fn hit_player_inner(
 }
 
 fn red_skull_at_battle_start(player: &mut Player) {
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Red_Skull) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Red_Skull)
+    {
         r.counter = 0;
         if player.hp <= player.max_hp / 2 {
             r.counter = 1;
@@ -3962,7 +4057,11 @@ fn red_skull_at_battle_start(player: &mut Player) {
 /// (during the enemy turn if the hit was a monster attack; those 3 cards then
 /// sit under the next turn's 5-draw).
 fn centennial_puzzle_was_hp_lost(player: &mut Player, rng: &mut RngSet) {
-    let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Centennial_Puzzle) else {
+    let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Centennial_Puzzle)
+    else {
         return;
     };
     if r.used_up {
@@ -3977,7 +4076,11 @@ fn centennial_puzzle_was_hp_lost(player: &mut Player, rng: &mut RngSet) {
 }
 
 pub fn red_skull_on_hp_change(player: &mut Player) {
-    let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Red_Skull) else {
+    let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Red_Skull)
+    else {
         return;
     };
     let bloodied = player.hp <= player.max_hp / 2;
@@ -4003,7 +4106,13 @@ pub fn apply_block(block: &mut i32, mut damage: i32) -> i32 {
     damage
 }
 
-pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngSet, base: i32, hits: i32) {
+pub fn damage_monster(
+    monster: &mut Monster,
+    player: &mut Player,
+    rng: &mut RngSet,
+    base: i32,
+    hits: i32,
+) {
     // AbstractCreature.isDeadOrEscaped includes halfDead; DamageAllEnemies
     // skips those. Hitting a half-dead Darkling would setMove(COUNT) over
     // REINCARNATE (seed 8 Sweeping Beam, middle Darkling 0 vs 24 after EOT).
@@ -4139,7 +4248,11 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
                 let malleable = monster.power_amount(PowerId::Malleable);
                 if malleable > 0 {
                     pending_curl += malleable;
-                    if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Malleable) {
+                    if let Some(p) = monster
+                        .powers
+                        .iter_mut()
+                        .find(|p| p.id == PowerId::Malleable)
+                    {
                         p.amount += 1;
                     }
                 }
@@ -4150,7 +4263,11 @@ pub fn damage_monster(monster: &mut Monster, player: &mut Player, rng: &mut RngS
                 }
             }
             if dmg > 0 {
-                if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::PlatedArmor) {
+                if let Some(p) = monster
+                    .powers
+                    .iter_mut()
+                    .find(|p| p.id == PowerId::PlatedArmor)
+                {
                     p.amount -= 1;
                     if p.amount <= 0 {
                         monster.powers.retain(|x| x.id != PowerId::PlatedArmor);
@@ -4247,7 +4364,11 @@ fn maybe_split(monster: &mut Monster) {
 fn wake_asleep_lagavulin(monster: &mut Monster) {
     if monster.id == MonsterId::Lagavulin && monster.extra < 3 {
         monster.extra = 3;
-        if let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::Metallicize) {
+        if let Some(p) = monster
+            .powers
+            .iter_mut()
+            .find(|p| p.id == PowerId::Metallicize)
+        {
             p.amount -= 8;
             if p.amount <= 0 {
                 monster.powers.retain(|p| p.id != PowerId::Metallicize);
@@ -4259,10 +4380,18 @@ fn wake_asleep_lagavulin(monster: &mut Monster) {
 
 /// TheGuardian.damage: HP loss while isOpen counts toward Mode Shift (THORNS included).
 fn guardian_mode_shift_on_hp_loss(monster: &mut Monster, lost: i32) {
-    if monster.id != MonsterId::TheGuardian || lost <= 0 || monster.split_triggered || !monster.alive() {
+    if monster.id != MonsterId::TheGuardian
+        || lost <= 0
+        || monster.split_triggered
+        || !monster.alive()
+    {
         return;
     }
-    let Some(p) = monster.powers.iter_mut().find(|p| p.id == PowerId::ModeShift) else {
+    let Some(p) = monster
+        .powers
+        .iter_mut()
+        .find(|p| p.id == PowerId::ModeShift)
+    else {
         return;
     };
     p.amount -= lost;
@@ -4384,7 +4513,13 @@ pub fn apply_player_power_to_monster(
     }
 }
 
-fn deal_card_damage(monster: &mut Monster, player: &mut Player, rng: &mut RngSet, card: &Card, hits: i32) {
+fn deal_card_damage(
+    monster: &mut Monster,
+    player: &mut Player,
+    rng: &mut RngSet,
+    card: &Card,
+    hits: i32,
+) {
     damage_monster(monster, player, rng, card.base_damage as i32, hits);
 }
 
@@ -4435,7 +4570,11 @@ pub fn draw_cards(player: &mut Player, n: i32) {
 }
 
 pub fn draw_opening_hand(player: &mut Player, rng: &mut RngSet) {
-    let opening_draw = if player.has_relic(RelicId::Snecko_Eye) { 7 } else { 5 };
+    let opening_draw = if player.has_relic(RelicId::Snecko_Eye) {
+        7
+    } else {
+        5
+    };
     let _ = draw_cards_rng(player, opening_draw, Some(rng));
 }
 
@@ -4487,7 +4626,11 @@ pub fn draw_cards_rng(player: &mut Player, mut n: i32, mut rng: Option<&mut RngS
 
 pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &mut RngSet) {
     if player.has_relic(RelicId::Letter_Opener) && card.card_type() == CardType::SKILL {
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Letter_Opener) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Letter_Opener)
+        {
             r.counter += 1;
             if r.counter == 3 {
                 r.counter = 0;
@@ -4539,7 +4682,11 @@ pub fn on_use_card(player: &mut Player, combat: &mut Combat, card: &Card, rng: &
         }
     }
     // InkBottle.onUseCard: counter++ every play; at 10, addToBot(DrawCardAction(1)).
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::InkBottle) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::InkBottle)
+    {
         if r.counter < 0 {
             r.counter = 0;
         }
@@ -4734,7 +4881,11 @@ fn velvet_choker_full(player: &Player) -> bool {
 }
 
 fn velvet_choker_on_play(player: &mut Player) {
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Velvet_Choker)
+    {
         if r.counter < 0 {
             r.counter = 0;
         }
@@ -4813,7 +4964,9 @@ pub fn play_owned_card(
         if let Some(power) = player.powers.iter_mut().find(|p| p.id == PowerId::Amplify) {
             power.amount -= 1;
         }
-        player.powers.retain(|p| p.id != PowerId::Amplify || p.amount > 0);
+        player
+            .powers
+            .retain(|p| p.id != PowerId::Amplify || p.amount > 0);
     }
     // AbstractCard.energyOnUse = EnergyPanel.totalCount at play. The
     // Duplication copy is CardQueueItem(tmp, m, card.energyOnUse, true, true)
@@ -4838,9 +4991,19 @@ pub fn play_owned_card(
         || (card.id == CardId::Purity && !player.hand.is_empty())
         || (card.id == CardId::Forethought && !player.hand.is_empty())
         || (card.id == CardId::Secret_Technique
-            && player.draw.iter().filter(|c| c.card_type() == CardType::SKILL).count() > 1)
+            && player
+                .draw
+                .iter()
+                .filter(|c| c.card_type() == CardType::SKILL)
+                .count()
+                > 1)
         || (card.id == CardId::Secret_Weapon
-            && player.draw.iter().filter(|c| c.card_type() == CardType::ATTACK).count() > 1);
+            && player
+                .draw
+                .iter()
+                .filter(|c| c.card_type() == CardType::ATTACK)
+                .count()
+                > 1);
     let mut original_resolved_before_copy = false;
     let mut all_for_one_after_original = Vec::new();
     let mut gremlin_horn_after_original = 0;
@@ -4858,9 +5021,10 @@ pub fn play_owned_card(
             // (seed 384: Dualcast must not evoke the following Frost orb).
             if combat.all_dead()
                 || combat.force_end_turn
-                || combat.monsters.iter().any(|m| {
-                    m.id == MonsterId::AwakenedOne && m.half_dead && m.extra == 0
-                })
+                || combat
+                    .monsters
+                    .iter()
+                    .any(|m| m.id == MonsterId::AwakenedOne && m.half_dead && m.extra == 0)
             {
                 break;
             }
@@ -4998,9 +5162,7 @@ pub fn play_owned_card(
         // AllCostToHandAction snapshots eligible discard cards after the hit,
         // then queues one DiscardToHandAction per card behind Ink Bottle's
         // DrawCardAction and this card's UseCardAction.
-        let all_for_one_cards: Vec<Card> = if card.id == CardId::All_For_One
-            && !combat.all_dead()
-        {
+        let all_for_one_cards: Vec<Card> = if card.id == CardId::All_For_One && !combat.all_dead() {
             player
                 .discard
                 .iter()
@@ -5014,9 +5176,7 @@ pub fn play_owned_card(
         // inserts its Dazed before Ink Bottle's queued draw (seed 444).
         let defer_grid_reactions = (card.id == CardId::Seek && combat.need_draw_to_hand)
             || (card.id == CardId::Hologram && combat.need_discard_to_hand);
-        if !matches!(card.id, CardId::Tempest | CardId::Multi_Cast)
-            && hex_on_use > 0
-        {
+        if !matches!(card.id, CardId::Tempest | CardId::Multi_Cast) && hex_on_use > 0 {
             if defer_grid_reactions {
                 combat.pending_hex_after_seek += hex_on_use;
             } else {
@@ -5029,12 +5189,8 @@ pub fn play_owned_card(
             flush_letter_opener(combat, rng);
             flush_ink_bottle(player, combat, rng);
         }
-        let mut gremlin_horn_triggers =
-            gremlin_horn_trigger_count(player, combat, dead_before);
-        if card.id == CardId::Dualcast
-            && plays == 1
-            && !combat.pending_stasis_cards.is_empty()
-        {
+        let mut gremlin_horn_triggers = gremlin_horn_trigger_count(player, combat, dead_before);
+        if card.id == CardId::Dualcast && plays == 1 && !combat.pending_stasis_cards.is_empty() {
             // Stasis cards killed by Dualcast's queued evocations are added
             // behind UseCardAction. Ink Bottle draws first, then Dualcast
             // reaches discard, then a full hand sends Stasis to discard
@@ -5096,7 +5252,11 @@ pub fn play_owned_card(
                     player.energy += 1;
                 }
             }
-            if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
+            if let Some(r) = player
+                .relics
+                .iter_mut()
+                .find(|r| r.id == RelicId::Ornamental_Fan)
+            {
                 if r.counter < 0 {
                     r.counter = 0;
                 }
@@ -5194,11 +5354,7 @@ pub fn play_owned_card(
         if player.hp <= 0 {
             return false;
         }
-        if play_i == 0
-            && plays > 1
-            && !needs_select
-            && card.card_type() != CardType::POWER
-        {
+        if play_i == 0 && plays > 1 && !needs_select && card.card_type() != CardType::POWER {
             // DuplicationPower queues a separate CardQueueItem. Java drains
             // the original card's use actions and UseCardAction before that
             // queued copy can play. In particular, Overclock resolves Draw,
@@ -5460,9 +5616,15 @@ fn apply_card_effect(
                 }
             }
         }
-        CardId::Strike_R | CardId::Strike_B | CardId::Bash | CardId::Bludgeon | CardId::Hemokinesis | CardId::Anger => {
+        CardId::Strike_R
+        | CardId::Strike_B
+        | CardId::Bash
+        | CardId::Bludgeon
+        | CardId::Hemokinesis
+        | CardId::Anger => {
             if card.id == CardId::Hemokinesis {
-                let dmg = on_lose_hp_last(player, intangible_player(player, card.base_magic as i32));
+                let dmg =
+                    on_lose_hp_last(player, intangible_player(player, card.base_magic as i32));
                 if dmg > 0 {
                     player.hp -= dmg;
                     red_skull_on_hp_change(player);
@@ -5507,7 +5669,11 @@ fn apply_card_effect(
                 }
             }
         }
-        CardId::Cleave | CardId::Immolate | CardId::Reaper | CardId::Thunderclap | CardId::Whirlwind => {
+        CardId::Cleave
+        | CardId::Immolate
+        | CardId::Reaper
+        | CardId::Thunderclap
+        | CardId::Whirlwind => {
             let hits = if card.id == CardId::Whirlwind {
                 energy_on_use(player, combat)
             } else {
@@ -5860,7 +6026,11 @@ fn apply_card_effect(
         }
         CardId::Impatience => {
             // ConditionalDrawAction: draw magic if no ATTACK remains in hand.
-            if !player.hand.iter().any(|c| c.card_type() == CardType::ATTACK) {
+            if !player
+                .hand
+                .iter()
+                .any(|c| c.card_type() == CardType::ATTACK)
+            {
                 let n = draw_cards_rng(player, card.base_magic.max(2) as i32, Some(rng));
                 apply_fire_breathing(player, &mut combat.monsters, rng, n);
             }
@@ -5958,7 +6128,11 @@ fn apply_card_effect(
             card.cost_for_turn = (card.cost_for_turn - reduce).max(0);
         }
         CardId::Swift_Strike | CardId::Rip_and_Tear => {
-            let hits = if card.id == CardId::Rip_and_Tear { 2 } else { 1 };
+            let hits = if card.id == CardId::Rip_and_Tear {
+                2
+            } else {
+                1
+            };
             if card.id == CardId::Rip_and_Tear && target.is_none() {
                 // NewRipAndTearAction -> AttackDamageRandomEnemyAction: cardRandomRng
                 // getRandomMonster(null, true) per hit.
@@ -6289,17 +6463,26 @@ fn apply_card_effect(
             if let Some(i) = target {
                 let is_minion = combat.monsters.get(i).is_some_and(|m| {
                     (matches!(
-                            m.id,
-                            MonsterId::GremlinFat
-                                | MonsterId::GremlinTsundere
-                                | MonsterId::GremlinThief
-                                | MonsterId::GremlinWarrior
-                                | MonsterId::GremlinWizard
-                        ) && combat.monsters.iter().any(|m| m.id == MonsterId::GremlinLeader))
+                        m.id,
+                        MonsterId::GremlinFat
+                            | MonsterId::GremlinTsundere
+                            | MonsterId::GremlinThief
+                            | MonsterId::GremlinWarrior
+                            | MonsterId::GremlinWizard
+                    ) && combat
+                        .monsters
+                        .iter()
+                        .any(|m| m.id == MonsterId::GremlinLeader))
                         || (m.id == MonsterId::BronzeOrb
-                            && combat.monsters.iter().any(|m| m.id == MonsterId::BronzeAutomaton))
+                            && combat
+                                .monsters
+                                .iter()
+                                .any(|m| m.id == MonsterId::BronzeAutomaton))
                         || (m.id == MonsterId::Dagger
-                            && combat.monsters.iter().any(|m| m.id == MonsterId::Reptomancer))
+                            && combat
+                                .monsters
+                                .iter()
+                                .any(|m| m.id == MonsterId::Reptomancer))
                 });
                 if let Some(m) = combat.monsters.get_mut(i) {
                     damage_monster(m, player, rng, dmg, 1);
@@ -6371,7 +6554,12 @@ fn apply_card_effect(
         }
         CardId::The_Bomb => {
             player.add_power(PowerId::TheBomb, 3);
-            if let Some(p) = player.powers.iter_mut().rev().find(|p| p.id == PowerId::TheBomb) {
+            if let Some(p) = player
+                .powers
+                .iter_mut()
+                .rev()
+                .find(|p| p.id == PowerId::TheBomb)
+            {
                 p.misc = if card.upgraded { 50 } else { 40 };
             }
         }
@@ -6494,7 +6682,9 @@ fn apply_card_effect(
                 if combat.skill_from_deck.is_empty() {
                     combat.skill_from_deck.push(i);
                 } else {
-                    let idx = rng.card_random.random_int(combat.skill_from_deck.len() as i32 - 1)
+                    let idx = rng
+                        .card_random
+                        .random_int(combat.skill_from_deck.len() as i32 - 1)
                         as usize;
                     combat.skill_from_deck.insert(idx, i);
                 }
@@ -6528,7 +6718,11 @@ fn apply_card_effect(
                 exhaust_card(player, combat, c, rng);
             }
         }
-        CardId::Defend_R | CardId::Defend_B | CardId::Shrug_It_Off | CardId::Armaments | CardId::Flame_Barrier => {
+        CardId::Defend_R
+        | CardId::Defend_B
+        | CardId::Shrug_It_Off
+        | CardId::Armaments
+        | CardId::Flame_Barrier => {
             if block > 0 {
                 player.block += block;
             }
@@ -6552,7 +6746,9 @@ fn apply_card_effect(
         CardId::Sadistic_Nature => {
             player.add_power(PowerId::Sadistic, card.base_magic.max(5) as i32)
         }
-        CardId::Feel_No_Pain => player.add_power(PowerId::FeelNoPain, card.base_magic.max(3) as i32),
+        CardId::Feel_No_Pain => {
+            player.add_power(PowerId::FeelNoPain, card.base_magic.max(3) as i32)
+        }
         CardId::Dark_Embrace => player.add_power(PowerId::DarkEmbrace, 1),
         CardId::Flex => {
             player.add_power(PowerId::Strength, card.base_magic as i32);
@@ -6572,7 +6768,11 @@ fn apply_card_effect(
             }
             player.block += gained;
         }
-        CardId::Pommel_Strike | CardId::Twin_Strike | CardId::Clothesline | CardId::Iron_Wave | CardId::Headbutt => {
+        CardId::Pommel_Strike
+        | CardId::Twin_Strike
+        | CardId::Clothesline
+        | CardId::Iron_Wave
+        | CardId::Headbutt => {
             if card.id == CardId::Iron_Wave && block > 0 {
                 player.block += block;
             }
@@ -6730,7 +6930,12 @@ fn on_shuffle_relics(player: &mut Player) {
     }
 }
 
-pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dungeon: Option<&Dungeon>) {
+pub fn end_turn(
+    player: &mut Player,
+    combat: &mut Combat,
+    rng: &mut RngSet,
+    dungeon: Option<&Dungeon>,
+) {
     // GameActionManager.callEndOfTurnActions: applyEndOfTurnRelics then
     // applyEndOfTurnPreCardPowers. Orichalcum.onPlayerEndTurn addToTop GainBlock 6
     // if currentBlock==0, so it resolves before PlatedArmor/Metallicize addToBot.
@@ -6880,7 +7085,9 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             if let Some(p) = player.powers.iter_mut().find(|p| p.id == PowerId::Regen) {
                 p.amount -= 1;
             }
-            player.powers.retain(|p| p.id != PowerId::Regen || p.amount > 0);
+            player
+                .powers
+                .retain(|p| p.id != PowerId::Regen || p.amount > 0);
         }
         // ConstrictedPower queues THORNS damage. It is normally appended by
         // Spire Growth after pre-existing player powers such as Regen, so it
@@ -7031,10 +7238,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         if id == MonsterId::SpireGrowth {
             combat.monsters[i].split_triggered = player.power_amount(PowerId::Constricted) > 0;
         }
-        if id == MonsterId::TheGuardian
-            && used_move == 4
-            && combat.monsters[i].alive()
-        {
+        if id == MonsterId::TheGuardian && used_move == 4 && combat.monsters[i].alive() {
             // ChangeState("Offensive Mode") adds these actions to the bottom,
             // behind Twin Slam and any addToTop Static Discharge channels.
             let guardian = &mut combat.monsters[i];
@@ -7054,7 +7258,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             if fading == 1 {
                 combat.monsters[i].hp = 0;
                 combat.monsters[i].dead = true;
-            } else if let Some(p) = combat.monsters[i].powers.iter_mut().find(|p| p.id == PowerId::Fading) {
+            } else if let Some(p) = combat.monsters[i]
+                .powers
+                .iter_mut()
+                .find(|p| p.id == PowerId::Fading)
+            {
                 p.amount -= 1;
             }
         }
@@ -7076,11 +7284,19 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 }
                 combat.monsters[i].hp = 0;
                 combat.monsters[i].dead = true;
-            } else if let Some(p) = combat.monsters[i].powers.iter_mut().find(|p| p.id == PowerId::Explosive) {
+            } else if let Some(p) = combat.monsters[i]
+                .powers
+                .iter_mut()
+                .find(|p| p.id == PowerId::Explosive)
+            {
                 p.amount -= 1;
             }
         }
-        if let Some(p) = combat.monsters[i].powers.iter_mut().find(|p| p.id == PowerId::Malleable) {
+        if let Some(p) = combat.monsters[i]
+            .powers
+            .iter_mut()
+            .find(|p| p.id == PowerId::Malleable)
+        {
             p.amount = 3;
         }
         let plated = combat.monsters[i].power_amount(PowerId::PlatedArmor);
@@ -7108,9 +7324,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             if !skip_roll {
                 if matches!(
                     combat.monsters[parent_idx].id,
-                    MonsterId::GremlinLeader
-                        | MonsterId::TheCollector
-                        | MonsterId::Reptomancer
+                    MonsterId::GremlinLeader | MonsterId::TheCollector | MonsterId::Reptomancer
                 ) {
                     let missing: i32 = combat
                         .monsters
@@ -7228,7 +7442,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         && combat.turn > 1
         && combat.cards_played_this_turn <= 3;
     combat.cards_played_this_turn = 0;
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Velvet_Choker)
+    {
         r.counter = 0;
     }
     combat.skills_this_turn = 0;
@@ -7267,7 +7485,10 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
                 if dungeon.common_cards.is_empty() {
                     break;
                 }
-                let i = rng.card_random.random_int(dungeon.common_cards.len() as i32 - 1) as usize;
+                let i = rng
+                    .card_random
+                    .random_int(dungeon.common_cards.len() as i32 - 1)
+                    as usize;
                 let id = dungeon.common_cards[i];
                 if player.hand.len() < 10 {
                     player.hand.push(Card::new(id));
@@ -7339,7 +7560,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         player.powers.retain(|p| p.id != PowerId::Energized);
     }
     if player.has_relic(RelicId::Happy_Flower) {
-        if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Happy_Flower) {
+        if let Some(r) = player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Happy_Flower)
+        {
             r.counter += 1;
             if r.counter == 3 {
                 r.counter = 0;
@@ -7359,7 +7584,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
             return;
         }
     }
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Letter_Opener) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Letter_Opener)
+    {
         r.counter = 0;
     }
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Kunai) {
@@ -7368,7 +7597,11 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Shuriken) {
         r.counter = 0;
     }
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Ornamental_Fan) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Ornamental_Fan)
+    {
         r.counter = 0;
     }
     if player.power_amount(PowerId::Brutality) > 0 {
@@ -7384,10 +7617,13 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
         apply_fire_breathing(player, &mut combat.monsters, rng, statuses);
     }
     // DrawPower (Machine Learning) bumps gameHandSize; DrawCardAction uses that.
-    let draw_n = 5
-        + if player.has_relic(RelicId::Snecko_Eye) { 2 } else { 0 }
-        + player.power_amount(PowerId::DrawCard)
-        - draw_reduction;
+    let draw_n =
+        5 + if player.has_relic(RelicId::Snecko_Eye) {
+            2
+        } else {
+            0
+        } + player.power_amount(PowerId::DrawCard)
+            - draw_reduction;
     let statuses = draw_cards_rng(player, draw_n.max(0), Some(rng));
     apply_fire_breathing(player, &mut combat.monsters, rng, statuses);
     if pocketwatch {
@@ -7436,9 +7672,16 @@ fn tick_inserter(player: &mut Player) {
 /// Plasma.onStartOfTurn grants one energy per Plasma orb. Gold-Plated Cables
 /// calls the front orb's start hook a second time.
 fn gain_start_of_turn_plasma_energy(player: &mut Player) {
-    let mut energy = player.orbs.iter().filter(|orb| orb.kind == OrbKind::Plasma).count() as i32;
+    let mut energy = player
+        .orbs
+        .iter()
+        .filter(|orb| orb.kind == OrbKind::Plasma)
+        .count() as i32;
     if player.has_relic(RelicId::Cables)
-        && player.orbs.first().is_some_and(|orb| orb.kind == OrbKind::Plasma)
+        && player
+            .orbs
+            .first()
+            .is_some_and(|orb| orb.kind == OrbKind::Plasma)
     {
         energy += 1;
     }
@@ -7448,10 +7691,18 @@ fn gain_start_of_turn_plasma_energy(player: &mut Player) {
 fn tick_turn_start_block_relics(player: &mut Player) {
     // IncenseBurner.atTurnStart: counter 0 onEquip, +1 each turn, Intangible
     // at 6 then reset. Default -1 (never equipped) steps to 1 like Java.
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::StoneCalendar)
+    {
         r.counter += 1;
     }
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Incense_Burner) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Incense_Burner)
+    {
         if r.counter == -1 {
             r.counter += 2;
         } else {
@@ -7462,7 +7713,11 @@ fn tick_turn_start_block_relics(player: &mut Player) {
             player.add_power(PowerId::Intangible, 1);
         }
     }
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::HornCleat) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::HornCleat)
+    {
         if r.counter >= 0 {
             r.counter += 1;
         }
@@ -7471,7 +7726,11 @@ fn tick_turn_start_block_relics(player: &mut Player) {
             r.counter = -1;
         }
     }
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::CaptainsWheel) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::CaptainsWheel)
+    {
         if r.counter >= 0 {
             r.counter += 1;
         }
@@ -7505,10 +7764,18 @@ pub fn after_combat_relics(player: &mut Player) {
     player.exhaust.clear();
     player.duplication = 0;
     player.orbs.clear();
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::StoneCalendar) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::StoneCalendar)
+    {
         r.counter = -1;
     }
-    if let Some(r) = player.relics.iter_mut().find(|r| r.id == RelicId::Velvet_Choker) {
+    if let Some(r) = player
+        .relics
+        .iter_mut()
+        .find(|r| r.id == RelicId::Velvet_Choker)
+    {
         r.counter = -1;
     }
 }
@@ -7806,7 +8073,12 @@ fn flush_pending_stasis(player: &mut Player, combat: &mut Combat) {
     }
 }
 
-fn lightning_hit_player(player: Option<&Player>, combat: &mut Combat, rng: &mut RngSet, amount: i32) {
+fn lightning_hit_player(
+    player: Option<&Player>,
+    combat: &mut Combat,
+    rng: &mut RngSet,
+    amount: i32,
+) {
     let electro = player.is_some_and(|p| p.power_amount(PowerId::Electro) > 0);
     let alive: Vec<usize> = combat
         .monsters

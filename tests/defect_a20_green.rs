@@ -3,11 +3,11 @@
 //! The file `exact-text-sim/runtime/oracles/defect/a20/green_registry.jsonl`
 //! is the source of truth. Do not keep a Rust array of seeds.
 
+use std::path::PathBuf;
 use sts_engine::green_registry::{GreenRegistry, GreenStatus};
 use sts_engine::ids::Character;
 use sts_engine::walk::{default_config, walk_oracle};
 use sts_engine::Unlocks;
-use std::path::PathBuf;
 
 fn registry_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -42,10 +42,7 @@ fn registry_file_lists_original_fixture_greens() {
 fn registry_greens_still_walk() {
     let reg = GreenRegistry::load(&registry_path()).expect("load registry jsonl");
     let seeds: Vec<String> = reg.green_seeds().into_iter().map(str::to_string).collect();
-    assert!(
-        !seeds.is_empty(),
-        "green_registry.jsonl has no GREEN seeds"
-    );
+    assert!(!seeds.is_empty(), "green_registry.jsonl has no GREEN seeds");
     for seed in &seeds {
         match walk_a20(seed) {
             Ok(ok) => {

@@ -1,12 +1,15 @@
 use crate::generated::orders::{
-    BLUE_RELIC_HASHMAP_ORDER, CARD_LIBRARY_HASHMAP_ORDER, RED_RELIC_HASHMAP_ORDER, SHARED_RELIC_HASHMAP_ORDER,
+    BLUE_RELIC_HASHMAP_ORDER, CARD_LIBRARY_HASHMAP_ORDER, RED_RELIC_HASHMAP_ORDER,
+    SHARED_RELIC_HASHMAP_ORDER,
 };
 use crate::generated::relic_catalog::RELICS;
-use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, RelicId, RelicTier, RoomType};
+use crate::ids::{
+    Act, CardId, CardRarity, CardType, Character, EncounterId, RelicId, RelicTier, RoomType,
+};
 use crate::java_util::shuffle_java;
 use crate::map::{
-    assign_row, distribute_rooms, generate_dungeon, generate_room_types, DungeonMap, MAP_DENSITY, MAP_HEIGHT,
-    MAP_WIDTH,
+    assign_row, distribute_rooms, generate_dungeon, generate_room_types, DungeonMap, MAP_DENSITY,
+    MAP_HEIGHT, MAP_WIDTH,
 };
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
@@ -76,7 +79,13 @@ pub struct Dungeon {
 }
 
 impl Dungeon {
-    pub fn generate_exordium(seed: i64, rng: &mut RngSet, unlocks: &Unlocks, character: Character, ascension: i32) -> Self {
+    pub fn generate_exordium(
+        seed: i64,
+        rng: &mut RngSet,
+        unlocks: &Unlocks,
+        character: Character,
+        ascension: i32,
+    ) -> Self {
         let mut dungeon = Self {
             act: Act::Exordium,
             id: "Exordium",
@@ -262,8 +271,9 @@ impl Dungeon {
                 } else if !unlocks.boss_seen("WIZARD") {
                     self.boss_list.push("Time Eater".into());
                 } else {
-                    self.boss_list
-                        .extend(["Awakened One", "Time Eater", "Donu and Deca"].map(str::to_string));
+                    self.boss_list.extend(
+                        ["Awakened One", "Time Eater", "Donu and Deca"].map(str::to_string),
+                    );
                     shuffle_java(&mut self.boss_list, rng.monster.random_long());
                 }
                 self.event_list.extend(
@@ -324,7 +334,8 @@ impl Dungeon {
             3,
             false,
         );
-        let exclusions = first_strong_exclusions(self.monster_list.last().map(String::as_str).unwrap_or(""));
+        let exclusions =
+            first_strong_exclusions(self.monster_list.last().map(String::as_str).unwrap_or(""));
         let strong = [
             ("Blue Slaver", 2.0),
             ("Gremlin Gang", 1.0),
@@ -349,7 +360,11 @@ impl Dungeon {
         generate_weighted(
             monster,
             &mut self.elite_list,
-            &[("Gremlin Nob", 1.0), ("Lagavulin", 1.0), ("3 Sentries", 1.0)],
+            &[
+                ("Gremlin Nob", 1.0),
+                ("Lagavulin", 1.0),
+                ("3 Sentries", 1.0),
+            ],
             10,
             true,
         );
@@ -417,7 +432,8 @@ impl Dungeon {
         // NoteForYourself.isNoteForYourselfAvailable is false at A15+.
         // Removing it here preserves Java's subsequent special-event order.
         if ascension >= 15 {
-            self.special_one_time.retain(|event| event != "NoteForYourself");
+            self.special_one_time
+                .retain(|event| event != "NoteForYourself");
         }
         self.initialize_shrines();
     }
@@ -444,7 +460,8 @@ impl Dungeon {
                 "Upgrade Shrine",
             ],
         };
-        self.shrine_list.extend(shrines.iter().map(|s| (*s).to_string()));
+        self.shrine_list
+            .extend(shrines.iter().map(|s| (*s).to_string()));
     }
 
     fn initialize_card_pools(&mut self, character: Character, unlocks: &Unlocks) {
@@ -545,7 +562,12 @@ impl Dungeon {
     }
 
     fn generate_map(&mut self, map_rng: &mut StsRandom, ascension: i32, place_emerald: bool) {
-        self.map = Arc::new(generate_dungeon(MAP_HEIGHT, MAP_WIDTH, MAP_DENSITY, map_rng));
+        self.map = Arc::new(generate_dungeon(
+            MAP_HEIGHT,
+            MAP_WIDTH,
+            MAP_DENSITY,
+            map_rng,
+        ));
         let mut count = 0;
         for (y, row) in self.map.nodes.iter().enumerate() {
             for node in row {
@@ -605,11 +627,19 @@ impl Dungeon {
         }
     }
 
-    pub fn next_relic(&mut self, tier: RelicTier, can_spawn: &dyn Fn(RelicId) -> bool) -> Option<RelicId> {
+    pub fn next_relic(
+        &mut self,
+        tier: RelicTier,
+        can_spawn: &dyn Fn(RelicId) -> bool,
+    ) -> Option<RelicId> {
         self.return_random_relic_key(tier, can_spawn)
     }
 
-    pub fn next_relic_end(&mut self, tier: RelicTier, can_spawn: &dyn Fn(RelicId) -> bool) -> Option<RelicId> {
+    pub fn next_relic_end(
+        &mut self,
+        tier: RelicTier,
+        can_spawn: &dyn Fn(RelicId) -> bool,
+    ) -> Option<RelicId> {
         self.return_end_random_relic_key(tier, can_spawn)
     }
 
@@ -722,7 +752,13 @@ impl Dungeon {
 }
 
 /// `AbstractRelic.canSpawn` overrides. Endless is not modeled (always false).
-pub fn relic_can_spawn(id: RelicId, floor: i32, act: Act, room: RoomType, player: &crate::creature::Player) -> bool {
+pub fn relic_can_spawn(
+    id: RelicId,
+    floor: i32,
+    act: Act,
+    room: RoomType,
+    player: &crate::creature::Player,
+) -> bool {
     let before_act4 = floor <= 48;
     let not_in_shop = room != RoomType::Shop;
     match id {
@@ -775,7 +811,12 @@ pub fn relic_can_spawn(id: RelicId, floor: i32, act: Act, room: RoomType, player
     }
 }
 
-fn populate_relic_pool(pool: &mut Vec<RelicId>, tier: RelicTier, character: Character, unlocks: &Unlocks) {
+fn populate_relic_pool(
+    pool: &mut Vec<RelicId>,
+    tier: RelicTier,
+    character: Character,
+    unlocks: &Unlocks,
+) {
     let id_to_tier: std::collections::HashMap<&str, RelicTier> =
         RELICS.iter().map(|r| (r.sts_id, r.tier)).collect();
     for id in SHARED_RELIC_HASHMAP_ORDER {

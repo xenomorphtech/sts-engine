@@ -1,5 +1,5 @@
-use sts_engine::{load_commands, replay_seed, TrainEnv, Unlocks};
 use std::time::Instant;
+use sts_engine::{load_commands, replay_seed, TrainEnv, Unlocks};
 
 fn main() {
     let path = "../exact-text-sim/runtime/act1-seed2.commands.jsonl";

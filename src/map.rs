@@ -80,7 +80,12 @@ pub const MAP_HEIGHT: i32 = 15;
 pub const MAP_WIDTH: i32 = 7;
 pub const MAP_DENSITY: i32 = 6;
 
-pub fn generate_dungeon(height: i32, width: i32, path_density: i32, rng: &mut StsRandom) -> DungeonMap {
+pub fn generate_dungeon(
+    height: i32,
+    width: i32,
+    path_density: i32,
+    rng: &mut StsRandom,
+) -> DungeonMap {
     let mut map = create_nodes(height, width);
     create_paths(&mut map, path_density, rng);
     filter_redundant_edges_from_row(&mut map);
@@ -395,7 +400,8 @@ fn next_room_index(map: &DungeonMap, x: usize, y: usize, rooms: &[RoomKind]) -> 
     let siblings = siblings(map, &parents, x as i32, y as i32);
     for (i, room) in rooms.iter().enumerate() {
         if rule_assignable(y as i32, *room)
-            && (!rule_parent_matches(map, &parents, *room) && !rule_sibling_matches(map, &siblings, *room)
+            && (!rule_parent_matches(map, &parents, *room)
+                && !rule_sibling_matches(map, &siblings, *room)
                 || y == 0)
         {
             return Some(i);

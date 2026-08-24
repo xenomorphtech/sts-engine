@@ -94,7 +94,10 @@ impl Card {
     }
 
     pub fn needs_target(self) -> bool {
-        matches!(self.target(), CardTarget::ENEMY | CardTarget::SELF_AND_ENEMY)
+        matches!(
+            self.target(),
+            CardTarget::ENEMY | CardTarget::SELF_AND_ENEMY
+        )
     }
 
     pub fn sts_id(self) -> &'static str {

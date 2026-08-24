@@ -5,7 +5,13 @@ use sts_engine::walk::walk_from_runtime;
 use sts_engine::Unlocks;
 
 fn walk(name: &str, snaps_file: &str, cmds_file: &str, _min_act: i32) {
-    walk_ex(name, snaps_file, cmds_file, Character::Ironclad, Unlocks::fixture());
+    walk_ex(
+        name,
+        snaps_file,
+        cmds_file,
+        Character::Ironclad,
+        Unlocks::fixture(),
+    );
 }
 
 fn walk_ex(name: &str, snaps_file: &str, cmds_file: &str, character: Character, unlocks: Unlocks) {
@@ -15,7 +21,11 @@ fn walk_ex(name: &str, snaps_file: &str, cmds_file: &str, character: Character, 
                 "{name} GREEN last_ok={} / {} snaps seed={}",
                 ok.last_ok, ok.snaps, ok.seed
             );
-            assert_eq!(ok.last_ok, ok.snaps.saturating_sub(1), "{name} incomplete walk");
+            assert_eq!(
+                ok.last_ok,
+                ok.snaps.saturating_sub(1),
+                "{name} incomplete walk"
+            );
         }
         Err(fail) if fail.mismatched == ["io"] => {
             eprintln!("skipping {name}: {}", fail.boundary);
@@ -38,7 +48,12 @@ fn later_acts_seed2_walk() {
 #[test]
 #[ignore = "stale ExactTextSim: published COMBAT_REWARD before FastCardObtainEffect; live GUI has the card in masterDeck"]
 fn walk_latest_autoplay() {
-    walk("latest", "a0-s2-latest.jsonl", "a0-s2-latest.commands.jsonl", 2);
+    walk(
+        "latest",
+        "a0-s2-latest.jsonl",
+        "a0-s2-latest.commands.jsonl",
+        2,
+    );
 }
 
 fn walk_defect_oracle(seed: &str) {
@@ -96,23 +111,43 @@ fn walk_defect_oracle_s755902() {
 #[test]
 #[ignore = "stale ExactTextSim: published COMBAT_REWARD before FastCardObtainEffect; live GUI has the card in masterDeck"]
 fn walk_batch2_s1() {
-    walk("batch2-s1", "batch2-s1.jsonl", "batch2-s1.commands.jsonl", 1);
+    walk(
+        "batch2-s1",
+        "batch2-s1.jsonl",
+        "batch2-s1.commands.jsonl",
+        1,
+    );
 }
 
 #[test]
 #[ignore = "stale ExactTextSim: published COMBAT_REWARD before FastCardObtainEffect; live GUI has the card in masterDeck"]
 fn walk_batch2_s3() {
-    walk("batch2-s3", "batch2-s3.jsonl", "batch2-s3.commands.jsonl", 1);
+    walk(
+        "batch2-s3",
+        "batch2-s3.jsonl",
+        "batch2-s3.commands.jsonl",
+        1,
+    );
 }
 
 #[test]
 #[ignore = "stale ExactTextSim: published COMBAT_REWARD before FastCardObtainEffect; live GUI has the card in masterDeck"]
 fn walk_batch2_s5() {
-    walk("batch2-s5", "batch2-s5.jsonl", "batch2-s5.commands.jsonl", 1);
+    walk(
+        "batch2-s5",
+        "batch2-s5.jsonl",
+        "batch2-s5.commands.jsonl",
+        1,
+    );
 }
 
 #[test]
 #[ignore = "stale ExactTextSim: published COMBAT_REWARD before FastCardObtainEffect; live GUI has the card in masterDeck"]
 fn act2_seed2_walk() {
-    walk("act2", "act2-seed2-pruned.jsonl", "act2-seed2.commands.jsonl", 2);
+    walk(
+        "act2",
+        "act2-seed2-pruned.jsonl",
+        "act2-seed2.commands.jsonl",
+        2,
+    );
 }

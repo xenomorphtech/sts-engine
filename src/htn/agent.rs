@@ -50,7 +50,10 @@ impl HtnAgent {
                     .cloned()
                     .collect();
                 if nodes.is_empty() {
-                    return legal.iter().find(|a| !matches!(a, Action::Potion { .. })).cloned();
+                    return legal
+                        .iter()
+                        .find(|a| !matches!(a, Action::Potion { .. }))
+                        .cloned();
                 }
                 Some(strategy::map_choice(game, &nodes))
             }
@@ -59,7 +62,10 @@ impl HtnAgent {
             Screen::BossRelic => Some(strategy::boss_relic(game, legal)),
             Screen::Shop => Some(self.enter_shop(game, legal)),
             Screen::Rest => Some(strategy::rest_choice(game, legal)),
-            Screen::Treasure => legal.iter().find(|a| matches!(a, Action::Choose { .. })).cloned(),
+            Screen::Treasure => legal
+                .iter()
+                .find(|a| matches!(a, Action::Choose { .. }))
+                .cloned(),
             Screen::Event => Some(strategy::event_choice(game, legal)),
             Screen::Neow => Some(strategy::neow_choice(game, legal)),
             Screen::HandSelect => Some(strategy::hand_select(game, legal)),
@@ -155,15 +161,24 @@ mod tests {
 
         let first = agent.grid_choice(&game, &legal).unwrap();
         assert_eq!(first, legal[0]);
-        agent.recent.push_back((game.screen, game.dungeon.floor, first));
+        agent
+            .recent
+            .push_back((game.screen, game.dungeon.floor, first));
 
         assert_eq!(agent.grid_choice(&game, &legal), Some(legal[1].clone()));
     }
 }
 
 fn find_potion(legal: &[Action], want: &[PotionId]) -> Option<Action> {
-    legal.iter().find(|a| match a {
-        Action::Potion { action: PotionOp::Use, .. } => true,
-        _ => false,
-    }).filter(|_| !want.is_empty()).cloned()
+    legal
+        .iter()
+        .find(|a| match a {
+            Action::Potion {
+                action: PotionOp::Use,
+                ..
+            } => true,
+            _ => false,
+        })
+        .filter(|_| !want.is_empty())
+        .cloned()
 }

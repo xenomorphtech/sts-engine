@@ -5,14 +5,7 @@ use sts_engine::Unlocks;
 
 fn combat(encounter: EncounterId) -> (Game, Combat) {
     let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
-    let combat = Combat::start(
-        encounter,
-        &mut game.player,
-        &mut game.rng,
-        31,
-        2,
-        0,
-    );
+    let combat = Combat::start(encounter, &mut game.player, &mut game.rng, 31, 2, 0);
     (game, combat)
 }
 

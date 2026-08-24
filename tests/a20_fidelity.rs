@@ -3,13 +3,20 @@ use sts_engine::card::Card;
 use sts_engine::combat::{self, Combat};
 use sts_engine::creature::{Player, RelicInstance};
 use sts_engine::game::{Game, NeowDrawback, NeowKind, NeowOption, Screen};
-use sts_engine::ids::{Act, CardId, Character, EncounterId, MonsterId, PotionId, PowerId, RelicId, RoomType};
+use sts_engine::ids::{
+    Act, CardId, Character, EncounterId, MonsterId, PotionId, PowerId, RelicId, RoomType,
+};
 use sts_engine::rng::RngSet;
 use sts_engine::Unlocks;
 
 #[test]
 fn potion_discard_remains_legal_on_card_reward_screen() {
-    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        103370126172143121,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.player.potions[0].id = PotionId::EssenceOfDarkness;
     game.screen = Screen::CardReward;
 
@@ -65,7 +72,9 @@ fn normality_disables_every_card_after_three_cards_are_played() {
     game.screen = Screen::Combat;
 
     let actions = game.legal_actions();
-    assert!(!actions.iter().any(|action| matches!(action, Action::Play { .. })));
+    assert!(!actions
+        .iter()
+        .any(|action| matches!(action, Action::Play { .. })));
     assert!(actions.contains(&Action::EndTurn));
 }
 
@@ -105,13 +114,32 @@ fn thinking_ahead_requires_one_hand_choice_and_finishes_without_confirm() {
         room: None,
     });
     assert_eq!(game.screen, Screen::Combat);
-    assert_eq!(game.player.hand.iter().map(|card| card.id).collect::<Vec<_>>(), [CardId::Strike_B]);
-    assert_eq!(game.player.draw.iter().map(|card| card.id).collect::<Vec<_>>(), [CardId::Defend_B]);
+    assert_eq!(
+        game.player
+            .hand
+            .iter()
+            .map(|card| card.id)
+            .collect::<Vec<_>>(),
+        [CardId::Strike_B]
+    );
+    assert_eq!(
+        game.player
+            .draw
+            .iter()
+            .map(|card| card.id)
+            .collect::<Vec<_>>(),
+        [CardId::Defend_B]
+    );
 }
 
 #[test]
 fn fruit_juice_and_entropic_brew_are_usable_out_of_combat() {
-    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        103370126172143121,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.player.potions[0].id = PotionId::FruitJuice;
     game.player.potions[1].id = PotionId::EntropicBrew;
     game.screen = Screen::CombatReward;
@@ -128,7 +156,12 @@ fn fruit_juice_and_entropic_brew_are_usable_out_of_combat() {
 
 #[test]
 fn explosive_potion_is_one_untargeted_action_against_multiple_monsters() {
-    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        103370126172143121,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.player.potions[0].id = PotionId::Explosive;
     let seed = game.seed;
     game.combat = Some(Combat::start(
@@ -169,7 +202,12 @@ fn explosive_potion_is_one_untargeted_action_against_multiple_monsters() {
 fn map_legal_actions_do_not_duplicate_a_destination() {
     use std::collections::HashSet;
 
-    let mut game = Game::new(103370126172143121, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        103370126172143121,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.dungeon.first_room_chosen = true;
     game.screen = Screen::Map;
 
@@ -181,7 +219,11 @@ fn map_legal_actions_do_not_duplicate_a_destination() {
                 .legal_actions()
                 .into_iter()
                 .filter_map(|action| match action {
-                    Action::Choose { x: Some(x), y: Some(y), .. } => Some((x, y)),
+                    Action::Choose {
+                        x: Some(x),
+                        y: Some(y),
+                        ..
+                    } => Some((x, y)),
                     _ => None,
                 })
                 .collect();
@@ -198,7 +240,12 @@ fn map_legal_actions_do_not_duplicate_a_destination() {
 fn winged_greaves_exposes_the_next_row_and_spends_only_on_a_jump() {
     use std::collections::HashSet;
 
-    let mut game = Game::new(2877855328497827070, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        2877855328497827070,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.dungeon.first_room_chosen = true;
     game.screen = Screen::Map;
     game.player.relics.push(RelicInstance {
@@ -241,7 +288,11 @@ fn winged_greaves_exposes_the_next_row_and_spends_only_on_a_jump() {
     let destinations: Vec<_> = actions
         .iter()
         .filter_map(|action| match action {
-            Action::Choose { x: Some(x), y: Some(y), .. } => Some((*x, *y)),
+            Action::Choose {
+                x: Some(x),
+                y: Some(y),
+                ..
+            } => Some((*x, *y)),
             _ => None,
         })
         .collect();
@@ -273,7 +324,12 @@ fn winged_greaves_exposes_the_next_row_and_spends_only_on_a_jump() {
 
 #[test]
 fn first_room_of_a_new_act_ignores_the_previous_boss_coordinate() {
-    let mut game = Game::new(2877855328497827070, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        2877855328497827070,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.dungeon.first_room_chosen = false;
     game.current_x = -1;
     game.current_y = 15;
@@ -352,30 +408,51 @@ fn action_choose(index: usize) -> Action {
 
 #[test]
 fn neow_applies_curse_before_twenty_percent_max_hp_reward() {
-    let mut game = Game::new(2696771490991422653, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        2696771490991422653,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.step(&action_choose(0));
     game.step(&action_choose(2));
 
     assert_eq!(game.player.hp, 78);
     assert_eq!(game.player.max_hp, 85);
-    assert_eq!(game.player.deck.last().map(|card| card.id), Some(CardId::Regret));
+    assert_eq!(
+        game.player.deck.last().map(|card| card.id),
+        Some(CardId::Regret)
+    );
     assert_eq!(game.rng.card.counter, 1);
 }
 
 #[test]
 fn neow_applies_curse_before_two_hundred_fifty_gold_reward() {
-    let mut game = Game::new(6999307915985924753, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        6999307915985924753,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.step(&action_choose(0));
     game.step(&action_choose(2));
 
     assert_eq!(game.player.gold, 349);
-    assert_eq!(game.player.deck.last().map(|card| card.id), Some(CardId::Clumsy));
+    assert_eq!(
+        game.player.deck.last().map(|card| card.id),
+        Some(CardId::Clumsy)
+    );
     assert_eq!(game.rng.card.counter, 1);
 }
 
 #[test]
 fn neow_percent_damage_drawback_uses_thirty_percent_of_current_hp() {
-    let mut game = Game::new(2419708263384732054, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        2419708263384732054,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.step(&action_choose(0));
     game.step(&action_choose(2));
 
@@ -384,7 +461,12 @@ fn neow_percent_damage_drawback_uses_thirty_percent_of_current_hp() {
 
 #[test]
 fn neow_defers_curse_until_after_rare_card_reward_opens() {
-    let mut game = Game::new(3696180478129188597, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        3696180478129188597,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.step(&action_choose(0));
     game.step(&action_choose(2));
 
@@ -392,7 +474,11 @@ fn neow_defers_curse_until_after_rare_card_reward_opens() {
     assert_eq!(game.player.deck.len(), 11);
     assert_eq!(game.rng.card.counter, 0);
     assert_eq!(
-        game.card_reward.iter().copied().map(Card::sts_id).collect::<Vec<_>>(),
+        game.card_reward
+            .iter()
+            .copied()
+            .map(Card::sts_id)
+            .collect::<Vec<_>>(),
         ["Creative AI", "Biased Cognition", "Rainbow"]
     );
 
@@ -400,7 +486,13 @@ fn neow_defers_curse_until_after_rare_card_reward_opens() {
     assert_eq!(game.screen, Screen::Neow);
     assert_eq!(game.rng.card.counter, 1);
     assert_eq!(
-        game.player.deck.iter().copied().map(Card::sts_id).collect::<Vec<_>>().split_off(11),
+        game.player
+            .deck
+            .iter()
+            .copied()
+            .map(Card::sts_id)
+            .collect::<Vec<_>>()
+            .split_off(11),
         ["Clumsy", "Biased Cognition"]
     );
 }
@@ -430,14 +522,25 @@ fn neow_defers_curse_until_transform_two_grid_closes() {
     assert_eq!(game.screen, Screen::Neow);
     assert_eq!(game.rng.card.counter, 1);
     assert_eq!(
-        game.player.deck.iter().copied().map(Card::sts_id).collect::<Vec<_>>().split_off(9),
+        game.player
+            .deck
+            .iter()
+            .copied()
+            .map(Card::sts_id)
+            .collect::<Vec<_>>()
+            .split_off(9),
         ["BootSequence", "Sweeping Beam", "Shame"]
     );
 }
 
 #[test]
 fn unopened_treasure_exposes_proceed_without_rolling_chest_rewards() {
-    let mut game = Game::new(1924666432788095156, Character::Defect, 20, Unlocks::fixture());
+    let mut game = Game::new(
+        1924666432788095156,
+        Character::Defect,
+        20,
+        Unlocks::fixture(),
+    );
     game.screen = Screen::Treasure;
     game.current_room = RoomType::Treasure;
     let treasure_counter = game.rng.treasure.counter;
@@ -483,7 +586,9 @@ fn a20_beyond_proceed_starts_second_boss_without_healing() {
     game.dungeon.floor = 50;
     game.dungeon.boss = "Awakened One".into();
     game.dungeon.boss_list.clear();
-    game.dungeon.boss_list.extend(["Donu and Deca", "Time Eater"].map(str::to_string));
+    game.dungeon
+        .boss_list
+        .extend(["Donu and Deca", "Time Eater"].map(str::to_string));
     game.current_room = RoomType::Boss;
     game.screen = Screen::CombatReward;
     game.player.hp = 17;
@@ -499,7 +604,10 @@ fn a20_beyond_proceed_starts_second_boss_without_healing() {
     assert_eq!(game.player.hp, 17);
     assert_eq!(game.dungeon.boss, "Donu and Deca");
     assert_eq!(game.dungeon.boss_list.as_ref(), &["Time Eater"]);
-    assert_eq!(game.combat.as_ref().unwrap().encounter, EncounterId::DonuAndDeca);
+    assert_eq!(
+        game.combat.as_ref().unwrap().encounter,
+        EncounterId::DonuAndDeca
+    );
 }
 
 #[test]
@@ -508,7 +616,9 @@ fn a19_beyond_proceed_goes_to_spire_heart() {
     game.dungeon.act = Act::Beyond;
     game.dungeon.floor = 50;
     game.dungeon.boss_list.clear();
-    game.dungeon.boss_list.extend(["Time Eater", "Donu and Deca"].map(str::to_string));
+    game.dungeon
+        .boss_list
+        .extend(["Time Eater", "Donu and Deca"].map(str::to_string));
     game.current_room = RoomType::Boss;
     game.screen = Screen::CombatReward;
 
@@ -539,7 +649,14 @@ fn time_eater_has_a20_hp_haste_and_head_slam_effects() {
     monster.next_move = 4;
     monster.take_turn(&mut player, &mut rng, 20, None);
     assert_eq!(player.power_amount(PowerId::DrawReduction), 1);
-    assert_eq!(player.discard.iter().filter(|card| card.id == CardId::Slimed).count(), 2);
+    assert_eq!(
+        player
+            .discard
+            .iter()
+            .filter(|card| card.id == CardId::Slimed)
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -552,7 +669,12 @@ fn expiring_draw_reduction_still_reduces_the_already_queued_draw() {
     player.exhaust.clear();
     player.draw = vec![Card::new(CardId::Defend_B); 6];
     player.add_power_from_monster(PowerId::DrawReduction, 1);
-    player.powers.iter_mut().find(|power| power.id == PowerId::DrawReduction).unwrap().just_applied = false;
+    player
+        .powers
+        .iter_mut()
+        .find(|power| power.id == PowerId::DrawReduction)
+        .unwrap()
+        .just_applied = false;
     combat.monsters[0].next_move = 3;
 
     combat::end_turn(&mut player, &mut combat, &mut rng, None);
@@ -586,7 +708,11 @@ fn bronze_orb_uses_its_ascension_nine_hp_range() {
     for seed in 0..100 {
         let mut rng = RngSet::generate_seeds(seed);
         let monster = combat::spawn_monster(MonsterId::BronzeOrb, &mut rng, 20);
-        assert!((54..=60).contains(&monster.hp), "seed {seed} rolled {} HP", monster.hp);
+        assert!(
+            (54..=60).contains(&monster.hp),
+            "seed {seed} rolled {} HP",
+            monster.hp
+        );
         saw_upper_bound |= monster.hp == 60;
     }
     assert!(saw_upper_bound);
@@ -615,7 +741,11 @@ fn awakened_one_rebirth_resolves_during_the_monster_phase() {
             monster.dead = true;
         }
     }
-    let awakened = combat.monsters.iter_mut().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    let awakened = combat
+        .monsters
+        .iter_mut()
+        .find(|monster| monster.id == MonsterId::AwakenedOne)
+        .unwrap();
     awakened.hp = 1;
     combat::damage_monster(awakened, &mut player, &mut rng, 1, 1);
     assert!(awakened.half_dead);
@@ -624,7 +754,11 @@ fn awakened_one_rebirth_resolves_during_the_monster_phase() {
     let ai_before_rebirth = rng.ai.counter;
     combat::end_turn(&mut player, &mut combat, &mut rng, None);
 
-    let awakened = combat.monsters.iter().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    let awakened = combat
+        .monsters
+        .iter()
+        .find(|monster| monster.id == MonsterId::AwakenedOne)
+        .unwrap();
     assert!(!awakened.half_dead);
     assert_eq!(awakened.hp, 320);
     assert_eq!(awakened.next_move, 5);
@@ -632,7 +766,11 @@ fn awakened_one_rebirth_resolves_during_the_monster_phase() {
 
     let mut rng = RngSet::generate_seeds(23);
     let mut player = Player::defect();
-    player.relics.push(RelicInstance { id: RelicId::Bronze_Scales, counter: -1, used_up: false });
+    player.relics.push(RelicInstance {
+        id: RelicId::Bronze_Scales,
+        counter: -1,
+        used_up: false,
+    });
     let mut combat = Combat::start(EncounterId::AwakenedOne, &mut player, &mut rng, 50, 23, 20);
     for monster in &mut combat.monsters {
         if monster.id == MonsterId::Cultist {
@@ -640,14 +778,22 @@ fn awakened_one_rebirth_resolves_during_the_monster_phase() {
             monster.dead = true;
         }
     }
-    let awakened = combat.monsters.iter_mut().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    let awakened = combat
+        .monsters
+        .iter_mut()
+        .find(|monster| monster.id == MonsterId::AwakenedOne)
+        .unwrap();
     awakened.hp = 9;
     awakened.next_move = 2;
 
     let ai_before_reactive_death = rng.ai.counter;
     combat::end_turn(&mut player, &mut combat, &mut rng, None);
 
-    let awakened = combat.monsters.iter().find(|monster| monster.id == MonsterId::AwakenedOne).unwrap();
+    let awakened = combat
+        .monsters
+        .iter()
+        .find(|monster| monster.id == MonsterId::AwakenedOne)
+        .unwrap();
     assert!(awakened.half_dead);
     assert_eq!(awakened.next_move, 3);
     assert_eq!(rng.ai.counter, ai_before_reactive_death + 1);
@@ -671,7 +817,10 @@ fn time_warp_forces_turn_after_twelve_cards_and_grants_strength() {
         let mut strike = Card::new(CardId::Strike_B);
         strike.free_to_play_once = true;
         game.player.hand.insert(0, strike);
-        game.step(&Action::Play { hand_index: 0, target_index: Some(0) });
+        game.step(&Action::Play {
+            hand_index: 0,
+            target_index: Some(0),
+        });
         if play < 12 {
             assert_eq!(game.combat.as_ref().unwrap().turn, 1);
         }
@@ -692,7 +841,10 @@ fn spire_growth_uses_a20_hp_and_opens_with_constrict() {
     let combat = Combat::start(EncounterId::SpireGrowth, &mut player, &mut rng, 40, 17, 20);
     let mut monster = combat.monsters.into_iter().next().unwrap();
 
-    assert_eq!(EncounterId::from_sts_key("Spire Growth"), Some(EncounterId::SpireGrowth));
+    assert_eq!(
+        EncounterId::from_sts_key("Spire Growth"),
+        Some(EncounterId::SpireGrowth)
+    );
     assert_eq!(monster.id, MonsterId::SpireGrowth);
     assert_eq!(monster.hp, 190);
     assert_eq!(monster.next_move, 2);
@@ -743,7 +895,10 @@ fn nemesis_has_a20_hp_burns_and_alternating_intangible() {
     game.player.max_hp = 500;
 
     let monster = &mut game.combat.as_mut().unwrap().monsters[0];
-    assert_eq!(EncounterId::from_sts_key("Nemesis"), Some(EncounterId::Nemesis));
+    assert_eq!(
+        EncounterId::from_sts_key("Nemesis"),
+        Some(EncounterId::Nemesis)
+    );
     assert_eq!(monster.id, MonsterId::Nemesis);
     assert_eq!(monster.hp, 200);
     monster.next_move = 4;
@@ -751,11 +906,21 @@ fn nemesis_has_a20_hp_burns_and_alternating_intangible() {
 
     game.step(&Action::EndTurn);
     let combat = game.combat.as_ref().unwrap();
-    assert_eq!(game.player.discard.iter().filter(|card| card.id == CardId::Burn).count(), 5);
+    assert_eq!(
+        game.player
+            .discard
+            .iter()
+            .filter(|card| card.id == CardId::Burn)
+            .count(),
+        5
+    );
     assert_eq!(combat.monsters[0].power_amount(PowerId::Intangible), 1);
 
     game.step(&Action::EndTurn);
-    assert_eq!(game.combat.as_ref().unwrap().monsters[0].power_amount(PowerId::Intangible), 0);
+    assert_eq!(
+        game.combat.as_ref().unwrap().monsters[0].power_amount(PowerId::Intangible),
+        0
+    );
 }
 
 #[test]
@@ -776,7 +941,11 @@ fn reptomancer_starts_with_two_daggers_and_summons_two_more_at_a20() {
 
     let combat = game.combat.as_ref().unwrap();
     assert_eq!(
-        combat.monsters.iter().map(|monster| monster.id).collect::<Vec<_>>(),
+        combat
+            .monsters
+            .iter()
+            .map(|monster| monster.id)
+            .collect::<Vec<_>>(),
         [MonsterId::Dagger, MonsterId::Reptomancer, MonsterId::Dagger]
     );
     assert!((190..=200).contains(&combat.monsters[1].hp));
@@ -799,7 +968,11 @@ fn reptomancer_starts_with_two_daggers_and_summons_two_more_at_a20() {
         4
     );
     assert_eq!(
-        game.player.discard.iter().filter(|card| card.id == CardId::Wound).count(),
+        game.player
+            .discard
+            .iter()
+            .filter(|card| card.id == CardId::Wound)
+            .count(),
         2
     );
 }
@@ -830,7 +1003,10 @@ fn writhing_mass_has_a20_stats_and_rerolls_after_a_nonlethal_attack() {
     ));
 
     let monster = &game.combat.as_ref().unwrap().monsters[0];
-    assert_eq!(EncounterId::from_sts_key("Writhing Mass"), Some(EncounterId::WrithingMass));
+    assert_eq!(
+        EncounterId::from_sts_key("Writhing Mass"),
+        Some(EncounterId::WrithingMass)
+    );
     assert_eq!(monster.id, MonsterId::WrithingMass);
     assert_eq!(monster.hp, 175);
     assert_eq!(monster.pending_reactive, 0);
@@ -841,7 +1017,10 @@ fn writhing_mass_has_a20_stats_and_rerolls_after_a_nonlethal_attack() {
     let mut strike = Card::new(CardId::Strike_B);
     strike.free_to_play_once = true;
     game.player.hand.insert(0, strike);
-    game.step(&Action::Play { hand_index: 0, target_index: Some(0) });
+    game.step(&Action::Play {
+        hand_index: 0,
+        target_index: Some(0),
+    });
 
     let monster = &game.combat.as_ref().unwrap().monsters[0];
     assert_eq!(monster.hp, 169);
@@ -870,7 +1049,14 @@ fn writhing_mass_implant_adds_a_permanent_parasite() {
 
     game.step(&Action::EndTurn);
 
-    assert_eq!(game.player.deck.iter().filter(|card| card.id == CardId::Parasite).count(), 1);
+    assert_eq!(
+        game.player
+            .deck
+            .iter()
+            .filter(|card| card.id == CardId::Parasite)
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -962,8 +1148,14 @@ fn a20_hp_tiers_cover_late_hallways_elites_and_heart() {
     }
 
     let mut rng = RngSet::generate_seeds(59);
-    assert_eq!(combat::spawn_monster(MonsterId::GiantHead, &mut rng, 20).hp, 520);
-    assert_eq!(combat::spawn_monster(MonsterId::CorruptHeart, &mut rng, 20).hp, 800);
+    assert_eq!(
+        combat::spawn_monster(MonsterId::GiantHead, &mut rng, 20).hp,
+        520
+    );
+    assert_eq!(
+        combat::spawn_monster(MonsterId::CorruptHeart, &mut rng, 20).hp,
+        800
+    );
 }
 
 #[test]

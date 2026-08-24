@@ -4,7 +4,10 @@ use sts_engine::Unlocks;
 fn fixture_loads_java_profile_fixture() {
     let u = Unlocks::fixture();
     assert!(
-        u.boss_seen("GHOST") && u.boss_seen("SLIME") && u.boss_seen("CROW") && u.boss_seen("WIZARD"),
+        u.boss_seen("GHOST")
+            && u.boss_seen("SLIME")
+            && u.boss_seen("CROW")
+            && u.boss_seen("WIZARD"),
         "profile-fixture STSSeenBosses marks all bosses seen, got {:?}",
         u.seen_bosses
     );

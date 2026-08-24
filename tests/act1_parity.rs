@@ -1,13 +1,13 @@
 //! Walk the seed-2 Act 1 transcript and stop at the first HP / pile / monster mismatch.
 
 use serde::Deserialize;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use sts_engine::action::Action;
 use sts_engine::game::{Game, Screen};
 use sts_engine::ids::Character;
 use sts_engine::Unlocks;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -59,10 +59,11 @@ struct Mon {
 #[ignore = "stale ExactTextSim: published COMBAT_REWARD before FastCardObtainEffect; live GUI has the card in masterDeck"]
 fn seed2_act1_walk() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../exact-text-sim/runtime");
-    let snaps: Vec<Envelope> = BufReader::new(File::open(root.join("act1-seed2-final-pruned.jsonl")).unwrap())
-        .lines()
-        .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
-        .collect();
+    let snaps: Vec<Envelope> =
+        BufReader::new(File::open(root.join("act1-seed2-final-pruned.jsonl")).unwrap())
+            .lines()
+            .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
+            .collect();
     let cmds = sts_engine::load_commands(root.join("act1-seed2.commands.jsonl")).unwrap();
     let mut game = Game::new(2, Character::Ironclad, 0, Unlocks::fixture());
     let mut last_ok = 0;
@@ -73,8 +74,19 @@ fn seed2_act1_walk() {
                 game.step(&cmds[seq - 1]);
             }
         }
-        let deck: Vec<_> = game.player.deck.iter().map(|c| c.sts_id().to_string()).collect();
-        let jdeck: Vec<_> = snap.state.player.master_deck.iter().map(|c| c.id.clone()).collect();
+        let deck: Vec<_> = game
+            .player
+            .deck
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect();
+        let jdeck: Vec<_> = snap
+            .state
+            .player
+            .master_deck
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
         let rust_mons: Vec<(String, i32)> = game
             .combat
             .as_ref()
@@ -96,7 +108,12 @@ fn seed2_act1_walk() {
                     .collect()
             })
             .unwrap_or_default();
-        let rust_hand: Vec<_> = game.player.hand.iter().map(|c| c.sts_id().to_string()).collect();
+        let rust_hand: Vec<_> = game
+            .player
+            .hand
+            .iter()
+            .map(|c| c.sts_id().to_string())
+            .collect();
         let java_hand: Vec<_> = snap
             .state
             .combat
@@ -135,5 +152,3 @@ fn seed2_act1_walk() {
     }
     assert_eq!(last_ok, snaps.len() - 1);
 }
-
-

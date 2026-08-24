@@ -34,7 +34,14 @@ impl Unlocks {
             locked_relics: HashSet::new(),
             locked_cards: HashSet::new(),
             seen_bosses: [
-                "GUARDIAN", "GHOST", "SLIME", "CHAMP", "AUTOMATON", "COLLECTOR", "CROW", "DONUT",
+                "GUARDIAN",
+                "GHOST",
+                "SLIME",
+                "CHAMP",
+                "AUTOMATON",
+                "COLLECTOR",
+                "CROW",
+                "DONUT",
                 "WIZARD",
             ]
             .into_iter()
@@ -88,7 +95,8 @@ pub fn discover_profile_dir() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let crate_rel = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../exact-text-sim/runtime/profile-fixture");
+    let crate_rel =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../exact-text-sim/runtime/profile-fixture");
     for cand in [
         PathBuf::from("exact-text-sim/runtime/profile-fixture"),
         PathBuf::from("../exact-text-sim/runtime/profile-fixture"),
@@ -180,9 +188,18 @@ fn pref_truthy(v: &Value) -> bool {
 /// Used only when the Java profile tree is missing (engine-only checkout).
 fn legacy_hardcoded() -> Unlocks {
     Unlocks {
-        locked_relics: DEFAULT_LOCKED_RELICS.iter().map(|s| (*s).to_string()).collect(),
-        locked_cards: DEFAULT_LOCKED_CARDS.iter().map(|s| (*s).to_string()).collect(),
-        seen_bosses: ["GUARDIAN", "CHAMP"].into_iter().map(str::to_string).collect(),
+        locked_relics: DEFAULT_LOCKED_RELICS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+        locked_cards: DEFAULT_LOCKED_CARDS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+        seen_bosses: ["GUARDIAN", "CHAMP"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         everything_unlocked: false,
         final_act_available: true,
     }

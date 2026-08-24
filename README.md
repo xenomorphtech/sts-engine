@@ -101,6 +101,32 @@ and `--a20` are shortcuts for `--ascension 0` and `--ascension 20`. The
 character defaults to Defect, and the unlock profile is loaded once per batch.
 Pass `--random-seeds` to generate a fresh unique cohort; the reported
 `seed_source` can be supplied later with `--seed-source N` for an exact replay.
+Batch output is aggregate-only by default; `--diagnostics` adds orb/event stats
+and one detailed row per seed. The aggregate begins with compact win rate,
+mean-floor, and Act 1/2/3/Heart death-layer lines, followed by the existing
+full metrics line. Each death layer splits its total into normal, elite, and
+boss fights (plus `other` when an unusual combat room is present). Death layers
+count only runs where player HP reached zero; caps, stops, and live-player
+combat stalemates retain their separate totals.
+
+Defect runs use the current learned deck-building weights from
+`tools/draft_policy_synergy_a20.json` by default, while HTN continues to control
+combat, routing, events, and unsupported card-selection screens. Select the
+policy explicitly with:
+
+```sh
+# Learned deck building plus HTN for the rest (the default).
+sts-htn --deck-policy rl --count 1000 --concurrent 12 --a20 --random-seeds
+
+# Original HTN decisions everywhere.
+sts-htn --deck-policy htn --count 1000 --concurrent 12 --a20 --random-seeds
+# Equivalent shorthand:
+sts-htn --pure-htn --count 1000 --concurrent 12 --a20 --random-seeds
+```
+
+Use `--deck-policy-path PATH` to load a different compatible learned
+checkpoint. Existing HTN-only regression fixtures should be generated and
+checked with `--pure-htn`.
 
 `sts-parity` lockstep-replays an ExactTextSim oracle and prints the first
 mismatch with screen, event options, rewards, card-reward list, pending cards,
@@ -121,6 +147,153 @@ let obs = env.compact_obs();
 
 `TrainEnv::step` indexes into the current `legal_actions()` list, the same
 discrete interface the Java headless sim advertises.
+
+### Compressed late-boss curriculum
+
+`BossDraftEnv` removes map walking and every non-boss combat while retaining
+seeded Neow options, card rewards, relic pools/side effects, shops/prices,
+upgrades, and the real boss combat engine. The environment controls what is
+offered; the learner controls only the indexed pick/skip/buy actions.
+
+The default A20 three-act build samples 15–21 normal card rewards (mean 18),
+4–8 elite bundles (mean 6), 2–4 shops (mean 3), three chest relics, and 5–9
+upgrades. Each shop permits a seeded 1–2 purchases, approximating an average
+shop visit without letting fight-free gold buy the entire inventory. Elite
+card rewards use the stronger elite rarity roll and always include a relic;
+Black Star adds its normal second independent non-campfire relic. Act 1 and 2
+boss card and boss-relic rewards are included automatically in the schedule.
+Question Card, Busted Crown, Prayer Wheel, eggs, shop discounts, bottles, and
+other reward-time relic effects still go through the engine's regular paths.
+
+```rust
+use sts_engine::{BossDraftEnv, Character, DraftConfig};
+
+let mut env = BossDraftEnv::fixture(7, Character::Defect, DraftConfig::default())?;
+while !env.ready_for_bosses() {
+    let observation = env.observation();
+    let action_index = policy(&observation); // index into observation.offers
+    env.step(action_index)?;
+}
+let result = env.evaluate_htn(2_000);
+# Ok::<(), String>(())
+```
+
+Evaluation captures an exact Act 1 build snapshot after the first act's
+formation opportunities and before its boss card/relic rewards. That snapshot
+is independently tested against Slime Boss, The Guardian, and Hexaghost with a
+base starting health of 60/75 for every fight. Formation then continues, and
+the completed build is independently tested at full health against Awakened
+One, Time Eater, Donu/Deca, and Corrupt Heart. This prevents one boss from
+consuming resources or HP before another identity is tested while ensuring the
+Act 1 bosses never see cards or relics obtained later in the route.
+
+The result reports wins/losses/timeouts, the required `act1_all_won` objective,
+remaining player HP, and the sum of remaining boss HP (for Donu/Deca, both
+living enemies are summed). It also reports cumulative
+`boss_damage_dealt_sum` as a dense positive signal, so a loss that reaches
+farther is better than an earlier loss. Completed fights obey
+`fights_started = wins + losses + timeouts`.
+
+For Python or another external trainer, `sts-draft` is a persistent JSONL
+stdio bridge:
+
+```sh
+cargo run --release --bin sts-draft
+{"op":"reset","seed":7,"character":"DEFECT"}
+{"op":"step","action_index":0}
+{"op":"evaluate","max_steps_per_boss":2000}
+```
+
+Monte Carlo training can keep many seeds live in the same process. Seed and
+observation indices remain stable; use `null` once an individual environment
+has reached `ready_for_bosses`:
+
+```json
+{"op":"batch_reset","seeds":[100,101,102],"character":"DEFECT"}
+{"op":"batch_step","action_indices":[0,2,1]}
+{"op":"batch_step","action_indices":[null,0,3]}
+{"op":"batch_evaluate","max_steps_per_boss":2000}
+```
+
+For a reproducible comparison policy, `batch_baseline` uses the current HTN
+to finish every formation before the same boss evaluation. This is also a
+convenient end-to-end smoke test; training normally replaces these baseline
+choices with the RL action indices:
+
+```json
+{"op":"batch_reset","seeds":[100,101,102],"character":"DEFECT"}
+{"op":"batch_baseline","max_decisions":200}
+{"op":"batch_evaluate","max_steps_per_boss":2000}
+```
+
+Every observation includes the sampled total and per-act counts, shops and
+remaining purchase slots, elite count, current deck/relic state, metrics, and
+the legal indexed offers. A separate deterministic route RNG makes count/order
+sampling seed-dependent without perturbing the engine's card/relic offer RNGs.
+
+`tools/train_draft_policy.py` provides a dependency-free episodic policy
+gradient learner over that batch protocol. A generation is one terminal-reward
+update over `--batch-size` newly seeded builds. It checkpoints after every
+generation and selects the best greedy policy on a fixed validation set:
+
+```sh
+python3 tools/train_draft_policy.py \
+  --generations 25 --batch-size 256 --workers 10 \
+  --validation-size 12 --test-size 16 \
+  --state tools/draft_policy_synergy_a20.json
+```
+
+Parallel workers run independent seed shards and return compact gradient
+statistics. The trainer combines those statistics into one policy-gradient
+update over all 256 builds, rather than applying a separate update per shard.
+The latest `weights`/`generation` pair is the default for evaluation and for
+starting joint training. `best_weights` remains available as the winner of the
+legacy fixed validation set, but is not selected implicitly.
+
+The scalar reward makes wins dominant while using cumulative boss damage,
+remaining boss HP, surviving player HP, and timeouts as dense reach signals.
+Clearing all three Act 1 bosses adds a large requirement bonus; each missing
+Act 1 win is penalized, and validation ranks full Act 1 clears first.
+Every candidate is explicitly crossed with owned card identities and counts,
+upgraded cards, relics, deck/relic shape, gold, act, and formation progress;
+these candidate-conditioned features let the policy learn synergies rather
+than only global card preferences.
+The final untouched test report compares the learned policy with both the
+generation-zero policy and the HTN formation baseline.
+
+Deck formation and combat can also be trained as one episodic problem. After
+`batch_reset`/`batch_step` finishes every build, the same batch remains live for
+the seven independent boss fights (three from the Act 1 snapshot and four from
+the completed build):
+
+```json
+{"op":"batch_fight_reset","max_steps_per_fight":500}
+{"op":"batch_fight_observe"}
+{"op":"batch_fight_step","action_indices":[0,2,null,1]}
+{"op":"batch_fight_results"}
+```
+
+Each active fight observation contains the complete hand, draw, discard and
+exhaust piles; owned relics and counters; potions; player powers and orbs; and
+all living enemies. Enemy intent includes its type, damage per hit, hit count,
+and total raw damage. Legal card/target, potion, grid, and end-turn actions are
+indexed in `offers`. Finished fights use `null` in later batched steps.
+`batch_fight_baseline_actions` exposes the HTN action indices for imitation
+warm-up without hiding the state from the learned policy.
+
+`tools/train_joint_policy.py` starts with the best synergy-aware deck weights,
+warms the combat policy from HTN decisions, then applies boss outcomes to both
+the deck-building and combat trajectories. Training generations use new,
+deterministically derived seeds, so card/relic/shop/elite offers change from
+batch to batch; validation and test seeds stay fixed for comparable results.
+
+```sh
+python3 tools/train_joint_policy.py
+```
+
+The joint checkpoint stores current and best deck/combat policies separately
+and reports four held-out combinations: learned/learned, learned deck/HTN
+fight, HTN deck/learned fight, and HTN/HTN.
 
 ## How this was developed
 

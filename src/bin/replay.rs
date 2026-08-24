@@ -1,6 +1,6 @@
-use sts_engine::{load_commands, replay_seed, Unlocks};
 use std::env;
 use std::time::Instant;
+use sts_engine::{load_commands, replay_seed, Unlocks};
 
 fn main() {
     let mut args = env::args().skip(1);

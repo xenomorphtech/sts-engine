@@ -3,7 +3,8 @@ use crate::creature::Player;
 use crate::dungeon::Dungeon;
 use crate::generated::relic_catalog::RELICS;
 use crate::ids::{
-    CardColor, CardId, CardRarity, CardType, Character, PotionId, PotionRarity, RelicId, RelicTier, RoomType,
+    CardColor, CardId, CardRarity, CardType, Character, PotionId, PotionRarity, RelicId, RelicTier,
+    RoomType,
 };
 use crate::rng::RngSet;
 
@@ -14,39 +15,138 @@ struct PotionDef {
 }
 
 const POTION_POOL: &[PotionDef] = &[
-    PotionDef { id: "BloodPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "ElixirPotion", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "HeartOfIron", rarity: PotionRarity::RARE },
-    PotionDef { id: "Block Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Dexterity Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Energy Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Explosive Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Fire Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Strength Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Swift Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Weak Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "FearPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "AttackPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "SkillPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "PowerPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "ColorlessPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "SteroidPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "SpeedPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "BlessingOfTheForge", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Regen Potion", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "Ancient Potion", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "LiquidBronze", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "GamblersBrew", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "EssenceOfSteel", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "DuplicationPotion", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "DistilledChaos", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "LiquidMemories", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "CultistPotion", rarity: PotionRarity::RARE },
-    PotionDef { id: "Fruit Juice", rarity: PotionRarity::RARE },
-    PotionDef { id: "SneckoOil", rarity: PotionRarity::RARE },
-    PotionDef { id: "FairyPotion", rarity: PotionRarity::RARE },
-    PotionDef { id: "SmokeBomb", rarity: PotionRarity::RARE },
-    PotionDef { id: "EntropicBrew", rarity: PotionRarity::RARE },
+    PotionDef {
+        id: "BloodPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "ElixirPotion",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "HeartOfIron",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "Block Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Dexterity Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Energy Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Explosive Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Fire Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Strength Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Swift Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Weak Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "FearPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "AttackPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "SkillPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "PowerPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "ColorlessPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "SteroidPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "SpeedPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "BlessingOfTheForge",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Regen Potion",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "Ancient Potion",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "LiquidBronze",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "GamblersBrew",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "EssenceOfSteel",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "DuplicationPotion",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "DistilledChaos",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "LiquidMemories",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "CultistPotion",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "Fruit Juice",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "SneckoOil",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "FairyPotion",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "SmokeBomb",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "EntropicBrew",
+        rarity: PotionRarity::RARE,
+    },
 ];
 
 pub fn roll_monster_gold(rng: &mut RngSet, boss: bool, elite: bool, ascension: i32) -> i32 {
@@ -111,49 +211,157 @@ pub fn random_shop_potion(rng: &mut RngSet) -> PotionId {
 }
 
 const SHARED_POTIONS: &[PotionDef] = &[
-    PotionDef { id: "Block Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Dexterity Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Energy Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Explosive Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Fire Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Strength Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Swift Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Weak Potion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "FearPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "AttackPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "SkillPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "PowerPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "ColorlessPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "SteroidPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "SpeedPotion", rarity: PotionRarity::COMMON },
-    PotionDef { id: "BlessingOfTheForge", rarity: PotionRarity::COMMON },
-    PotionDef { id: "Regen Potion", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "Ancient Potion", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "LiquidBronze", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "GamblersBrew", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "EssenceOfSteel", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "DuplicationPotion", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "DistilledChaos", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "LiquidMemories", rarity: PotionRarity::UNCOMMON },
-    PotionDef { id: "CultistPotion", rarity: PotionRarity::RARE },
-    PotionDef { id: "Fruit Juice", rarity: PotionRarity::RARE },
-    PotionDef { id: "SneckoOil", rarity: PotionRarity::RARE },
-    PotionDef { id: "FairyPotion", rarity: PotionRarity::RARE },
-    PotionDef { id: "SmokeBomb", rarity: PotionRarity::RARE },
-    PotionDef { id: "EntropicBrew", rarity: PotionRarity::RARE },
+    PotionDef {
+        id: "Block Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Dexterity Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Energy Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Explosive Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Fire Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Strength Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Swift Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Weak Potion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "FearPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "AttackPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "SkillPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "PowerPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "ColorlessPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "SteroidPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "SpeedPotion",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "BlessingOfTheForge",
+        rarity: PotionRarity::COMMON,
+    },
+    PotionDef {
+        id: "Regen Potion",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "Ancient Potion",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "LiquidBronze",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "GamblersBrew",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "EssenceOfSteel",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "DuplicationPotion",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "DistilledChaos",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "LiquidMemories",
+        rarity: PotionRarity::UNCOMMON,
+    },
+    PotionDef {
+        id: "CultistPotion",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "Fruit Juice",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "SneckoOil",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "FairyPotion",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "SmokeBomb",
+        rarity: PotionRarity::RARE,
+    },
+    PotionDef {
+        id: "EntropicBrew",
+        rarity: PotionRarity::RARE,
+    },
 ];
 
 fn character_potion_pool(character: Character) -> Vec<PotionDef> {
     let prefix: &[PotionDef] = match character {
         Character::Defect => &[
-            PotionDef { id: "FocusPotion", rarity: PotionRarity::COMMON },
-            PotionDef { id: "PotionOfCapacity", rarity: PotionRarity::UNCOMMON },
-            PotionDef { id: "EssenceOfDarkness", rarity: PotionRarity::RARE },
+            PotionDef {
+                id: "FocusPotion",
+                rarity: PotionRarity::COMMON,
+            },
+            PotionDef {
+                id: "PotionOfCapacity",
+                rarity: PotionRarity::UNCOMMON,
+            },
+            PotionDef {
+                id: "EssenceOfDarkness",
+                rarity: PotionRarity::RARE,
+            },
         ],
         _ => &[
-            PotionDef { id: "BloodPotion", rarity: PotionRarity::COMMON },
-            PotionDef { id: "ElixirPotion", rarity: PotionRarity::UNCOMMON },
-            PotionDef { id: "HeartOfIron", rarity: PotionRarity::RARE },
+            PotionDef {
+                id: "BloodPotion",
+                rarity: PotionRarity::COMMON,
+            },
+            PotionDef {
+                id: "ElixirPotion",
+                rarity: PotionRarity::UNCOMMON,
+            },
+            PotionDef {
+                id: "HeartOfIron",
+                rarity: PotionRarity::RARE,
+            },
         ],
     };
     let mut out = prefix.to_vec();
@@ -191,7 +399,11 @@ pub fn return_random_potion(rng: &mut RngSet, character: Character, limited: boo
     let pool = character_potion_pool(character);
     let pick = |rng: &mut RngSet| {
         let def = &pool[rng.potion.random_int(pool.len() as i32 - 1) as usize];
-        (PotionId::from_sts_id(def.id).unwrap_or(PotionId::Block), def.rarity, def.id)
+        (
+            PotionId::from_sts_id(def.id).unwrap_or(PotionId::Block),
+            def.rarity,
+            def.id,
+        )
     };
     let (mut id, mut got, key) = pick(rng);
     let mut spam = limited;
@@ -266,7 +478,10 @@ pub fn reward_cards(
         out.push(Card::new(chosen));
     }
     for card in &mut out {
-        if card.rarity() != CardRarity::RARE && rng.card.random_boolean_chance(upgrade_chance) && card.can_upgrade() {
+        if card.rarity() != CardRarity::RARE
+            && rng.card.random_boolean_chance(upgrade_chance)
+            && card.can_upgrade()
+        {
             card.upgrade();
         } else {
             preview_obtain(player, card);
@@ -280,7 +495,12 @@ pub fn reward_cards(
 /// Neow colorless: `NeowReward.getColorlessRewardCards`. Rarity is uncommon
 /// (or rare-only for the upgraded blessing). Picks use `cardRng` over the
 /// colorless pool in library insertion order (no name sort).
-pub fn neow_colorless_cards(dungeon: &Dungeon, rng: &mut RngSet, n: usize, rare_only: bool) -> Vec<Card> {
+pub fn neow_colorless_cards(
+    dungeon: &Dungeon,
+    rng: &mut RngSet,
+    n: usize,
+    rare_only: bool,
+) -> Vec<Card> {
     let rarity = if rare_only {
         CardRarity::RARE
     } else {
@@ -373,12 +593,21 @@ fn shop_roll_rarity(rng: &mut RngSet, card_blizz: i32) -> CardRarity {
 }
 
 fn cards_of_type(pool: &[CardId], typ: CardType) -> Vec<CardId> {
-    let mut tmp: Vec<CardId> = pool.iter().copied().filter(|id| id.def().card_type == typ).collect();
+    let mut tmp: Vec<CardId> = pool
+        .iter()
+        .copied()
+        .filter(|id| id.def().card_type == typ)
+        .collect();
     tmp.sort_by_key(|id| id.sts_id());
     tmp
 }
 
-fn get_card_from_pool(dungeon: &Dungeon, rng: &mut RngSet, rarity: CardRarity, typ: CardType) -> Option<CardId> {
+fn get_card_from_pool(
+    dungeon: &Dungeon,
+    rng: &mut RngSet,
+    rarity: CardRarity,
+    typ: CardType,
+) -> Option<CardId> {
     let pool = match rarity {
         CardRarity::RARE => &dungeon.rare_cards,
         CardRarity::UNCOMMON => &dungeon.uncommon_cards,
@@ -389,16 +618,24 @@ fn get_card_from_pool(dungeon: &Dungeon, rng: &mut RngSet, rarity: CardRarity, t
     if tmp.is_empty() {
         return match (rarity, typ) {
             (CardRarity::RARE, _) => get_card_from_pool(dungeon, rng, CardRarity::UNCOMMON, typ),
-            (CardRarity::UNCOMMON, CardType::POWER) => get_card_from_pool(dungeon, rng, CardRarity::RARE, typ),
+            (CardRarity::UNCOMMON, CardType::POWER) => {
+                get_card_from_pool(dungeon, rng, CardRarity::RARE, typ)
+            }
             (CardRarity::UNCOMMON, _) => get_card_from_pool(dungeon, rng, CardRarity::COMMON, typ),
-            (CardRarity::COMMON, CardType::POWER) => get_card_from_pool(dungeon, rng, CardRarity::UNCOMMON, typ),
+            (CardRarity::COMMON, CardType::POWER) => {
+                get_card_from_pool(dungeon, rng, CardRarity::UNCOMMON, typ)
+            }
             _ => None,
         };
     }
     Some(tmp[rng.card.random_int(tmp.len() as i32 - 1) as usize])
 }
 
-fn get_colorless_from_pool(dungeon: &Dungeon, rng: &mut RngSet, rarity: CardRarity) -> Option<CardId> {
+fn get_colorless_from_pool(
+    dungeon: &Dungeon,
+    rng: &mut RngSet,
+    rarity: CardRarity,
+) -> Option<CardId> {
     let mut tmp: Vec<CardId> = dungeon
         .colorless_cards
         .iter()
@@ -600,7 +837,8 @@ pub fn generate_shop(
     let mut cards = Vec::new();
     for card in &colored {
         // ShopScreen.initCards assigns `(int)tmpPrice` (truncate), not MathUtils.round.
-        let price = (card_base_price(card.rarity()) as f32 * rng.merchant.random_float_range(0.9, 1.1)) as i32;
+        let price = (card_base_price(card.rarity()) as f32
+            * rng.merchant.random_float_range(0.9, 1.1)) as i32;
         cards.push(ShopOffer {
             item: card.clone(),
             price,
@@ -643,7 +881,9 @@ pub fn generate_shop(
         if let Some(id) = dungeon.next_relic_end(tier, &|id| {
             crate::dungeon::relic_can_spawn(id, floor, act, room, player)
         }) {
-            let price = gdx_round(relic_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05));
+            let price = gdx_round(
+                relic_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05),
+            );
             relics.push(ShopOffer {
                 item: id,
                 price,
@@ -655,7 +895,8 @@ pub fn generate_shop(
     let mut potions = Vec::new();
     for _ in 0..3 {
         let id = return_random_potion(rng, character, false);
-        let price = gdx_round(potion_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05));
+        let price =
+            gdx_round(potion_base_price(id) as f32 * rng.merchant.random_float_range(0.95, 1.05));
         potions.push(ShopOffer {
             item: id,
             price,

@@ -1314,13 +1314,15 @@ mod tests {
         ));
         game.screen = Screen::Combat;
         game.player.potions[0].id = PotionId::Fire;
+        let dump_turn = params().potion_boss_dump_turn.ceil() as i32;
+        let dump_hp = params().potion_boss_dump_hp.floor() as i32;
         let combat = game.combat.as_mut().unwrap();
-        combat.turn = 2;
-        combat.monsters[0].hp = 100;
+        combat.turn = dump_turn.saturating_sub(1);
+        combat.monsters[0].hp = dump_hp;
 
         assert_eq!(potion_policy(&game, &game.legal_actions()), None);
 
-        game.combat.as_mut().unwrap().turn = 3;
+        game.combat.as_mut().unwrap().turn = dump_turn;
         assert!(matches!(
             potion_policy(&game, &game.legal_actions()),
             Some(Action::Potion {
