@@ -438,7 +438,12 @@ fn tally_orb_step(stats: &mut OrbStats, before: &[(usize, i32)], after: &[(usize
     let mut split = None;
     for j in 0..=before.len() {
         let kept = &before[j..];
-        if after.len() >= kept.len() && kept.iter().map(|o| o.0).eq(after[..kept.len()].iter().map(|o| o.0)) {
+        if after.len() >= kept.len()
+            && kept
+                .iter()
+                .map(|o| o.0)
+                .eq(after[..kept.len()].iter().map(|o| o.0))
+        {
             split = Some(j);
             break;
         }
@@ -462,9 +467,7 @@ fn print_orb_stats(stats: &OrbStats) {
     for i in 0..4 {
         parts.push(format!(
             "{}={}ch/{}ev",
-            names[i],
-            stats.channels[i],
-            stats.evokes[i]
+            names[i], stats.channels[i], stats.evokes[i]
         ));
     }
     println!(
@@ -512,7 +515,10 @@ struct SeedDetail {
     seed: i64,
     outcome: Outcome,
     steps: usize,
+    act_achieved: i32,
     floor_achieved: i32,
+    player_died: bool,
+    death_room: RoomType,
     monsters_with_hp: Vec<(MonsterId, i32, i32)>,
     diagnostics: RunDiagnostics,
     search: SearchStats,
@@ -543,7 +549,10 @@ impl SeedDetail {
             seed,
             outcome: run.outcome,
             steps: run.steps,
+            act_achieved: run.game.dungeon.act as i32,
             floor_achieved: run.game.dungeon.floor,
+            player_died: run.game.player.hp <= 0,
+            death_room: run.game.current_room,
             monsters_with_hp,
             diagnostics: run.diagnostics,
             search: run.search,
@@ -588,6 +597,8 @@ struct BatchStats {
     floor_achieved_sum: i64,
     search: SearchStats,
     telemetry: OrbStats,
+    deaths_by_act: [usize; 4],
+    deaths_by_act_and_room: [[usize; 4]; 4],
 }
 
 impl BatchStats {
@@ -597,12 +608,45 @@ impl BatchStats {
         self.floor_achieved_sum += i64::from(detail.floor_achieved);
         self.search += detail.search;
         self.telemetry.merge(&detail.telemetry);
+        if let Some(index) =
+            death_act_index(detail.outcome, detail.player_died, detail.act_achieved)
+        {
+            self.deaths_by_act[index] += 1;
+            self.deaths_by_act_and_room[index][death_room_index(detail.death_room)] += 1;
+        }
         match detail.outcome {
             Outcome::Win => self.wins += 1,
             Outcome::Loss => self.losses += 1,
             Outcome::Capped => self.capped += 1,
             Outcome::Stopped => self.stopped += 1,
         }
+    }
+}
+
+fn death_act_index(outcome: Outcome, player_died: bool, act: i32) -> Option<usize> {
+    if outcome != Outcome::Loss || !player_died || !(1..=4).contains(&act) {
+        return None;
+    }
+    Some((act - 1) as usize)
+}
+
+fn death_room_index(room: RoomType) -> usize {
+    match room {
+        RoomType::Monster => 0,
+        RoomType::Elite => 1,
+        RoomType::Boss => 2,
+        _ => 3,
+    }
+}
+
+fn print_death_layer(label: &str, total: usize, rooms: [usize; 4]) {
+    let [normal, elite, boss, other] = rooms;
+    if other == 0 {
+        println!("{label}: {total} deaths (normal={normal} elite={elite} boss={boss})");
+    } else {
+        println!(
+            "{label}: {total} deaths (normal={normal} elite={elite} boss={boss} other={other})"
+        );
     }
 }
 
@@ -766,24 +810,23 @@ fn run_seed(
                 }
             }
         }
-        let orbs_before: Option<Vec<(usize, i32)>> = if collect_telemetry
-            && screen_before == Screen::Combat
-        {
-            if let sts_engine::Action::Play { hand_index, .. } = &action {
-                if let Some(card) = game.player.hand.get(*hand_index) {
-                    *telemetry.plays.entry(card.id).or_insert(0) += 1;
+        let orbs_before: Option<Vec<(usize, i32)>> =
+            if collect_telemetry && screen_before == Screen::Combat {
+                if let sts_engine::Action::Play { hand_index, .. } = &action {
+                    if let Some(card) = game.player.hand.get(*hand_index) {
+                        *telemetry.plays.entry(card.id).or_insert(0) += 1;
+                    }
                 }
-            }
-            Some(
-                game.player
-                    .orbs
-                    .iter()
-                    .map(|o| (orb_kind_index(o.kind), o.evoke))
-                    .collect(),
-            )
-        } else {
-            None
-        };
+                Some(
+                    game.player
+                        .orbs
+                        .iter()
+                        .map(|o| (orb_kind_index(o.kind), o.evoke))
+                        .collect(),
+                )
+            } else {
+                None
+            };
         game.step(&action);
         if let Some(before) = orbs_before {
             let after: Vec<(usize, i32)> = game
@@ -813,13 +856,7 @@ fn run_seed(
     }
 }
 
-fn print_single(
-    seed: i64,
-    character: Character,
-    ascension: i32,
-    run: &RunResult,
-    telemetry: bool,
-) {
+fn print_single(seed: i64, character: Character, ascension: i32, run: &RunResult, telemetry: bool) {
     let game = &run.game;
     println!(
         "character={:?} seed={} asc={} steps={} floor={} act={:?} screen={:?} hp={}/{} gold={} deck={} relics={} done={}",
@@ -840,7 +877,9 @@ fn print_single(
     if let Some(event) = &game.event {
         println!(
             "event={} event_screen={} options={:?}",
-            event.id.sts_id(), event.screen, event.options
+            event.id.sts_id(),
+            event.screen,
+            event.options
         );
     }
     if let Some(combat) = &game.combat {
@@ -1001,6 +1040,28 @@ fn print_batch(
             seeds.last().copied().unwrap_or(0)
         )
     };
+    println!("WR: {:.2}% ({}/{})", win_rate, stats.wins, count);
+    println!("mean_floor_achieved = {:.2}", mean_floor_achieved);
+    print_death_layer(
+        "act 1",
+        stats.deaths_by_act[0],
+        stats.deaths_by_act_and_room[0],
+    );
+    print_death_layer(
+        "act 2",
+        stats.deaths_by_act[1],
+        stats.deaths_by_act_and_room[1],
+    );
+    print_death_layer(
+        "act 3",
+        stats.deaths_by_act[2],
+        stats.deaths_by_act_and_room[2],
+    );
+    print_death_layer(
+        "heart",
+        stats.deaths_by_act[3],
+        stats.deaths_by_act_and_room[3],
+    );
     println!(
         "character={:?} asc={} seeds={} concurrent={} {} wins={} losses={} capped={} stopped={} win_rate={:.2}% max_floor_achieved={} mean_floor_achieved={:.2} decisions={} max_steps={} elapsed={:.6}s seeds/s={:.1} decisions/s={:.0} emulation_cycles={} emulation_cycles/s={:.0} emulation_cycles/decision={:.1} plan_calls={} expanded_nodes={} score_evaluations={} lethal_expansions={} dedup_hits={}",
         character,
@@ -1032,48 +1093,37 @@ fn print_batch(
     if telemetry {
         print_orb_stats(&stats.telemetry);
     }
-    if diagnostics {
-        println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining\tnormals\telites\trests\tevents\tshops\ttreasures\tbosses\tboss_entry_hp\trested\tsmithed\trecalled\tact1_path\tact2_path\tact3_path\tact4_path\tfinal_focus\tfinal_orbs\tfinal_relics\tfinal_deck");
-    } else {
-        println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining");
+    if !diagnostics {
+        return;
     }
+    println!("seed\toutcome\tfloor_achieved\tmonsters_with_hp_remaining\tnormals\telites\trests\tevents\tshops\ttreasures\tbosses\tboss_entry_hp\trested\tsmithed\trecalled\tact1_path\tact2_path\tact3_path\tact4_path\tfinal_focus\tfinal_orbs\tfinal_relics\tfinal_deck");
     for detail in details {
-        if diagnostics {
-            println!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                detail.seed,
-                detail.outcome.label(),
-                detail.floor_achieved,
-                format_remaining_monsters(&detail.monsters_with_hp),
-                detail.diagnostics.monsters,
-                detail.diagnostics.elites,
-                detail.diagnostics.rests,
-                detail.diagnostics.events,
-                detail.diagnostics.shops,
-                detail.diagnostics.treasures,
-                detail.diagnostics.bosses,
-                format_boss_entries(&detail.diagnostics.boss_entry_hp),
-                detail.diagnostics.rested,
-                detail.diagnostics.smithed,
-                detail.diagnostics.recalled,
-                format_path(&detail.diagnostics.paths[0]),
-                format_path(&detail.diagnostics.paths[1]),
-                format_path(&detail.diagnostics.paths[2]),
-                format_path(&detail.diagnostics.paths[3]),
-                detail.final_focus,
-                format_final_orbs(detail.final_orbs.as_deref()),
-                format_final_relics(detail.final_relics.as_deref()),
-                format_final_deck(detail.final_deck.as_deref()),
-            );
-        } else {
-            println!(
-                "{}\t{}\t{}\t{}",
-                detail.seed,
-                detail.outcome.label(),
-                detail.floor_achieved,
-                format_remaining_monsters(&detail.monsters_with_hp)
-            );
-        }
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            detail.seed,
+            detail.outcome.label(),
+            detail.floor_achieved,
+            format_remaining_monsters(&detail.monsters_with_hp),
+            detail.diagnostics.monsters,
+            detail.diagnostics.elites,
+            detail.diagnostics.rests,
+            detail.diagnostics.events,
+            detail.diagnostics.shops,
+            detail.diagnostics.treasures,
+            detail.diagnostics.bosses,
+            format_boss_entries(&detail.diagnostics.boss_entry_hp),
+            detail.diagnostics.rested,
+            detail.diagnostics.smithed,
+            detail.diagnostics.recalled,
+            format_path(&detail.diagnostics.paths[0]),
+            format_path(&detail.diagnostics.paths[1]),
+            format_path(&detail.diagnostics.paths[2]),
+            format_path(&detail.diagnostics.paths[3]),
+            detail.final_focus,
+            format_final_orbs(detail.final_orbs.as_deref()),
+            format_final_relics(detail.final_relics.as_deref()),
+            format_final_deck(detail.final_deck.as_deref()),
+        );
     }
 }
 
@@ -1125,7 +1175,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--telemetry] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH] [--replay-actions-jsonl PATH]\n\nBatch mode runs seeds in one process and prints aggregate decision and HTN-emulation throughput, win rate, and per-seed results. --telemetry opts into orb/card/event telemetry; --diagnostics adds per-seed policy diagnostics. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl optionally accumulates only each seed's actions in memory and writes them once after the batch. --replay-actions-jsonl bypasses HTN and replays that action log; combine it with --compare-jsonl for an engine-only exact gate. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
+                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--telemetry] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH] [--replay-actions-jsonl PATH]\n\nBatch mode prints aggregate decision and HTN-emulation throughput, win rate, mean floor, and death breakdowns. --diagnostics adds the full per-seed policy table. --telemetry opts into orb/card/event telemetry. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl optionally accumulates only each seed's actions in memory and writes them once after the batch. --replay-actions-jsonl bypasses HTN and replays that action log; combine it with --compare-jsonl for an engine-only exact gate. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
                 );
                 return;
             }
@@ -1290,4 +1340,22 @@ fn main() {
         diagnostics,
         telemetry,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn death_layers_count_only_actual_player_deaths() {
+        assert_eq!(death_act_index(Outcome::Loss, true, 1), Some(0));
+        assert_eq!(death_act_index(Outcome::Loss, true, 4), Some(3));
+        assert_eq!(death_act_index(Outcome::Loss, false, 3), None);
+        assert_eq!(death_act_index(Outcome::Capped, true, 2), None);
+        assert_eq!(death_act_index(Outcome::Loss, true, 5), None);
+        assert_eq!(death_room_index(RoomType::Monster), 0);
+        assert_eq!(death_room_index(RoomType::Elite), 1);
+        assert_eq!(death_room_index(RoomType::Boss), 2);
+        assert_eq!(death_room_index(RoomType::Event), 3);
+    }
 }
