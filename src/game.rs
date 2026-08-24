@@ -3675,6 +3675,31 @@ impl Game {
         );
     }
 
+    /// Drop any modal selection owned by the combat that is ending.
+    ///
+    /// Potion actions remain globally available while another combat action
+    /// owns GRID/CARD_REWARD/HAND_SELECT. A lethal later potion can therefore
+    /// end the fight without letting that overlay run its normal close path.
+    /// None of these flags may leak into the real post-combat rewards.
+    fn clear_combat_overlays(&mut self) {
+        self.grid = None;
+        self.hand_select.clear();
+        self.hand_held.clear();
+        self.pending_cards.clear();
+        self.card_reward.clear();
+        self.exhaust_select = false;
+        self.put_on_deck_select = false;
+        self.gambling_select = false;
+        self.memories_select = false;
+        self.discovery_combat = false;
+        self.discovery_skippable = false;
+        self.discovery_typ = None;
+        self.discovery_colorless = false;
+        self.discovery_copies = 1;
+        self.pending_potion_actions.clear();
+        self.toolbox_reward = false;
+    }
+
     fn finish_combat(&mut self) {
         // Looter.die / Mugger.die call addStolenGoldToRewards; EscapeAction
         // only sets room.mugged and keeps the gold.
@@ -3690,6 +3715,7 @@ impl Game {
             })
             .unwrap_or(0);
         let smoked = self.combat.as_ref().is_some_and(|combat| combat.smoked);
+        self.clear_combat_overlays();
         if self
             .combat
             .as_ref()
@@ -8017,5 +8043,117 @@ mod mind_bloom_tests {
         assert_eq!(mind_bloom_options(41)[2], EventOption::Healthy);
         assert_eq!(mind_bloom_options(91)[2], EventOption::Healthy);
         assert_eq!(mind_bloom_options(100)[2], EventOption::Rich);
+    }
+}
+
+#[cfg(test)]
+mod combat_overlay_cleanup_tests {
+    use super::*;
+
+    fn potion(id: PotionId, slot: i32) -> PotionInstance {
+        PotionInstance { id, slot }
+    }
+
+    fn choose(index: usize) -> Action {
+        Action::Choose {
+            index,
+            x: None,
+            y: None,
+            room: None,
+        }
+    }
+
+    fn potion_use(slot: usize) -> Action {
+        Action::Potion {
+            action: PotionOp::Use,
+            slot,
+            target_index: None,
+        }
+    }
+
+    fn combat_fixture() -> Game {
+        let mut game = Game::new(7, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = RoomType::Monster;
+        game.dungeon.floor = 1;
+        game.start_combat_encounter(EncounterId::Cultist);
+        game
+    }
+
+    #[test]
+    fn lethal_distilled_chaos_closes_an_abandoned_liquid_memories_grid() {
+        let mut game = combat_fixture();
+        game.player.potions = vec![
+            potion(PotionId::LiquidMemories, 0),
+            potion(PotionId::DistilledChaos, 1),
+        ]
+        .into();
+        game.player.discard =
+            vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)].into();
+
+        game.step(&potion_use(0));
+        assert_eq!(game.screen, Screen::Grid);
+        assert!(game.memories_select);
+
+        let monster = &mut game.combat.as_mut().expect("combat").monsters[0];
+        monster.hp = 1;
+        game.player.draw.clear();
+        game.player.draw.push(Card::new(CardId::Strike_B));
+        game.step(&potion_use(1));
+
+        assert!(game.combat.is_none());
+        assert_eq!(game.screen, Screen::CombatReward);
+        assert!(!game.memories_select);
+        assert!(game.grid.is_none());
+        assert!(!game.legal_actions().is_empty());
+    }
+
+    #[test]
+    fn liquid_memories_cannot_leak_attack_potion_discovery_into_real_card_reward() {
+        let mut game = combat_fixture();
+        game.player.potions = vec![
+            potion(PotionId::Attack, 0),
+            potion(PotionId::LiquidMemories, 1),
+        ]
+        .into();
+        game.player.discard =
+            vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)].into();
+
+        game.step(&potion_use(0));
+        assert_eq!(game.screen, Screen::CardReward);
+        assert!(game.discovery_combat);
+        game.step(&potion_use(1));
+        assert_eq!(game.screen, Screen::Grid);
+        game.step(&choose(0));
+        assert_eq!(game.screen, Screen::Combat);
+        assert!(game.discovery_combat);
+
+        game.player.hand = vec![Card::new(CardId::Strike_B)].into();
+        game.combat.as_mut().expect("combat").monsters[0].hp = 1;
+        game.step(&Action::Play {
+            hand_index: 0,
+            target_index: Some(0),
+        });
+
+        assert!(game.combat.is_none());
+        assert_eq!(game.screen, Screen::CombatReward);
+        assert!(!game.discovery_combat);
+
+        let card_reward_index = game
+            .rewards
+            .iter()
+            .filter(|reward| !reward.taken)
+            .position(|reward| matches!(&reward.kind, RewardKind::Card))
+            .expect("card reward");
+        game.step(&choose(card_reward_index));
+        assert_eq!(game.screen, Screen::CardReward);
+        let picked = game.card_reward[0].id;
+        let deck_len = game.player.deck.len();
+        game.step(&choose(0));
+
+        assert!(game.combat.is_none());
+        assert_eq!(game.screen, Screen::CombatReward);
+        assert_eq!(game.player.deck.len(), deck_len + 1);
+        assert_eq!(game.player.deck.last().map(|card| card.id), Some(picked));
+        assert!(!game.legal_actions().is_empty());
     }
 }

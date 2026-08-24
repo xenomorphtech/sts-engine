@@ -688,6 +688,7 @@ pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
             }
         }
         Some(EventId::MatchAndKeep) => match_and_keep_choice(game, &choices),
+        Some(EventId::KnowingSkull) => pick(&[EventOption::KnowingSkullLeave]),
         Some(EventId::ForgottenAltar) => pick(&[EventOption::Offer]).or_else(|| {
             if hp > 30.max(max_hp / 3) {
                 pick(&[EventOption::Sacrifice])
@@ -1753,5 +1754,57 @@ mod tests {
             ),
             Some(actions[1].clone())
         );
+    }
+
+    #[test]
+    fn knowing_skull_policy_leaves_the_staged_reward_screen() {
+        use crate::game::EventState;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.screen = Screen::Event;
+        game.event = Some(EventState::policy_fixture(
+            EventId::KnowingSkull,
+            1,
+            vec![
+                EventOption::KnowingSkullPotion,
+                EventOption::KnowingSkullGold,
+                EventOption::KnowingSkullCard,
+                EventOption::KnowingSkullLeave,
+            ],
+            vec![6, 6, 6, 6],
+        ));
+        let initial_hp = game.player.hp;
+
+        let paid_leave = event_choice(&game, &game.legal_actions());
+        assert_eq!(
+            paid_leave,
+            Action::Choose {
+                index: 3,
+                x: None,
+                y: None,
+                room: None,
+            }
+        );
+        game.step(&paid_leave);
+
+        let event = game.event.as_ref().expect("Knowing Skull result screen");
+        assert_eq!(game.player.hp, initial_hp - 6);
+        assert_eq!(event.screen, 2);
+        assert_eq!(event.options, [EventOption::Leave]);
+
+        let final_leave = event_choice(&game, &game.legal_actions());
+        assert_eq!(
+            final_leave,
+            Action::Choose {
+                index: 0,
+                x: None,
+                y: None,
+                room: None,
+            }
+        );
+        game.step(&final_leave);
+
+        assert_eq!(game.screen, Screen::Map);
+        assert!(game.event.is_none());
     }
 }
