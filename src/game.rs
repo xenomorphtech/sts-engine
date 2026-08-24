@@ -1486,13 +1486,22 @@ impl Game {
                 } else if self.rest_selected {
                     actions.push(Action::Proceed);
                 } else {
-                    for (i, _) in self.campfire_options().into_iter().enumerate() {
+                    let options = self.campfire_options();
+                    for (i, _) in options.iter().enumerate() {
                         actions.push(Action::Choose {
                             index: i,
                             x: None,
                             y: None,
                             room: None,
                         });
+                    }
+                    // Coffee Dripper + Fusion Hammer can exhaust every
+                    // campfire option after Recall has already been taken.
+                    // The room must still expose its leave control; otherwise
+                    // potion discard is the only legal action and the run
+                    // stops after the final potion is gone.
+                    if options.is_empty() {
+                        actions.push(Action::Proceed);
                     }
                 }
             }
@@ -7403,9 +7412,12 @@ impl Game {
         if let Some(combat) = self.combat.as_mut() {
             crate::combat::flush_seek_reactions(&mut self.player, combat, &mut self.rng);
             crate::combat::flush_letter_opener(combat, &mut self.rng);
+            let rebound = std::mem::take(&mut combat.pending_rebound);
             if let Some(card) = combat.pending_exhaust.take() {
                 if card.exhaust {
                     crate::combat::exhaust_card(&mut self.player, combat, card, &mut self.rng);
+                } else if rebound {
+                    self.player.draw.push(card);
                 } else if card.card_type() != crate::ids::CardType::POWER {
                     self.player.discard.push(card);
                 }
@@ -7534,6 +7546,7 @@ impl Game {
 
     fn finish_put_on_deck(&mut self) {
         if let Some(combat) = self.combat.as_mut() {
+            combat.pending_rebound = false;
             if let Some(card) = combat.pending_exhaust.take() {
                 crate::combat::exhaust_card(&mut self.player, combat, card, &mut self.rng);
             }

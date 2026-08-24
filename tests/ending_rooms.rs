@@ -119,6 +119,39 @@ fn fusion_hammer_disables_smith_at_campfires() {
 }
 
 #[test]
+fn optionless_campfire_can_still_be_left() {
+    let mut game = ending_game();
+    game.player.relics.extend([
+        RelicInstance {
+            id: RelicId::Coffee_Dripper,
+            counter: -1,
+            used_up: false,
+        },
+        RelicInstance {
+            id: RelicId::Fusion_Hammer,
+            counter: -1,
+            used_up: false,
+        },
+    ]);
+    game.step(&Action::Choose {
+        index: 0,
+        x: Some(3),
+        y: Some(0),
+        room: Some(RoomType::Rest),
+    });
+    assert_eq!(game.campfire_options(), vec![CampfireOption::Recall]);
+    game.step(&Action::choose(0));
+    game.step(&Action::Proceed);
+
+    // Model a later campfire after the one-time Recall option was consumed.
+    game.screen = Screen::Rest;
+    assert!(game.campfire_options().is_empty());
+    assert_eq!(game.legal_actions(), vec![Action::Proceed]);
+    game.step(&Action::Proceed);
+    assert_eq!(game.screen, Screen::Map);
+}
+
+#[test]
 fn smith_exposes_upgrade_cards_then_returns_to_map() {
     let mut game = ending_game();
     game.step(&Action::Choose {

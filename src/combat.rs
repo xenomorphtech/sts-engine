@@ -37,6 +37,9 @@ pub struct Combat {
     /// Draw-pile indices in addToRandomSpot order for that GRID.
     pub skill_from_deck: CowVec<usize>,
     pub pending_exhaust: Option<Card>,
+    /// The pending GRID card was marked by ReboundPower and returns to the
+    /// top of the draw pile after the selection action finishes.
+    pub pending_rebound: bool,
     pub draw_after_exhaust: i32,
     pub pending_dark_embrace: i32,
     /// InkBottle.onUseCard: addToBot(DrawCardAction) after the card's use() actions.
@@ -340,6 +343,7 @@ impl Combat {
             need_skill_from_deck: false,
             skill_from_deck: CowVec::default(),
             pending_exhaust: None,
+            pending_rebound: false,
             draw_after_exhaust: 0,
             pending_dark_embrace: 0,
             pending_ink_bottle: 0,
@@ -4875,6 +4879,11 @@ pub fn play_owned_card(
     };
     player.energy -= cost as i32;
     card.free_to_play_once = false;
+    // ReboundPower is already active only when it came from an earlier card.
+    // A Rebound played by this action adds a fresh power whose justEvoked
+    // guard ignores this same UseCardAction.
+    let consume_rebound = player.power_amount(PowerId::Rebound) > 0;
+    let rebound_card = consume_rebound && card.card_type() != CardType::POWER;
     // ChangeStateAction("Defensive Mode") is addToBottom of the previous
     // command (Fire/Explosive potion DamageAction). Flush before this card
     // deals so Sweeping Beam hits the 20 block (seed 149 Guardian 200 vs 194).
@@ -5284,6 +5293,12 @@ pub fn play_owned_card(
         if player.hp <= 0 {
             return false;
         }
+        if play_i == 0 && consume_rebound {
+            if let Some(power) = player.powers.iter_mut().find(|power| power.id == PowerId::Rebound) {
+                power.amount -= 1;
+            }
+            player.powers.retain(|power| power.id != PowerId::Rebound || power.amount > 0);
+        }
         if play_i == 0
             && plays > 1
             && !needs_select
@@ -5297,6 +5312,8 @@ pub fn play_owned_card(
             original.free_to_play_once = false;
             if original.exhaust {
                 exhaust_card(player, combat, original, rng);
+            } else if rebound_card {
+                player.draw.push(original);
             } else {
                 player.discard.push(original);
             }
@@ -5333,10 +5350,13 @@ pub fn play_owned_card(
         // UseCardAction runs after BetterDiscardPileToHandAction, so the played
         // card is still in limbo while GRID is open.
         combat.pending_exhaust = Some(card);
+        combat.pending_rebound = rebound_card;
     } else if original_resolved_before_copy {
         // The original already reached its pile before the queued copy.
     } else if card.exhaust {
         exhaust_card(player, combat, card, rng);
+    } else if rebound_card {
+        player.draw.push(card);
     } else if card.card_type() != CardType::POWER {
         player.discard.push(card);
     }
@@ -6008,6 +6028,14 @@ fn apply_card_effect(
             player.add_power(PowerId::Focus, card.base_magic.max(4) as i32);
             player.add_power(PowerId::Bias, 1);
         }
+        CardId::Rebound => {
+            if let Some(i) = target {
+                if let Some(monster) = combat.monsters.get_mut(i) {
+                    damage_monster(monster, player, rng, dmg, 1);
+                }
+            }
+            player.add_power(PowerId::Rebound, 1);
+        }
         CardId::Glacier => {
             if block > 0 {
                 player.block += block;
@@ -6353,6 +6381,12 @@ fn apply_card_effect(
         }
         CardId::Static_Discharge => {
             player.add_power(PowerId::StaticDischarge, card.base_magic.max(1) as i32);
+        }
+        CardId::Undo => {
+            if block > 0 {
+                player.block += block;
+            }
+            player.add_power(PowerId::Equilibrium, card.base_magic.max(1) as i32);
         }
         CardId::Core_Surge => {
             if let Some(i) = target {
@@ -6872,6 +6906,9 @@ fn on_shuffle_relics(player: &mut Player) -> PendingShuffleActions {
 }
 
 pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dungeon: Option<&Dungeon>) {
+    // EquilibriumPower is consumed after DiscardAtEndOfTurnAction uses it.
+    // Snapshot it before the generic power hooks so the ordering is explicit.
+    let equilibrium_turns = player.power_amount(PowerId::Equilibrium).max(0);
     // GameActionManager.callEndOfTurnActions: applyEndOfTurnRelics then
     // applyEndOfTurnPreCardPowers. Orichalcum.onPlayerEndTurn addToTop GainBlock 6
     // if currentBlock==0, so it resolves before PlatedArmor/Metallicize addToBot.
@@ -7046,7 +7083,7 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     // DiscardAtEndOfTurnAction: retain/selfRetain cards are pulled to limbo
     // first (not yet modeled). Runic Pyramid and Equilibrium skip the
     // DiscardAction loop; ethereal still exhausts via triggerOnEndOfPlayerTurn.
-    let keep_hand = player.has_relic(RelicId::Runic_Pyramid);
+    let keep_hand = player.has_relic(RelicId::Runic_Pyramid) || equilibrium_turns > 0;
     let mut rest = Vec::new();
     for card in player.hand.drain(..) {
         if is_end_turn_autoplay(card.id) && !keep_hand {
@@ -7068,6 +7105,12 @@ pub fn end_turn(player: &mut Player, combat: &mut Combat, rng: &mut RngSet, dung
     if keep_hand {
         kept.reverse();
         player.hand = kept.into();
+    }
+    if equilibrium_turns > 0 {
+        if let Some(power) = player.powers.iter_mut().find(|p| p.id == PowerId::Equilibrium) {
+            power.amount -= 1;
+        }
+        player.powers.retain(|p| p.id != PowerId::Equilibrium || p.amount > 0);
     }
 
     if combat.all_dead() {

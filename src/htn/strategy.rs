@@ -1451,6 +1451,85 @@ mod tests {
     }
 
     #[test]
+    fn combat_reward_uses_the_compact_index_after_prior_rewards_are_taken() {
+        let mut game = Game::new(12, Character::Defect, 0, Unlocks::fixture());
+        let prefix = [
+            Action::Choose {
+                index: 0,
+                x: None,
+                y: None,
+                room: None,
+            },
+            Action::Choose {
+                index: 0,
+                x: None,
+                y: None,
+                room: None,
+            },
+            Action::Choose {
+                index: 1,
+                x: None,
+                y: None,
+                room: None,
+            },
+            Action::Choose {
+                index: 0,
+                x: None,
+                y: None,
+                room: None,
+            },
+            Action::Choose {
+                index: 1,
+                x: Some(2),
+                y: Some(0),
+                room: Some(RoomType::Monster),
+            },
+            Action::Play {
+                hand_index: 2,
+                target_index: None,
+            },
+            Action::Play {
+                hand_index: 2,
+                target_index: Some(0),
+            },
+            Action::Play {
+                hand_index: 2,
+                target_index: Some(1),
+            },
+            Action::Choose {
+                index: 0,
+                x: None,
+                y: None,
+                room: None,
+            },
+            Action::Choose {
+                index: 0,
+                x: None,
+                y: None,
+                room: None,
+            },
+        ];
+        for action in prefix {
+            assert!(
+                game.legal_actions().contains(&action),
+                "illegal replay action {action:?}"
+            );
+            game.step(&action);
+        }
+
+        let legal = game.legal_actions();
+        let card = Action::Choose {
+            index: 0,
+            x: None,
+            y: None,
+            room: None,
+        };
+        let score = score_card(&game, &game.card_reward[0]);
+        assert!(score as f32 >= params().pick_threshold, "score={score}");
+        assert_eq!(combat_reward(&game, &legal), card);
+    }
+
+    #[test]
     fn event_hp_guard_distinguishes_hp_from_max_hp() {
         let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         game.event = Some(crate::game::EventState::policy_fixture(

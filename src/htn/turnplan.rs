@@ -1,9 +1,8 @@
 use crate::action::Action;
+use crate::card::Card;
 use crate::creature::{Monster, OrbKind, Player};
 use crate::game::{CombatSearchCheckpoint, CombatSearchKey, CombatSearchState, Game, Screen};
-use crate::ids::{Act, CardType, MonsterId, PotionId, PowerId, RelicId, RoomType};
-#[cfg(test)]
-use crate::ids::CardId;
+use crate::ids::{Act, CardId, CardType, MonsterId, PotionId, PowerId, RelicId, RoomType};
 use std::collections::{HashMap, VecDeque};
 use std::ops::AddAssign;
 
@@ -75,9 +74,29 @@ fn simulated_step(game: &mut Game, action: &Action, stats: &mut SearchStats) {
     stats.simulated_steps += 1;
 }
 
-fn evaluated_score(before: &Game, after: &Game, stats: &mut SearchStats) -> f32 {
+struct EvaluationContext<'a> {
+    before: &'a Game,
+    turns_left: f32,
+    damage_weight: f32,
+    before_orb_value: f32,
+    before_genetic_training: Option<i32>,
+}
+
+impl<'a> EvaluationContext<'a> {
+    fn new(before: &'a Game) -> Self {
+        let turns_left = fight_length(fight_kind(before), before.dungeon.act);
+        let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
+        let before_orb_value = orb_value(before, turns_left, damage_weight);
+        let training = genetic_training(&before.player);
+        let before_genetic_training = (training > 0).then_some(training);
+        Self { before, turns_left, damage_weight, before_orb_value, before_genetic_training }
+    }
+}
+
+fn evaluated_score(context: &EvaluationContext<'_>, after: &Game, stats: &mut SearchStats) -> f32 {
     stats.score_evaluations += 1;
-    score_state(before, after) + setup_state_value(before, after)
+    score_state_with_context(context, after)
+        + setup_state_value(context, after)
 }
 
 /// Pick the combat command with one shared search over the rest of the turn.
@@ -271,6 +290,7 @@ fn searched_turn(
     stats: &mut SearchStats,
 ) -> Option<Action> {
     let root = checkpoint.root();
+    let evaluation = EvaluationContext::new(origin);
     let width = params().search_width.round().max(1.0) as usize;
     let depth = params().search_depth.round().max(1.0) as usize;
     let mut seen = ExactStateSet::with_capacity(width.saturating_mul(depth + 1).saturating_mul(12));
@@ -284,7 +304,7 @@ fn searched_turn(
     let root_end = root_legal.iter().find(|action| matches!(action, Action::EndTurn)).map(|end| {
         scratch.restore_combat_search_state(checkpoint, root);
         simulated_step(scratch, end, stats);
-        (end.clone(), evaluated_score(origin, scratch, stats))
+        (end.clone(), evaluated_score(&evaluation, scratch, stats))
     });
 
     let mut frontier = Vec::new();
@@ -296,14 +316,14 @@ fn searched_turn(
         if status_baseline.is_non_progressing(scratch) { continue; }
         if scratch.screen != Screen::Combat || scratch.player.hp <= 0
             || scratch.combat.as_ref().is_some_and(|combat| combat.all_dead()) {
-            keep_best(&mut best_play, first, evaluated_score(origin, scratch, stats));
+            keep_best(&mut best_play, first, evaluated_score(&evaluation, scratch, stats));
             continue;
         }
         match seen.insert(scratch.combat_search_state()) {
             Ok(index) => {
                 debug_assert_eq!(index, first_actions.len());
                 first_actions.push(Some(first.clone()));
-                let score = evaluated_score(origin, scratch, stats);
+                let score = evaluated_score(&evaluation, scratch, stats);
                 frontier.push((index, score));
             }
             Err(_) => stats.dedup_hits += 1,
@@ -323,7 +343,7 @@ fn searched_turn(
             if let Some(end) = legal.iter().find(|action| matches!(action, Action::EndTurn)) {
                 scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
                 simulated_step(scratch, end, stats);
-                keep_best(&mut best_play, &first, evaluated_score(origin, scratch, stats));
+                keep_best(&mut best_play, &first, evaluated_score(&evaluation, scratch, stats));
             }
             for play in legal.iter().filter(|action| matches!(action, Action::Play { .. })) {
                 scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
@@ -333,14 +353,14 @@ fn searched_turn(
                 if status_baseline.is_non_progressing(scratch) { continue; }
                 if scratch.screen != Screen::Combat || scratch.player.hp <= 0
                     || scratch.combat.as_ref().is_some_and(|combat| combat.all_dead()) {
-                    keep_best(&mut best_play, &first, evaluated_score(origin, scratch, stats));
+                    keep_best(&mut best_play, &first, evaluated_score(&evaluation, scratch, stats));
                     continue;
                 }
                 match seen.insert(scratch.combat_search_state()) {
                     Ok(index) => {
                         debug_assert_eq!(index, first_actions.len());
                         first_actions.push(Some(first.clone()));
-                        let score = evaluated_score(origin, scratch, stats);
+                        let score = evaluated_score(&evaluation, scratch, stats);
                         next.push((index, score));
                     }
                     Err(_) => stats.dedup_hits += 1,
@@ -431,19 +451,7 @@ impl StatusPlayBaseline {
     }
 }
 
-/// Rebound makes the chosen non-Power card the next draw. Score that future
-/// draw while choosing the card immediately after Rebound.
-#[cfg(test)]
-fn rebound_play_value(game: &Game, action: &Action) -> f32 {
-    if game.player.power_amount(PowerId::Rebound) <= 0 {
-        return 0.0;
-    }
-    let Action::Play { hand_index, .. } = action else {
-        return 0.0;
-    };
-    let Some(card) = game.player.hand.get(*hand_index) else {
-        return 0.0;
-    };
+fn rebound_card_value(card: &Card) -> f32 {
     if card.card_type() == CardType::POWER || card.exhaust {
         return 0.0;
     }
@@ -462,6 +470,33 @@ fn rebound_play_value(game: &Game, action: &Action) -> f32 {
     let repeatable_output =
         card.base_damage.max(0) as f32 * 2.5 + card.base_block.max(0) as f32 * 2.0;
     (tactical + repeatable_output).clamp(8.0, 100.0)
+}
+
+/// Rebound is represented by the real pile transformation. Value the card at
+/// the resulting top of the draw pile, so equal search states always have the
+/// same value and need no path-local action log.
+fn rebound_state_value(before: &Game, after: &Game) -> f32 {
+    if after.player.power_amount(PowerId::Rebound) > 0 {
+        return 0.0;
+    }
+    let rebound_was_reachable = before.player.power_amount(PowerId::Rebound) > 0
+        || before
+            .player
+            .hand
+            .iter()
+            .any(|card| card.id == CardId::Rebound);
+    if !rebound_was_reachable {
+        return 0.0;
+    }
+    let Some(card) = after.player.draw.last() else {
+        return 0.0;
+    };
+    let old_copies = before.player.draw.iter().filter(|old| *old == card).count();
+    let new_copies = after.player.draw.iter().filter(|new| *new == card).count();
+    if new_copies <= old_copies {
+        return 0.0;
+    }
+    rebound_card_value(card)
 }
 
 /// Value Self Repair's delayed heal while deciding whether to spend energy on
@@ -506,18 +541,41 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
 }
 
 /// Setup value belongs to the reached state, not the route used to reach it.
-fn setup_state_value(before: &Game, after: &Game) -> f32 {
+fn setup_state_value(
+    context: &EvaluationContext<'_>,
+    after: &Game,
+) -> f32 {
+    let before = context.before;
+    let turns_left = context.turns_left;
+    let damage_weight = context.damage_weight;
+    let p = params();
     let hp_frac = after.player.hp as f32 / after.player.max_hp.max(1) as f32;
-    let danger = (params().danger_base + params().danger_scale * (1.0 - hp_frac).powi(2))
+    let danger = (p.danger_base + p.danger_scale * (1.0 - hp_frac).powi(2))
         * (1.0 + after.ascension as f32 / 50.0);
-    let turns_left = fight_length(fight_kind(after), after.dungeon.act);
-    let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
     let repair = (after.player.power_amount(PowerId::SelfRepair) - before.player.power_amount(PowerId::SelfRepair)).max(0) as f32;
     let draw = (after.player.power_amount(PowerId::DrawCard) - before.player.power_amount(PowerId::DrawCard)).max(0) as f32;
     let echo = (after.player.power_amount(PowerId::EchoForm) - before.player.power_amount(PowerId::EchoForm)).max(0) as f32;
+    let energized = (after.player.power_amount(PowerId::Energized)
+        - before.player.power_amount(PowerId::Energized)).max(0) as f32;
+    let artifact = (after.player.power_amount(PowerId::Artifact)
+        - before.player.power_amount(PowerId::Artifact)).max(0) as f32;
+    let buffer = (after.player.power_amount(PowerId::Buffer)
+        - before.player.power_amount(PowerId::Buffer)).max(0) as f32;
+    let static_discharge = (after.player.power_amount(PowerId::StaticDischarge)
+        - before.player.power_amount(PowerId::StaticDischarge)).max(0) as f32;
+    let genetic_growth = context
+        .before_genetic_training
+        .map(|before| (genetic_training(&after.player) - before).max(0) as f32)
+        .unwrap_or(0.0);
     let mut value = repair * danger * 1.25;
     value += draw * turns_left * damage_weight * 2.2;
     value += echo * turns_left.max(1.0) * damage_weight * 12.0;
+    value += energized * damage_weight * p.energized_weight;
+    value += artifact * turns_left * damage_weight * p.artifact_weight;
+    value += buffer * danger * p.buffer_weight;
+    value += static_discharge * turns_left * damage_weight * p.static_discharge_weight;
+    value += genetic_growth * p.genetic_growth_weight;
+    value += rebound_state_value(before, after);
     let bias_gain = after.player.power_amount(PowerId::Bias) - before.player.power_amount(PowerId::Bias);
     if bias_gain > 0 && before.combat.as_ref().is_some_and(|combat| combat.monsters.iter().any(|monster| {
         monster.id == MonsterId::Champ && !monster.split_triggered && monster.hp >= monster.max_hp / 2
@@ -525,6 +583,15 @@ fn setup_state_value(before: &Game, after: &Game) -> f32 {
         value -= 2_000.0;
     }
     value
+}
+
+fn genetic_training(player: &Player) -> i32 {
+    player
+        .deck
+        .iter()
+        .filter(|card| card.id == CardId::Genetic_Algorithm)
+        .map(|card| card.misc.max(1) as i32)
+        .sum()
 }
 
 /// Block available before monsters act if the player ends the turn now.
@@ -617,7 +684,61 @@ fn cheap_hand_block(game: &Game) -> i32 {
     best.into_iter().max().unwrap_or(0)
 }
 
+/// Best immediately playable attack output in the real next hand. This is a
+/// compact knapsack continuation value, not another search horizon: EndTurn
+/// has already produced the exact retained/drawn cards and exact next energy.
+fn cheap_hand_damage(game: &Game) -> i32 {
+    let energy = game.player.energy.max(0) as usize;
+    let mut best = vec![0; energy + 1];
+
+    for card in &game.player.hand {
+        if card.card_type() != CardType::ATTACK {
+            continue;
+        }
+        let damage = crate::combat::derived_damage(card, &game.player).max(0);
+        if damage == 0 || card.cost_for_turn < -1 {
+            continue;
+        }
+        if card.cost_for_turn == -1 {
+            let old = best.clone();
+            for spent_before in 0..=energy {
+                for x in 0..=energy - spent_before {
+                    best[spent_before + x] =
+                        best[spent_before + x].max(old[spent_before] + damage * x as i32);
+                }
+            }
+            continue;
+        }
+        let cost = if card.free_to_play_once {
+            0
+        } else {
+            card.cost_for_turn.max(0) as usize
+        };
+        if cost > energy {
+            continue;
+        }
+        if cost == 0 {
+            for value in &mut best {
+                *value += damage;
+            }
+        } else {
+            for spent in (cost..=energy).rev() {
+                best[spent] = best[spent].max(best[spent - cost] + damage);
+            }
+        }
+    }
+
+    best.into_iter().max().unwrap_or(0)
+}
+
+#[cfg(test)]
 fn score_state(before: &Game, after: &Game) -> f32 {
+    let context = EvaluationContext::new(before);
+    score_state_with_context(&context, after)
+}
+
+fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f32 {
+    let before = context.before;
     if after.player.hp <= 0 {
         return -100_000.0;
     }
@@ -631,8 +752,8 @@ fn score_state(before: &Game, after: &Game) -> f32 {
     }
 
     let p = params();
-    let turns_left = fight_length(fight_kind(after), after.dungeon.act);
-    let damage_weight = p.dmg_base + p.dmg_per_turn * turns_left;
+    let turns_left = context.turns_left;
+    let damage_weight = context.damage_weight;
     let mut dealt = 0.0;
     let mut stripped_block = 0.0;
     let mut dead = 0;
@@ -731,6 +852,9 @@ fn score_state(before: &Game, after: &Game) -> f32 {
         value -= exposed as f32 * p.next_exposure_weight * danger;
         value -= taxed_block as f32 * p.next_block_tax;
     }
+    if turn_advanced {
+        value += cheap_hand_damage(after) as f32 * damage_weight * p.next_hand_damage_mult;
+    }
 
     let strength = after.player.power_amount(PowerId::Strength)
         - before.player.power_amount(PowerId::Strength);
@@ -760,7 +884,7 @@ fn score_state(before: &Game, after: &Game) -> f32 {
     value -= status_gain as f32 * p.status_gain_penalty;
     let focus_decay = after.player.power_amount(PowerId::Bias).max(0) as f32;
     value -= focus_decay * p.bias_decay_weight * (turns_left * (turns_left + 1.0) / 2.0);
-    value += orb_value(after, turns_left) - orb_value(before, turns_left);
+    value += orb_value(after, turns_left, damage_weight) - context.before_orb_value;
     value += after.player.energy as f32 * p.energy_value;
     value
 }
@@ -959,19 +1083,85 @@ fn target_priority(id: MonsterId) -> f32 {
     }
 }
 
-fn orb_value(game: &Game, turns_left: f32) -> f32 {
+/// Continuation value of the exact ordered orb queue.
+///
+/// Lightning and Frost retain their passive-horizon estimate. A Dark orb is
+/// different: its stored damage is an option to hit a deliberately prepared
+/// target on a later turn. Pricing only its raw counter makes an immediate
+/// evoke look profitable even when the engine is forced to aim at low-HP
+/// chaff. The first Dark in queue therefore owns both the best useful future
+/// hit and, while chaff blocks that hit, the eventual reward for clearing the
+/// chaff without spending the bank. Realized damage and kills remove those
+/// continuation values, so the comparison remains state-based and does not
+/// need path provenance or a transformation log.
+fn orb_value(game: &Game, turns_left: f32, damage_weight: f32) -> f32 {
     let p = params();
     let focus = game.player.power_amount(PowerId::Focus);
-    let horizon = turns_left.min(p.orb_horizon);
+    let elapsed_turns = game
+        .combat
+        .as_ref()
+        .map_or(0.0, |combat| combat.turn.saturating_sub(1) as f32);
+    let horizon = (turns_left - elapsed_turns).max(0.0).min(p.orb_horizon);
+    let free_slots = (game.player.max_orbs.max(0) as usize)
+        .saturating_sub(game.player.orbs.len());
+    let mut first_dark = true;
     game.player
         .orbs
         .iter()
-        .map(|orb| match orb.kind {
+        .enumerate()
+        .map(|(queue_index, orb)| match orb.kind {
             OrbKind::Lightning => (3 + focus).max(0) as f32 * horizon * p.orb_lightning_mult,
             OrbKind::Frost => (2 + focus).max(0) as f32 * horizon * p.orb_frost_mult,
             OrbKind::Dark => {
-                orb.evoke.max(6) as f32 * p.orb_dark_stored
+                let stored = orb.evoke.max(6);
+                let future = stored as f32 + (6 + focus).max(0) as f32 * horizon;
+                let mut best_target = None;
+                let mut forced_target = None;
+                if let Some(combat) = &game.combat {
+                    for (index, monster) in combat.monsters.iter().enumerate() {
+                        if !monster.alive() {
+                            continue;
+                        }
+                        let ehp = monster.hp.max(0).saturating_add(monster.block.max(0));
+                        let useful = future.min(ehp as f32) * target_priority(monster.id);
+                        if best_target.is_none_or(|(_, _, best)| useful > best) {
+                            best_target = Some((index, ehp, useful));
+                        }
+                        if forced_target.is_none_or(|(_, hp)| monster.hp < hp) {
+                            forced_target = Some((index, monster.hp.max(0)));
+                        }
+                    }
+                }
+                let future_value = best_target.map_or(0.0, |(_, _, useful)| {
+                    useful * damage_weight * p.orb_dark_future_mult
+                });
+                let is_first_dark = first_dark;
+                let chaff_reserve = if is_first_dark
+                    && matches!((forced_target, best_target),
+                        (Some((forced, hp)), Some((best, best_ehp, _)))
+                            if forced != best && hp < stored && best_ehp > hp)
+                {
+                    p.kill_bonus * p.orb_dark_chaff_reserve
+                } else {
+                    0.0
+                };
+                // A Dark behind other orbs (or with open slots ahead of an
+                // overflow) can coexist with that many additional channels.
+                // Losing this slack is a real queue-state change even while
+                // the same scalar set of orbs remains present.
+                let queue_flex = if is_first_dark {
+                    let safe_channels = free_slots.saturating_add(queue_index) as f32;
+                    let protected_fraction = safe_channels / (safe_channels + 1.0);
+                    future_value * protected_fraction * p.orb_dark_queue_flex
+                } else {
+                    0.0
+                };
+                first_dark = false;
+                stored as f32 * p.orb_dark_stored
                     + (6 + focus).max(0) as f32 * horizon * p.orb_dark_growth
+                    + future_value
+                    + chaff_reserve
+                    + queue_flex
             }
             OrbKind::Plasma => p.orb_plasma,
         })
@@ -1359,19 +1549,50 @@ mod tests {
     }
 
     #[test]
+    fn dark_queue_value_tracks_safe_channels_before_eviction() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut front = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        front.combat = Some(Combat::start(
+            EncounterId::Cultist,
+            &mut front.player,
+            &mut front.rng,
+            31,
+            1,
+            0,
+        ));
+        front.screen = Screen::Combat;
+        front.player.max_orbs = 3;
+        *front.player.orbs = vec![
+            Orb { kind: OrbKind::Dark, evoke: 40 },
+            Orb { kind: OrbKind::Frost, evoke: 0 },
+            Orb { kind: OrbKind::Frost, evoke: 0 },
+        ];
+        let mut protected = front.clone();
+        protected.player.orbs.swap(0, 1);
+        let turns_left = fight_length(FightKind::Normal, front.dungeon.act);
+        let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
+
+        assert!(
+            orb_value(&protected, turns_left, damage_weight)
+                > orb_value(&front, turns_left, damage_weight)
+        );
+    }
+
+    #[test]
     fn rebound_target_score_prefers_a_high_value_repeat() {
-        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
-        *game.player.hand = vec![Card::new(CardId::Strike_B), Card::new(CardId::Glacier)];
-        game.player.add_power(PowerId::Rebound, 1);
-        let strike = Action::Play {
-            hand_index: 0,
-            target_index: Some(0),
-        };
-        let glacier = Action::Play {
-            hand_index: 1,
-            target_index: None,
-        };
-        assert!(rebound_play_value(&game, &glacier) > rebound_play_value(&game, &strike));
+        let mut before = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        *before.player.hand = vec![Card::new(CardId::Rebound), Card::new(CardId::Glacier)];
+        let mut glacier_state = before.clone();
+        glacier_state.player.draw.push(Card::new(CardId::Glacier));
+        let mut strike_state = before.clone();
+        strike_state.player.draw.push(Card::new(CardId::Strike_B));
+
+        assert!(
+            rebound_state_value(&before, &glacier_state)
+                > rebound_state_value(&before, &strike_state)
+        );
     }
 
     #[test]
@@ -1530,13 +1751,14 @@ mod tests {
         ));
         game.screen = Screen::Combat;
         game.player.potions[0].id = PotionId::Fire;
+        let dump_turn = params().potion_boss_dump_turn.ceil() as i32;
         let combat = game.combat.as_mut().unwrap();
-        combat.turn = 2;
-        combat.monsters[0].hp = 100;
+        combat.turn = (dump_turn - 1).max(2);
+        combat.monsters[0].hp = params().potion_boss_dump_hp.floor() as i32;
 
         assert_eq!(potion_policy(&game, &game.legal_actions()), None);
 
-        game.combat.as_mut().unwrap().turn = 3;
+        game.combat.as_mut().unwrap().turn = dump_turn;
         assert!(matches!(
             potion_policy(&game, &game.legal_actions()),
             Some(Action::Potion {

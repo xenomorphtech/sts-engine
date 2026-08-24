@@ -336,6 +336,7 @@ pub enum PowerId {
     NoBlock,
     HelloWorld,
     StaticDischarge,
+    Equilibrium,
     Confusion,
     StrengthUp,
     Magnetism,

@@ -1,6 +1,6 @@
 use crate::action::{Action, PotionOp};
-use crate::game::{Game, Screen};
-use crate::ids::PotionId;
+use crate::game::{CampfireOption, Game, GridKind, RewardKind, Screen, ShopChoice};
+use crate::ids::{CardId, EventId, PotionId, RelicId};
 use std::collections::VecDeque;
 
 use super::{strategy, turnplan};
@@ -10,7 +10,201 @@ use turnplan::SearchStats;
 #[derive(Clone, Debug, Default)]
 pub struct HtnAgent {
     visited_shop_floors: Vec<i32>,
-    recent: VecDeque<(Screen, i32, Action)>,
+    recent: VecDeque<DecisionKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DecisionKey {
+    screen: Screen,
+    floor: i32,
+    command: CommandIdentity,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CommandIdentity {
+    Action(Action),
+    Choice(ChoiceIdentity),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RewardIdentity {
+    Gold(i32),
+    StolenGold(i32),
+    Potion(PotionId),
+    Relic(RelicId),
+    Card,
+    EmeraldKey,
+    SapphireKey,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShopIdentity {
+    Purge,
+    Card(CardId),
+    Relic(RelicId),
+    Potion(PotionId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChoiceIdentity {
+    CombatReward {
+        reward_index: usize,
+        reward: RewardIdentity,
+    },
+    CardReward {
+        choice_index: usize,
+        card: CardId,
+    },
+    BossRelic {
+        choice_index: usize,
+        relic: RelicId,
+    },
+    Shop {
+        choice_index: usize,
+        item: ShopIdentity,
+    },
+    Campfire(CampfireOption),
+    Smith {
+        choice_index: usize,
+        card: CardId,
+    },
+    Event {
+        event: EventId,
+        screen: i32,
+        choice_index: usize,
+        option: crate::game::EventOption,
+    },
+    Neow {
+        screen: i32,
+        index: usize,
+    },
+    Hand {
+        choice_index: usize,
+        card: CardId,
+    },
+    Grid {
+        kind: GridKind,
+        choice_index: usize,
+        card: Option<CardId>,
+    },
+}
+
+impl DecisionKey {
+    fn new(game: &Game, action: &Action) -> Self {
+        let command = choice_identity(game, action)
+            .map(CommandIdentity::Choice)
+            .unwrap_or_else(|| CommandIdentity::Action(action.clone()));
+        Self {
+            screen: game.screen,
+            floor: game.dungeon.floor,
+            command,
+        }
+    }
+}
+
+fn reward_identity(kind: &RewardKind) -> RewardIdentity {
+    match kind {
+        RewardKind::Gold(amount) => RewardIdentity::Gold(*amount),
+        RewardKind::StolenGold(amount) => RewardIdentity::StolenGold(*amount),
+        RewardKind::Potion(id) => RewardIdentity::Potion(*id),
+        RewardKind::Relic(id) => RewardIdentity::Relic(*id),
+        RewardKind::Card => RewardIdentity::Card,
+        RewardKind::EmeraldKey => RewardIdentity::EmeraldKey,
+        RewardKind::SapphireKey => RewardIdentity::SapphireKey,
+    }
+}
+
+fn choice_identity(game: &Game, action: &Action) -> Option<ChoiceIdentity> {
+    let Action::Choose { index, .. } = action else {
+        return None;
+    };
+    match game.screen {
+        Screen::CombatReward => game
+            .rewards
+            .iter()
+            .enumerate()
+            .filter(|(_, reward)| !reward.taken)
+            .nth(*index)
+            .map(|(reward_index, reward)| ChoiceIdentity::CombatReward {
+                reward_index,
+                reward: reward_identity(&reward.kind),
+            }),
+        Screen::CardReward => game
+            .card_reward
+            .get(*index)
+            .map(|card| ChoiceIdentity::CardReward {
+                choice_index: *index,
+                card: card.id,
+            }),
+        Screen::BossRelic => {
+            game.boss_relics
+                .get(*index)
+                .copied()
+                .map(|relic| ChoiceIdentity::BossRelic {
+                    choice_index: *index,
+                    relic,
+                })
+        }
+        Screen::Shop => game
+            .shop_choices()
+            .get(*index)
+            .map(|choice| ChoiceIdentity::Shop {
+                choice_index: *index,
+                item: match choice {
+                    ShopChoice::Purge => ShopIdentity::Purge,
+                    ShopChoice::Card(card) => ShopIdentity::Card(card.id),
+                    ShopChoice::Relic(id) => ShopIdentity::Relic(*id),
+                    ShopChoice::Potion(id) => ShopIdentity::Potion(*id),
+                },
+            }),
+        Screen::Rest if game.rest_is_smithing() => game
+            .player
+            .deck
+            .iter()
+            .filter(|card| card.can_upgrade())
+            .nth(*index)
+            .map(|card| ChoiceIdentity::Smith {
+                choice_index: *index,
+                card: card.id,
+            }),
+        Screen::Rest => game
+            .campfire_options()
+            .get(*index)
+            .copied()
+            .map(ChoiceIdentity::Campfire),
+        Screen::Event => game.event.as_ref().and_then(|event| {
+            event
+                .options
+                .get(*index)
+                .copied()
+                .map(|option| ChoiceIdentity::Event {
+                    event: event.id,
+                    screen: event.screen,
+                    choice_index: *index,
+                    option,
+                })
+        }),
+        Screen::Neow => Some(ChoiceIdentity::Neow {
+            screen: game.neow_screen,
+            index: *index,
+        }),
+        Screen::HandSelect => game
+            .player
+            .hand
+            .get(*index)
+            .map(|card| ChoiceIdentity::Hand {
+                choice_index: *index,
+                card: card.id,
+            }),
+        Screen::Grid => game.grid_view().map(|(kind, cards)| ChoiceIdentity::Grid {
+            kind,
+            choice_index: *index,
+            card: cards
+                .into_iter()
+                .find_map(|(choice_index, card)| (choice_index == *index).then_some(card.id)),
+        }),
+        _ => None,
+    }
 }
 
 impl HtnAgent {
@@ -110,14 +304,8 @@ impl HtnAgent {
                     .iter()
                     .filter(|action| matches!(action, Action::Choose { .. }))
                     .min_by_key(|action| {
-                        self.recent
-                            .iter()
-                            .filter(|(screen, floor, prior)| {
-                                *screen == game.screen
-                                    && *floor == game.dungeon.floor
-                                    && prior == *action
-                            })
-                            .count()
+                        let key = DecisionKey::new(game, action);
+                        self.recent.iter().filter(|prior| **prior == key).count()
                     })
                     .cloned()
             })
@@ -125,7 +313,7 @@ impl HtnAgent {
     }
 
     fn anti_stall(&mut self, game: &Game, cmd: Action, legal: &[Action]) -> Action {
-        let key = (game.screen, game.dungeon.floor, cmd.clone());
+        let key = DecisionKey::new(game, &cmd);
         self.recent.push_back(key.clone());
         if self.recent.len() > 12 {
             self.recent.pop_front();
@@ -172,9 +360,87 @@ mod tests {
 
         let first = agent.grid_choice(&game, &legal).unwrap();
         assert_eq!(first, legal[0]);
-        agent.recent.push_back((game.screen, game.dungeon.floor, first));
+        agent.recent.push_back(DecisionKey::new(&game, &first));
 
         assert_eq!(agent.grid_choice(&game, &legal), Some(legal[1].clone()));
+    }
+
+    #[test]
+    fn duplicate_cards_on_a_multi_pick_grid_have_distinct_identities() {
+        let first = ChoiceIdentity::Grid {
+            kind: GridKind::Transform,
+            choice_index: 0,
+            card: Some(CardId::Strike_B),
+        };
+        let second = ChoiceIdentity::Grid {
+            kind: GridKind::Transform,
+            choice_index: 1,
+            card: Some(CardId::Strike_B),
+        };
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn compact_reward_indices_do_not_look_like_a_stall() {
+        use crate::ids::RoomType;
+
+        let mut game = Game::new(12, Character::Defect, 0, Unlocks::fixture());
+        let prefix = [
+            choose(0),
+            choose(0),
+            choose(1),
+            choose(0),
+            Action::Choose {
+                index: 1,
+                x: Some(2),
+                y: Some(0),
+                room: Some(RoomType::Monster),
+            },
+            Action::Play {
+                hand_index: 2,
+                target_index: None,
+            },
+            Action::Play {
+                hand_index: 2,
+                target_index: Some(0),
+            },
+            Action::Play {
+                hand_index: 2,
+                target_index: Some(1),
+            },
+        ];
+        for action in prefix {
+            assert!(
+                game.legal_actions().contains(&action),
+                "illegal replay action {action:?}"
+            );
+            game.step(&action);
+        }
+
+        let mut agent = HtnAgent::new();
+        for expected_reward in [
+            RewardIdentity::Gold(11),
+            RewardIdentity::Potion(PotionId::Colorless),
+        ] {
+            let action = agent.decide(&game);
+            let key = DecisionKey::new(&game, &action);
+            assert!(matches!(
+                key.command,
+                CommandIdentity::Choice(ChoiceIdentity::CombatReward { reward, .. })
+                    if reward == expected_reward
+            ));
+            game.step(&action);
+        }
+
+        let card = agent.decide(&game);
+        assert!(matches!(
+            DecisionKey::new(&game, &card).command,
+            CommandIdentity::Choice(ChoiceIdentity::CombatReward {
+                reward: RewardIdentity::Card,
+                ..
+            })
+        ));
     }
 }
 

@@ -876,6 +876,8 @@ pub fn card_stats(id: CardId, upgraded: bool) -> CardStats {
         (CardId::Thunder_Strike, true) => CardStats::attack(3, 9),
         (CardId::Static_Discharge, false) => CardStats::skill(1, -1, 1),
         (CardId::Static_Discharge, true) => CardStats::skill(1, -1, 2),
+        (CardId::Undo, false) => CardStats::skill(2, 13, 1),
+        (CardId::Undo, true) => CardStats::skill(2, 16, 1),
         (CardId::Core_Surge, false) => CardStats {
             cost: 1, damage: 11, block: -1, magic: 1, exhaust: true, ethereal: false, innate: false,
         },
