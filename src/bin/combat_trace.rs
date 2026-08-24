@@ -913,12 +913,52 @@ mod tests {
     }
 
     #[test]
+    fn time_eater_counter_eleven_does_not_trap_the_htn_in_empty_turns() {
+        let seed = "1051551053542457741";
+        let mut config = Config::default();
+        config.seed = parse_seed(seed);
+        config.seed_label = seed.to_string();
+        config.ascension = 0;
+        config.floors = Some(FloorRange::new(50, 50).unwrap());
+
+        let trace = run_trace(&config).expect("Time Eater regression seed should run");
+        let fight = trace.fights.first().expect("floor 50 fight");
+        let final_turn = fight.rows.last().expect("at least one combat turn");
+
+        assert_eq!(fight.monster_name, "Time Eater");
+        assert_eq!(final_turn.monster_hp, 0);
+        assert!(final_turn.player_hp > 0);
+    }
+
+    #[test]
+    fn late_biased_cognition_converts_the_hexaghost_race() {
+        let seed = "7697160996050744976";
+        let mut config = Config::default();
+        config.seed = parse_seed(seed);
+        config.seed_label = seed.to_string();
+        config.ascension = 20;
+        config.floors = Some(FloorRange::new(16, 16).unwrap());
+
+        let trace = run_trace(&config).expect("Hexaghost regression seed should run");
+        let fight = trace.fights.first().expect("floor 16 fight");
+        let final_turn = fight.rows.last().expect("at least one combat turn");
+
+        assert_eq!(fight.monster_name, "Hexaghost");
+        assert!(fight
+            .rows
+            .iter()
+            .any(|row| row.plays.iter().any(|card| card == "Biased Cognition")));
+        assert_eq!(final_turn.monster_hp, 0);
+        assert!(final_turn.player_hp > 0);
+    }
+
+    #[test]
     fn death_with_live_combat_terminates_the_trace() {
         let seed = "12992569554709756";
         let mut config = Config::default();
         config.seed = parse_seed(seed);
         config.seed_label = seed.to_string();
-        config.max_steps = 547;
+        config.max_steps = 10_000;
 
         let trace = run_trace(&config).expect("fatal combat should terminate the trace");
         let last_floor = trace
@@ -926,8 +966,11 @@ mod tests {
             .last()
             .expect("trace should include fatal floor");
 
-        assert_eq!(trace.steps, 547);
-        assert_eq!(last_floor.floor, 31);
+        assert!(trace.steps < config.max_steps);
+        // The policy may improve or regress to a different fatal fight; this
+        // test protects termination while combat is still populated, not a
+        // particular route or reward sequence.
+        assert!(last_floor.floor > 0);
         assert_eq!(last_floor.finish_hp, 0);
     }
 

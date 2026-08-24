@@ -83,6 +83,17 @@ fn node_value(
     need_emerald: bool,
 ) -> f32 {
     let own = room_value(game, x, y, room, hp_frac, act, gold, strength, need_emerald);
+    let projected_hp = projected_hp_after_room(game, room, hp_frac, act, y, strength);
+    let survival = if projected_hp <= 0.0 {
+        -2_000.0 + projected_hp * 500.0
+    } else if projected_hp < 0.15 {
+        -250.0 * (0.15 - projected_hp) / 0.15
+    } else {
+        0.0
+    };
+    if projected_hp <= 0.0 {
+        return own + survival;
+    }
     let children = lookup_node(game, x, y)
         .map(|n| {
             n.edges
@@ -96,7 +107,7 @@ fn node_value(
                         e.dst_x,
                         e.dst_y,
                         r,
-                        hp_frac,
+                        projected_hp,
                         act,
                         gold,
                         strength,
@@ -108,7 +119,70 @@ fn node_value(
                 })
         })
         .flatten();
-    own + children.unwrap_or(0.0)
+    own + survival + children.unwrap_or(0.0)
+}
+
+/// Carry an HP budget through map lookahead. The map is known, but exact
+/// encounters and draws are not, so use conservative act/room priors adjusted
+/// by the current deck. This makes a chain of future combats consume the same
+/// resource that a future rest restores instead of evaluating every node at
+/// today's HP.
+fn projected_hp_after_room(
+    game: &Game,
+    room: RoomType,
+    hp_frac: f32,
+    act: i32,
+    y: i32,
+    strength: i32,
+) -> f32 {
+    match room {
+        RoomType::Monster | RoomType::Elite | RoomType::Boss => {
+            let metrics = deck_metrics(game);
+            let base = match (act, room) {
+                (1, RoomType::Monster) => 0.12,
+                (1, RoomType::Elite) => 0.30,
+                (1, RoomType::Boss) => 0.42,
+                (2, RoomType::Monster) => 0.20,
+                (2, RoomType::Elite) => 0.36,
+                (2, RoomType::Boss) => 0.48,
+                (3, RoomType::Monster) => 0.18,
+                (3, RoomType::Elite) => 0.32,
+                (3, RoomType::Boss) => 0.50,
+                (_, RoomType::Monster) => 0.20,
+                (_, RoomType::Elite) => 0.36,
+                (_, RoomType::Boss) => 0.55,
+                _ => 0.0,
+            };
+            let defense = (metrics.block_cards + metrics.frost_src / 2).clamp(0, 10) as f32;
+            let offense = strength.clamp(0, 12) as f32;
+            let mitigation = 0.006 * defense + 0.004 * offense;
+            let loss = (base - mitigation).max(base * 0.58);
+            hp_frac - loss
+        }
+        RoomType::Rest => {
+            let p = params();
+            let threshold = if act == 1 {
+                p.rest_hp_act1
+            } else {
+                p.rest_hp_later
+            };
+            let threshold = if y >= 13 {
+                threshold.max(p.rest_hp_preboss)
+            } else {
+                threshold
+            };
+            let can_rest = !game.player.has_relic(RelicId::Coffee_Dripper);
+            if can_rest && hp_frac < threshold {
+                (hp_frac + 0.30).min(1.0)
+            } else {
+                hp_frac
+            }
+        }
+        RoomType::Shop if game.player.has_relic(RelicId::MealTicket) => {
+            (hp_frac + 15.0 / game.player.max_hp.max(1) as f32).min(1.0)
+        }
+        _ => hp_frac,
+    }
 }
 
 fn lookup_node(game: &Game, x: i32, y: i32) -> Option<&crate::map::MapNode> {
@@ -379,12 +453,7 @@ pub fn boss_relic(game: &Game, legal: &[Action]) -> Action {
             let Some(id) = game.boss_relics.get(*index).copied() else {
                 continue;
             };
-            let mut r = boss_relic_rank(id);
-            // 99% of winning runs carry an energy boss relic. Until the run
-            // has one, plain energy beats every utility relic.
-            if game.player.energy_master <= 3 && is_energy_boss_relic(id) {
-                r += 40;
-            }
+            let r = boss_relic_score(game, id);
             if r > best_r {
                 best_r = r;
                 best = Some(a);
@@ -599,30 +668,6 @@ fn hexaghost_smith_is_safer_value(game: &Game) -> bool {
 /// thinning and the drawback-free third-category blessings dominate the
 /// small category-0 rewards.
 pub fn neow_choice(game: &Game, legal: &[Action]) -> Action {
-    use crate::game::NeowKind;
-    let rank = |kind: NeowKind| -> i32 {
-        match kind {
-            NeowKind::RemoveTwo => 100,
-            NeowKind::TransformTwo => 85,
-            NeowKind::RareRelic => 80,
-            NeowKind::ThreeRareCards => 75,
-            NeowKind::TwoFiftyGold => 70,
-            NeowKind::RemoveCard => 55,
-            NeowKind::ThreeCards => 50,
-            NeowKind::UpgradeCard => 48,
-            NeowKind::RandomRareCard => 46,
-            NeowKind::RandomCommonRelic => 45,
-            NeowKind::TransformCard => 44,
-            NeowKind::HundredGold => 42,
-            NeowKind::TenHp => 40,
-            NeowKind::RandomColorless2 => 38,
-            NeowKind::ThreePotions => 35,
-            NeowKind::RandomColorless => 30,
-            NeowKind::ThreeEnemyKill => 25,
-            NeowKind::TwentyHp => 60,
-            NeowKind::BossRelic => 20,
-        }
-    };
     let mut best: Option<(&Action, i32)> = None;
     for action in legal {
         let Action::Choose { index, .. } = action else {
@@ -631,13 +676,40 @@ pub fn neow_choice(game: &Game, legal: &[Action]) -> Action {
         let Some(option) = game.neow_options.get(*index) else {
             continue;
         };
-        let value = rank(option.kind);
+        let value = neow_reward_rank(game, option.kind);
         if best.is_none_or(|(_, b)| value > b) {
             best = Some((action, value));
         }
     }
     best.map(|(action, _)| action.clone())
         .unwrap_or_else(|| event_choice(game, legal))
+}
+
+fn neow_reward_rank(game: &Game, kind: crate::game::NeowKind) -> i32 {
+    use crate::game::NeowKind;
+    match kind {
+        NeowKind::RemoveTwo if deckplan::strike_purge_ready(game) => 100,
+        NeowKind::RemoveTwo => 25,
+        NeowKind::TransformTwo => 85,
+        NeowKind::RareRelic => 80,
+        NeowKind::ThreeRareCards => 75,
+        NeowKind::TwoFiftyGold => 70,
+        NeowKind::RemoveCard if deckplan::strike_purge_ready(game) => 55,
+        NeowKind::RemoveCard => 32,
+        NeowKind::ThreeCards => 50,
+        NeowKind::UpgradeCard => 48,
+        NeowKind::RandomRareCard => 46,
+        NeowKind::RandomCommonRelic => 45,
+        NeowKind::TransformCard => 44,
+        NeowKind::HundredGold => 42,
+        NeowKind::TenHp => 40,
+        NeowKind::RandomColorless2 => 38,
+        NeowKind::ThreePotions => 35,
+        NeowKind::RandomColorless => 30,
+        NeowKind::ThreeEnemyKill => 25,
+        NeowKind::TwentyHp => 60,
+        NeowKind::BossRelic => 20,
+    }
 }
 
 pub fn event_choice(game: &Game, legal: &[Action]) -> Action {
@@ -781,7 +853,7 @@ fn falling_event_choice(game: &Game, choices: &[(&Action, EventOption)]) -> Opti
         .filter_map(|(choice_index, deck_index)| {
             let deck_index = usize::try_from(*deck_index).ok()?;
             let card = game.player.deck.get(deck_index)?;
-            Some((choice_index, removal_score(card)))
+            Some((choice_index, removal_score(game, card, false)))
         })
         .max_by_key(|(_, score)| *score)
         .and_then(|(choice_index, _)| action_at_choice_index(choices, choice_index))
@@ -915,7 +987,8 @@ pub fn grid_choice(game: &Game, legal: &[Action]) -> Action {
     let mut best: Option<(usize, i32)> = None;
     for (index, card) in &cards {
         let value = match kind {
-            GridKind::Purge | GridKind::Transform => removal_score(card),
+            GridKind::Purge => removal_score(game, card, false),
+            GridKind::Transform => removal_score(game, card, true),
             GridKind::Upgrade => upgrade_score(card.id) - i32::from(card.upgraded) * 500,
             GridKind::Library | GridKind::Bottle(_) | GridKind::Copy => score_card(game, card),
             GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck => {
@@ -937,12 +1010,18 @@ pub fn grid_choice(game: &Game, legal: &[Action]) -> Action {
 }
 
 /// How much the deck improves when this card leaves it.
-fn removal_score(card: &Card) -> i32 {
+fn removal_score(game: &Game, card: &Card, transforming: bool) -> i32 {
     match card.card_type() {
         CardType::CURSE => 900,
         CardType::STATUS => 800,
         _ => match card.id {
-            CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P => 300,
+            CardId::Strike_R | CardId::Strike_G | CardId::Strike_B | CardId::Strike_P => {
+                if transforming || deckplan::strike_purge_ready(game) {
+                    300
+                } else {
+                    120
+                }
+            }
             CardId::Defend_R | CardId::Defend_G | CardId::Defend_B | CardId::Defend_P => 160,
             id => 100 - defect_pick(id) - i32::from(card.upgraded) * 25,
         },
@@ -1089,19 +1168,10 @@ pub fn score_card(game: &Game, card: &Card) -> i32 {
     let mut s = card_pick(card.id);
     if game.character == Character::Defect {
         s = s.max(defect_pick(card.id));
-        s += deckplan::card_adjustment(game, card);
     }
     let p = params();
     if card.upgraded {
         s += p.upgraded_pick_bonus as i32;
-    }
-
-    let copies = game.player.deck.iter().filter(|c| c.id == card.id).count() as i32;
-    let max_copies = max_copies(card.id);
-    if copies >= max_copies {
-        s -= p.copies_full_penalty as i32;
-    } else if copies == max_copies - 1 {
-        s -= p.copies_near_penalty as i32;
     }
 
     let metrics = deck_metrics(game);
@@ -1156,6 +1226,23 @@ pub fn score_card(game: &Game, card: &Card) -> i32 {
     }
     if act == 1 && game.dungeon.floor >= 11 && card.base_block > 0 && metrics.block_cards < 7 {
         s += p.act1_late_block_bonus as i32;
+    }
+
+    if game.character == Character::Defect {
+        let stable_prior =
+            defect_pick_base(card.id) + i32::from(card.upgraded) * p.upgraded_pick_bonus as i32;
+        s = deckplan::planned_card_score(game, card, s, stable_prior);
+    }
+
+    // Copy and deck-size constraints stay outside the package override.  A
+    // coherent plan still should not acquire its fourth payoff or ignore the
+    // opportunity cost of another late-game draw.
+    let copies = game.player.deck.iter().filter(|c| c.id == card.id).count() as i32;
+    let max_copies = max_copies(card.id);
+    if copies >= max_copies {
+        s -= p.copies_full_penalty as i32;
+    } else if copies == max_copies - 1 {
+        s -= p.copies_near_penalty as i32;
     }
 
     let target_size = match act {
@@ -1416,15 +1503,108 @@ fn upgrade_score(id: CardId) -> i32 {
     }
 }
 
-fn is_energy_boss_relic(id: RelicId) -> bool {
-    matches!(
-        id,
-        RelicId::SlaversCollar
-            | RelicId::Velvet_Choker
-            | RelicId::Cursed_Key
-            | RelicId::Coffee_Dripper
-            | RelicId::Fusion_Hammer
-    )
+fn boss_relic_score(game: &Game, id: RelicId) -> i32 {
+    let mut score = boss_relic_rank(id);
+    if game.player.energy_master <= 3 {
+        // Reliable every-turn energy deserves the full premium. Collar only
+        // helps in elites/bosses, while Choker's sixth-card ceiling makes its
+        // fourth energy conditional for the low-cost Defect decks that most
+        // need it.
+        score += match id {
+            RelicId::Coffee_Dripper | RelicId::Fusion_Hammer | RelicId::Cursed_Key => 40,
+            RelicId::Nuclear_Battery => 38,
+            RelicId::Ectoplasm | RelicId::Philosophers_Stone | RelicId::Sozu => 30,
+            RelicId::Velvet_Choker => 20,
+            RelicId::SlaversCollar => 15,
+            RelicId::Busted_Crown | RelicId::Runic_Dome => 15,
+            _ => 0,
+        };
+    }
+
+    let metrics = deck_metrics(game);
+    match id {
+        RelicId::Velvet_Choker => {
+            let zero_cost = game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card.card_type() != CardType::CURSE && card.cost == 0)
+                .count() as i32;
+            let cheap_cards = game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card.card_type() != CardType::CURSE && (0..=1).contains(&card.cost))
+                .count() as i32;
+            let draw_cards = game
+                .player
+                .deck
+                .iter()
+                .filter(|card| {
+                    matches!(
+                        card.id,
+                        CardId::Compile_Driver
+                            | CardId::Coolheaded
+                            | CardId::Skim
+                            | CardId::Scrape
+                            | CardId::FTL
+                            | CardId::Reboot
+                            | CardId::Seek
+                            | CardId::Sweeping_Beam
+                            | CardId::Machine_Learning
+                            | CardId::Heatsinks
+                    )
+                })
+                .count() as i32;
+            score -= zero_cost * 9 + draw_cards * 7 + (cheap_cards - 8).max(0) * 2;
+        }
+        RelicId::Coffee_Dripper => {
+            let sustain = game
+                .player
+                .deck
+                .iter()
+                .any(|card| card.id == CardId::Self_Repair)
+                || game.player.relics.iter().any(|relic| {
+                    matches!(
+                        relic.id,
+                        RelicId::Blood_Vial
+                            | RelicId::Eternal_Feather
+                            | RelicId::MealTicket
+                            | RelicId::Meat_on_the_Bone
+                            | RelicId::Toy_Ornithopter
+                    )
+                });
+            if !sustain {
+                score -= 28;
+            }
+        }
+        RelicId::Fusion_Hammer => {
+            let premium_upgrades = game
+                .player
+                .deck
+                .iter()
+                .filter(|card| {
+                    !card.upgraded
+                        && matches!(
+                            card.id,
+                            CardId::Defragment
+                                | CardId::Electrodynamics
+                                | CardId::Glacier
+                                | CardId::Buffer
+                                | CardId::Self_Repair
+                                | CardId::Loop
+                                | CardId::Coolheaded
+                        )
+                })
+                .count() as i32;
+            score -= (premium_upgrades * 6).min(24);
+        }
+        RelicId::FrozenCore if metrics.block_cards + metrics.frost_src / 2 < 5 => {
+            score += 18;
+        }
+        _ => {}
+    }
+    score
 }
 
 fn boss_relic_rank(id: RelicId) -> i32 {
@@ -1454,7 +1634,97 @@ fn boss_relic_rank(id: RelicId) -> i32 {
 mod tests {
     use super::*;
     use crate::creature::{Orb, OrbKind};
+    use crate::map::{DungeonMap, MapEdge, MapNode};
     use crate::unlocks::Unlocks;
+    use std::sync::Arc;
+
+    fn route_node(x: i32, y: i32, room: RoomType, edge: Option<(i32, i32)>) -> MapNode {
+        MapNode {
+            x,
+            y,
+            room: Some(room),
+            taken: false,
+            emerald_key: false,
+            edges: edge
+                .into_iter()
+                .map(|(dst_x, dst_y)| MapEdge {
+                    src_x: x,
+                    src_y: y,
+                    dst_x,
+                    dst_y,
+                    taken: false,
+                })
+                .collect(),
+            parents: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn route_lookahead_spends_hp_across_future_combats() {
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.dungeon.act = crate::ids::Act::City;
+        game.player.hp = game.player.max_hp;
+        game.dungeon.map = Arc::new(DungeonMap {
+            nodes: vec![
+                vec![
+                    route_node(0, 0, RoomType::Monster, Some((0, 1))),
+                    route_node(1, 0, RoomType::Event, None),
+                ],
+                vec![route_node(0, 1, RoomType::Monster, Some((0, 2)))],
+                vec![route_node(0, 2, RoomType::Monster, Some((0, 3)))],
+                vec![route_node(0, 3, RoomType::Monster, None)],
+            ],
+        });
+        let combat_chain = Action::Choose {
+            index: 0,
+            x: Some(0),
+            y: Some(0),
+            room: Some(RoomType::Monster),
+        };
+        let event = Action::Choose {
+            index: 1,
+            x: Some(1),
+            y: Some(0),
+            room: Some(RoomType::Event),
+        };
+
+        // Four combats have slightly more static room value than one event,
+        // but are not a survivable route for the starter deck once their HP
+        // costs are propagated.
+        assert_eq!(map_choice(&game, &[combat_chain, event.clone()]), event);
+    }
+
+    #[test]
+    fn fast_defect_deck_prefers_nuclear_battery_to_velvet_choker() {
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        for id in [
+            CardId::Go_for_the_Eyes,
+            CardId::Beam_Cell,
+            CardId::FTL,
+            CardId::Compile_Driver,
+            CardId::Coolheaded,
+            CardId::Skim,
+        ] {
+            game.player.deck.push(Card::new(id));
+        }
+        game.boss_relics = vec![RelicId::Velvet_Choker, RelicId::Nuclear_Battery];
+        let legal = [
+            Action::Choose {
+                index: 0,
+                x: None,
+                y: None,
+                room: None,
+            },
+            Action::Choose {
+                index: 1,
+                x: None,
+                y: None,
+                room: None,
+            },
+        ];
+
+        assert_eq!(boss_relic(&game, &legal), legal[1]);
+    }
 
     #[test]
     fn elite_matchups_reflect_deck_shape() {
@@ -1495,6 +1765,51 @@ mod tests {
         let claw_without_payoff = score_card(&game, &Card::new(CardId::Gash));
         game.player.deck.push(Card::new(CardId::All_For_One));
         assert!(score_card(&game, &Card::new(CardId::Gash)) > claw_without_payoff);
+    }
+
+    #[test]
+    fn act_one_purge_stops_at_two_strikes_until_damage_is_replaced() {
+        use crate::game::NeowKind;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        let strike = Card::new(CardId::Strike_B);
+        let defend = Card::new(CardId::Defend_B);
+
+        assert!(removal_score(&game, &strike, false) > removal_score(&game, &defend, false));
+        assert!(removal_score(&game, &strike, true) > removal_score(&game, &defend, true));
+        assert!(
+            neow_reward_rank(&game, NeowKind::RemoveTwo)
+                > neow_reward_rank(&game, NeowKind::ThreeCards)
+        );
+
+        let mut removed = 0;
+        game.player.deck.retain(|card| {
+            if card.id == CardId::Strike_B && removed < 2 {
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        assert!(removal_score(&game, &strike, false) < removal_score(&game, &defend, false));
+        assert!(
+            neow_reward_rank(&game, NeowKind::RemoveTwo)
+                < neow_reward_rank(&game, NeowKind::ThreeCards)
+        );
+
+        for id in [
+            CardId::Cold_Snap,
+            CardId::Ball_Lightning,
+            CardId::Sweeping_Beam,
+            CardId::Doom_and_Gloom,
+        ] {
+            game.player.deck.push(Card::new(id));
+        }
+        assert!(removal_score(&game, &strike, false) > removal_score(&game, &defend, false));
+        assert!(
+            neow_reward_rank(&game, NeowKind::RemoveTwo)
+                > neow_reward_rank(&game, NeowKind::ThreeCards)
+        );
     }
 
     #[test]
@@ -1793,6 +2108,7 @@ mod tests {
             &[EventOption::Land, EventOption::Channel, EventOption::Strike],
             vec![defend, -1, strike],
         );
+        // Falling is an Act 3 event, where a basic Strike is the preferred loss.
         assert_eq!(chosen_option(&game), EventOption::Strike);
 
         let actions = [

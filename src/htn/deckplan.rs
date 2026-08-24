@@ -9,10 +9,22 @@ enum DeckTask {
     EstablishOrbCore,
     ConvertFrost,
     ConvertLightning,
+    ConvertDark,
     ScalePowers,
     ExploitZeroCost,
     FundExpensiveCards,
     PrepareForBoss,
+}
+
+/// Mutually exclusive scaling packages.  A reward can contribute to several
+/// low-level tasks, but prior correction should follow one coherent plan
+/// instead of adding every plausible archetype together.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeckPackage {
+    OrbFocus,
+    Dark,
+    Powers,
+    ZeroCost,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -40,6 +52,13 @@ struct DeckProfile {
     claw: i32,
     thunder_strike: i32,
     power_payoffs: i32,
+    loop_cards: i32,
+    recursion: i32,
+    multi_cast: i32,
+    hologram: i32,
+    seek: i32,
+    echo_form: i32,
+    creative_ai: i32,
 }
 
 impl DeckProfile {
@@ -87,6 +106,14 @@ impl DeckProfile {
             CardId::Gash => self.claw += 1,
             CardId::Thunder_Strike => self.thunder_strike += 1,
             CardId::Heatsinks | CardId::Storm | CardId::Force_Field => self.power_payoffs += 1,
+            CardId::Loop => self.loop_cards += 1,
+            // Slay the Spire's internal id for Recursion is "Redo".
+            CardId::Redo => self.recursion += 1,
+            CardId::Multi_Cast => self.multi_cast += 1,
+            CardId::Hologram => self.hologram += 1,
+            CardId::Seek => self.seek += 1,
+            CardId::Echo_Form => self.echo_form += 1,
+            CardId::Creative_AI => self.creative_ai += 1,
             _ => {}
         }
     }
@@ -114,6 +141,11 @@ impl<'a> DeckPlan<'a> {
         if p.lightning > 0 || p.thunder_strike > 0 {
             tasks.push(DeckTask::ConvertLightning);
         }
+        if self.game.dungeon.act != Act::Exordium
+            && matches!(self.primary_package(), Some(DeckPackage::Dark))
+        {
+            tasks.push(DeckTask::ConvertDark);
+        }
         if p.powers >= 2
             || p.power_payoffs > 0
             || self.has(RelicId::Mummified_Hand)
@@ -136,7 +168,10 @@ impl<'a> DeckPlan<'a> {
         {
             tasks.push(DeckTask::FundExpensiveCards);
         }
-        if matches!(self.game.dungeon.act, Act::Exordium | Act::City) {
+        if matches!(
+            self.game.dungeon.act,
+            Act::Exordium | Act::City | Act::Beyond
+        ) {
             tasks.push(DeckTask::PrepareForBoss);
         }
         tasks
@@ -148,6 +183,131 @@ impl<'a> DeckPlan<'a> {
             value += self.task_card_value(task, card);
         }
         value + self.relic_card_value(card)
+    }
+
+    /// Make the deck plan authoritative only when the deck supplies evidence
+    /// for it. `contextual_score` contains the learned prior and immediate
+    /// deck-need bonuses; `stable_prior` is the conservative static value used
+    /// solely for cards that complete the committed package.
+    fn planned_card_score(&self, card: &Card, contextual_score: i32, stable_prior: i32) -> i32 {
+        let adjustment = self.card_adjustment(card);
+        let mut score = contextual_score + adjustment;
+
+        // Act 1 is primarily a tempo test.  Do not let a speculative package
+        // suppress the attacks needed to reach the first boss.
+        if self.game.dungeon.act == Act::Exordium {
+            return score;
+        }
+
+        let commitment = self.primary_package();
+        let package_bonus =
+            commitment.and_then(|package| self.package_completion_bonus(package, card.id));
+
+        if let Some(bonus) = package_bonus {
+            score = score.max(stable_prior + adjustment + bonus);
+        }
+        score
+    }
+
+    fn primary_package(&self) -> Option<DeckPackage> {
+        let p = self.profile;
+        let orb_relics = i32::from(self.has(RelicId::DataDisk))
+            + self.orb_slot_relics()
+            + i32::from(self.has(RelicId::FrozenCore));
+        let dark_relics =
+            i32::from(self.has(RelicId::Cables)) + i32::from(self.has(RelicId::Symbiotic_Virus));
+        let power_relics = i32::from(self.has(RelicId::Mummified_Hand))
+            + i32::from(self.has(RelicId::Bird_Faced_Urn))
+            + i32::from(self.has(RelicId::OrangePellets));
+
+        let candidates = [
+            (
+                DeckPackage::OrbFocus,
+                p.channel + 3 * p.frost + 2 * p.lightning + 5 * p.focus + 3 * orb_relics,
+            ),
+            (
+                DeckPackage::Dark,
+                8 * p.dark
+                    + 5 * (p.loop_cards + p.recursion + p.multi_cast)
+                    + 2 * (p.hologram + p.seek)
+                    + 5 * dark_relics,
+            ),
+            (
+                DeckPackage::Powers,
+                2 * p.powers
+                    + 5 * p.power_payoffs
+                    + 4 * (p.echo_form + p.creative_ai)
+                    + 6 * power_relics,
+            ),
+            (
+                DeckPackage::ZeroCost,
+                3 * p.zero_cost
+                    + 8 * (p.all_for_one + p.scrape)
+                    + 4 * p.claw
+                    + 3 * self.attack_chain_relics(),
+            ),
+        ];
+        let (package, strength) = candidates
+            .into_iter()
+            .max_by_key(|(_, strength)| *strength)?;
+        (strength >= 8).then_some(package)
+    }
+
+    fn package_completion_bonus(&self, package: DeckPackage, id: CardId) -> Option<i32> {
+        let p = self.profile;
+        match package {
+            DeckPackage::OrbFocus => match id {
+                CardId::Defragment | CardId::Biased_Cognition if p.focus == 0 && p.channel >= 3 => {
+                    Some(45)
+                }
+                CardId::Glacier | CardId::Coolheaded | CardId::Cold_Snap | CardId::Chill
+                    if p.focus > 0 && p.frost < 2 =>
+                {
+                    Some(25)
+                }
+                CardId::Capacitor
+                    if p.focus > 0
+                        && p.channel >= 5
+                        && p.orb_slots + self.orb_slot_relics() == 0 =>
+                {
+                    Some(35)
+                }
+                CardId::Consume if p.focus == 0 && p.orb_slots + self.orb_slot_relics() > 0 => {
+                    Some(55)
+                }
+                _ => None,
+            },
+            DeckPackage::Dark => match id {
+                CardId::Darkness | CardId::Doom_and_Gloom | CardId::Rainbow if p.dark == 0 => {
+                    Some(80)
+                }
+                CardId::Multi_Cast if p.dark > 0 && p.multi_cast + p.recursion == 0 => Some(140),
+                CardId::Redo if p.dark > 0 && p.multi_cast + p.recursion == 0 => Some(105),
+                _ => None,
+            },
+            DeckPackage::Powers => match id {
+                CardId::Heatsinks | CardId::Storm | CardId::Force_Field
+                    if p.powers >= 3 && p.power_payoffs == 0 =>
+                {
+                    Some(195)
+                }
+                CardId::Creative_AI if p.power_payoffs > 0 && p.creative_ai + p.echo_form == 0 => {
+                    Some(130)
+                }
+                CardId::Echo_Form if p.power_payoffs > 0 && p.echo_form == 0 => Some(55),
+                _ => None,
+            },
+            DeckPackage::ZeroCost => match id {
+                CardId::All_For_One if p.zero_cost >= 3 && p.all_for_one + p.scrape == 0 => {
+                    Some(155)
+                }
+                CardId::Scrape if p.zero_cost >= 3 && p.all_for_one + p.scrape == 0 => Some(65),
+                CardId::Gash if p.all_for_one + p.scrape > 0 && p.claw < 3 => {
+                    Some(25 + 35 * (p.all_for_one + p.scrape).min(2))
+                }
+                _ => None,
+            },
+        }
     }
 
     fn task_card_value(&self, task: DeckTask, card: &Card) -> i32 {
@@ -183,6 +343,18 @@ impl<'a> DeckPlan<'a> {
                     20 * p.lightning.min(6)
                 } else if card.id == CardId::Electrodynamics {
                     6 * p.lightning.min(5)
+                } else {
+                    0
+                }
+            }
+            DeckTask::ConvertDark => {
+                let release = p.recursion + p.multi_cast;
+                if is_dark_source(card.id) && p.dark == 0 && release > 0 {
+                    30 * release.min(2)
+                } else if card.id == CardId::Multi_Cast && p.dark > 0 && release == 0 {
+                    45 * p.dark.min(3)
+                } else if card.id == CardId::Redo && p.dark > 0 && release == 0 {
+                    35 * p.dark.min(3)
                 } else {
                     0
                 }
@@ -293,6 +465,40 @@ impl<'a> DeckPlan<'a> {
                 CardId::Biased_Cognition => 20,
                 _ => 0,
             },
+            EncounterId::TimeEater => match id {
+                // Prefer cards that compress a turn's output into a few plays
+                // and preserve answers across the twelve-card boundary.
+                CardId::Echo_Form => 10,
+                CardId::Glacier | CardId::Buffer => 8,
+                CardId::Reinforced_Body => 8,
+                CardId::Doom_and_Gloom | CardId::Darkness => 6,
+                CardId::Hologram => 5,
+                CardId::Defragment => 5,
+                _ => 0,
+            },
+            EncounterId::AwakenedOne => match id {
+                // Non-Power scaling can be established in phase one without
+                // permanently increasing every remaining multi-hit attack.
+                CardId::Doom_and_Gloom | CardId::Darkness => 10,
+                CardId::Glacier => 8,
+                CardId::Reinforced_Body => 8,
+                CardId::Core_Surge | CardId::Genetic_Algorithm => 6,
+                CardId::Buffer => 5,
+                CardId::Creative_AI | CardId::Storm | CardId::Machine_Learning => -5,
+                _ => 0,
+            },
+            EncounterId::DonuAndDeca => match id {
+                // Focused banks remove Donu before repeated Strength buffs;
+                // efficient two-target output and durable block then handle
+                // Deca's Dazed/block cycle.
+                CardId::Doom_and_Gloom | CardId::Darkness => 55,
+                CardId::Electrodynamics => 50,
+                CardId::Glacier => 45,
+                CardId::Reinforced_Body | CardId::Buffer => 35,
+                CardId::Sunder => 30,
+                CardId::Defragment => 25,
+                _ => 0,
+            },
             _ => 0,
         }
     }
@@ -386,6 +592,18 @@ pub fn card_adjustment(game: &Game, card: &Card) -> i32 {
     DeckPlan::new(game).card_adjustment(card)
 }
 
+/// Resolve the learned reward score through the currently committed deck
+/// package.  The stable prior is not a global floor: it is considered only
+/// when this exact card fills a missing role in the selected package.
+pub fn planned_card_score(
+    game: &Game,
+    card: &Card,
+    contextual_score: i32,
+    stable_prior: i32,
+) -> i32 {
+    DeckPlan::new(game).planned_card_score(card, contextual_score, stable_prior)
+}
+
 pub fn shop_relic_value(game: &Game, id: RelicId) -> i32 {
     let plan = DeckPlan::new(game);
     let p = plan.profile;
@@ -436,11 +654,24 @@ pub fn shop_purge_value(game: &Game) -> i32 {
     let replacement_attacks = (p.attacks - p.strikes).max(0);
     let engine_ready = p.channel >= 4 && (p.focus > 0 || p.powers >= 3);
     130 + 12 * p.strikes + 8 * replacement_attacks.min(6) + if engine_ready { 30 } else { 0 }
-        - if game.dungeon.act as i32 == 1 && replacement_attacks < 4 {
-            45
-        } else {
-            0
-        }
+        - if !strike_purge_ready(game) { 45 } else { 0 }
+}
+
+/// Whether removing a basic Strike no longer leaves the Act 1 deck without a
+/// reliable damage floor. Later acts may purge normally; before the first boss
+/// retain at least two Strikes until replacement attacks or a real orb engine
+/// exist.
+pub(crate) fn strike_purge_ready(game: &Game) -> bool {
+    let p = DeckProfile::from_game(game);
+    if p.strikes == 0 || game.dungeon.act != Act::Exordium {
+        return true;
+    }
+    if p.strikes > 2 {
+        return true;
+    }
+    let replacement_attacks = (p.attacks - p.strikes).max(0);
+    let engine_ready = p.channel >= 4 && (p.focus > 0 || p.powers >= 3);
+    replacement_attacks >= 4 || engine_ready
 }
 
 fn is_channel(id: CardId) -> bool {
@@ -573,18 +804,129 @@ mod tests {
     }
 
     #[test]
+    fn act_one_keeps_learned_tempo_authoritative() {
+        let game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        let hologram = Card::new(CardId::Hologram);
+        let learned = 2;
+        assert_eq!(
+            planned_card_score(&game, &hologram, learned, 60),
+            learned + card_adjustment(&game, &hologram)
+        );
+    }
+
+    #[test]
+    fn dark_commitment_can_override_a_bad_operator_prior() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        game.player.deck.push(Card::new(CardId::Doom_and_Gloom));
+        game.player.deck.push(Card::new(CardId::Loop));
+
+        let multi_cast = Card::new(CardId::Multi_Cast);
+        let filler = Card::new(CardId::Go_for_the_Eyes);
+        assert!(
+            planned_card_score(&game, &multi_cast, 0, 40)
+                > planned_card_score(&game, &filler, 211, 115)
+        );
+    }
+
+    #[test]
+    fn orb_commitment_recovers_its_missing_focus_without_a_global_floor() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        game.player.deck.push(Card::new(CardId::Cold_Snap));
+        game.player.deck.push(Card::new(CardId::Coolheaded));
+        game.player.deck.push(Card::new(CardId::Glacier));
+
+        let focus = Card::new(CardId::Biased_Cognition);
+        let filler = Card::new(CardId::Go_for_the_Eyes);
+        assert!(
+            planned_card_score(&game, &focus, 0, 150)
+                > planned_card_score(&game, &filler, 211, 115)
+        );
+    }
+
+    #[test]
+    fn completed_orb_role_does_not_create_a_global_floor() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        for id in [
+            CardId::Cold_Snap,
+            CardId::Coolheaded,
+            CardId::Glacier,
+            CardId::Defragment,
+        ] {
+            game.player.deck.push(Card::new(id));
+        }
+
+        let focus = Card::new(CardId::Biased_Cognition);
+        assert_eq!(
+            planned_card_score(&game, &focus, 0, 150),
+            card_adjustment(&game, &focus)
+        );
+    }
+
+    #[test]
+    fn power_commitment_recovers_its_missing_payoff() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        for id in [
+            CardId::Machine_Learning,
+            CardId::Buffer,
+            CardId::Static_Discharge,
+            CardId::Capacitor,
+        ] {
+            game.player.deck.push(Card::new(id));
+        }
+
+        let payoff = Card::new(CardId::Heatsinks);
+        let filler = Card::new(CardId::Go_for_the_Eyes);
+        assert!(
+            planned_card_score(&game, &payoff, 0, 90)
+                > planned_card_score(&game, &filler, 211, 115)
+        );
+    }
+
+    #[test]
+    fn zero_cost_commitment_recovers_all_for_one() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        for id in [CardId::Beam_Cell, CardId::FTL, CardId::Gash] {
+            game.player.deck.push(Card::new(id));
+        }
+
+        let payoff = Card::new(CardId::All_For_One);
+        let filler = Card::new(CardId::Go_for_the_Eyes);
+        assert!(
+            planned_card_score(&game, &payoff, 0, 100)
+                > planned_card_score(&game, &filler, 211, 115)
+        );
+    }
+
+    #[test]
     fn strike_purge_waits_until_replacement_damage_and_engine_exist() {
         use crate::ids::Act;
 
         let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
         let early = shop_purge_value(&game);
-        game.dungeon.act = Act::City;
+        assert!(strike_purge_ready(&game));
+        let mut removed = 0;
+        game.player.deck.retain(|card| {
+            if card.id == CardId::Strike_B && removed < 2 {
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        assert!(!strike_purge_ready(&game));
         game.player.deck.push(Card::new(CardId::Cold_Snap));
         game.player.deck.push(Card::new(CardId::Ball_Lightning));
         game.player.deck.push(Card::new(CardId::Sweeping_Beam));
         game.player.deck.push(Card::new(CardId::Doom_and_Gloom));
         game.player.deck.push(Card::new(CardId::Defragment));
-        assert!(shop_purge_value(&game) > early + 80);
+        assert!(strike_purge_ready(&game));
+        game.dungeon.act = Act::City;
+        assert!(shop_purge_value(&game) > early);
     }
 
     #[test]
@@ -607,5 +949,23 @@ mod tests {
         let slime = card_adjustment(&game, &glacier);
         game.dungeon.boss = EncounterId::TheGuardian;
         assert!(card_adjustment(&game, &glacier) >= slime + 60);
+    }
+
+    #[test]
+    fn known_act_three_boss_changes_the_acquisition_task() {
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.dungeon.act = Act::Beyond;
+
+        let electrodynamics = Card::new(CardId::Electrodynamics);
+        game.dungeon.boss = EncounterId::AwakenedOne;
+        let awakened = card_adjustment(&game, &electrodynamics);
+        game.dungeon.boss = EncounterId::DonuAndDeca;
+        assert!(card_adjustment(&game, &electrodynamics) >= awakened + 50);
+
+        let creative_ai = Card::new(CardId::Creative_AI);
+        game.dungeon.boss = EncounterId::TimeEater;
+        let time_eater = card_adjustment(&game, &creative_ai);
+        game.dungeon.boss = EncounterId::AwakenedOne;
+        assert!(card_adjustment(&game, &creative_ai) <= time_eater - 5);
     }
 }

@@ -173,9 +173,40 @@ fn evaluated_after_end(
     if after.player.hp <= 0 {
         stats.score_evaluations += 1;
         doomed_score(context, after, projected_hp)
+    } else if let Some(reset_score) = evaluated_time_warp_reset(context, after, stats) {
+        reset_score
     } else {
         evaluated_score(context, after, stats)
     }
+}
+
+/// An EndTurn that preserves Time Eater's counter at eleven does not expose a
+/// normal next hand: the first card played will grant Strength and immediately
+/// run the enemy turn. Score that forced one-card turn exactly instead of
+/// crediting the whole hand through the ordinary continuation heuristics.
+fn evaluated_time_warp_reset(
+    context: &EvaluationContext<'_>,
+    after: &Game,
+    stats: &mut SearchStats,
+) -> Option<f32> {
+    let time_eater = after.combat.as_ref()?.monsters.iter().find(|monster| {
+        monster.id == MonsterId::TimeEater && monster.alive() && monster.extra == 11
+    })?;
+    debug_assert_eq!(time_eater.extra, 11);
+
+    let mut best: Option<f32> = None;
+    for action in after
+        .legal_actions()
+        .into_iter()
+        .filter(|action| matches!(action, Action::Play { .. }))
+    {
+        let mut reset = after.clone();
+        simulated_step(&mut reset, &action, stats);
+        resolve_grid_selects(&mut reset, stats);
+        let score = evaluated_score(context, &reset, stats);
+        best = Some(best.map_or(score, |current| current.max(score)));
+    }
+    best
 }
 
 /// Pick the combat command with one shared search over the rest of the turn.
@@ -213,12 +244,19 @@ pub fn plan_turn_with_stats(game: &Game, legal: &[Action]) -> (Action, SearchSta
     if let Some(lethal) = exact_attack_lethal(game, legal, &checkpoint, &mut scratch, &mut stats) {
         return (lethal, stats);
     }
+    if let Some(lethal) =
+        exact_mixed_turn_lethal(game, legal, &checkpoint, &mut scratch, &mut stats)
+    {
+        return (lethal, stats);
+    }
     let action = searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats)
         .unwrap_or_else(|| plays[0].clone());
     (action, stats)
 }
 
 const EXACT_LETHAL_NODE_BUDGET: usize = 20_000;
+const EXACT_MIXED_LETHAL_NODE_BUDGET: usize = 2_000;
+const EXACT_MIXED_LETHAL_EHP_CAP: i32 = 48;
 
 /// Find a proven same-turn kill before the bounded heuristic beam runs.
 ///
@@ -282,6 +320,111 @@ fn exact_attack_lethal(
             scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
             simulated_step(scratch, &action, stats);
             resolve_grid_selects(scratch, stats);
+            if combat_won(scratch) {
+                return Some(first);
+            }
+            if same_combat_turn(scratch, turn) {
+                match seen.insert(scratch.combat_search_state()) {
+                    Ok(index) => queue.push_back((index, first.clone())),
+                    Err(_) => stats.dedup_hits += 1,
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find kills that need a Skill/Power setup or the exact end-of-turn orb
+/// sequence. The wider action set is reserved for short kill windows so the
+/// ordinary per-decision search budget remains stable.
+fn exact_mixed_turn_lethal(
+    game: &Game,
+    legal: &[Action],
+    checkpoint: &CombatSearchCheckpoint,
+    scratch: &mut Game,
+    stats: &mut SearchStats,
+) -> Option<Action> {
+    if living_enemy_ehp(game) > EXACT_MIXED_LETHAL_EHP_CAP {
+        return None;
+    }
+    let root = checkpoint.root();
+    let turn = game.combat.as_ref()?.turn;
+
+    if let Some(end) = legal
+        .iter()
+        .find(|action| matches!(action, Action::EndTurn))
+    {
+        scratch.restore_combat_search_state(checkpoint, root);
+        simulated_step(scratch, end, stats);
+        stats.lethal_expansions += 1;
+        if combat_won(scratch) {
+            return Some(end.clone());
+        }
+    }
+
+    let mut queue = VecDeque::new();
+    let mut seen = ExactStateSet::with_capacity(EXACT_MIXED_LETHAL_NODE_BUDGET.min(1024));
+    seen.insert(root.clone())
+        .expect("an empty mixed-lethal arena accepts its root");
+    let mut expanded = 0usize;
+    for first in legal
+        .iter()
+        .filter(|action| matches!(action, Action::Play { .. }))
+    {
+        if expanded >= EXACT_MIXED_LETHAL_NODE_BUDGET {
+            break;
+        }
+        expanded += 1;
+        stats.lethal_expansions += 1;
+        scratch.restore_combat_search_state(checkpoint, root);
+        let status_baseline = StatusPlayBaseline::capture(scratch, first);
+        simulated_step(scratch, first, stats);
+        resolve_grid_selects(scratch, stats);
+        if status_baseline.is_non_progressing(scratch) {
+            continue;
+        }
+        if combat_won(scratch) {
+            return Some(first.clone());
+        }
+        if same_combat_turn(scratch, turn) {
+            match seen.insert(scratch.combat_search_state()) {
+                Ok(index) => queue.push_back((index, first.clone())),
+                Err(_) => stats.dedup_hits += 1,
+            }
+        }
+    }
+
+    while let Some((state_index, first)) = queue.pop_front() {
+        scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+        let actions = scratch.legal_actions();
+        if let Some(end) = actions
+            .iter()
+            .find(|action| matches!(action, Action::EndTurn))
+        {
+            scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+            simulated_step(scratch, end, stats);
+            expanded += 1;
+            stats.lethal_expansions += 1;
+            if combat_won(scratch) {
+                return Some(first);
+            }
+        }
+        for action in actions
+            .iter()
+            .filter(|action| matches!(action, Action::Play { .. }))
+        {
+            if expanded >= EXACT_MIXED_LETHAL_NODE_BUDGET {
+                return None;
+            }
+            expanded += 1;
+            stats.lethal_expansions += 1;
+            scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+            let status_baseline = StatusPlayBaseline::capture(scratch, action);
+            simulated_step(scratch, action, stats);
+            resolve_grid_selects(scratch, stats);
+            if status_baseline.is_non_progressing(scratch) {
+                continue;
+            }
             if combat_won(scratch) {
                 return Some(first);
             }
@@ -722,7 +865,7 @@ fn setup_play_value(game: &Game, action: &Action) -> f32 {
 /// Setup value belongs to the reached state, not the route used to reach it.
 fn setup_state_value(context: &EvaluationContext<'_>, after: &Game) -> f32 {
     let before = context.before;
-    let turns_left = context.turns_left;
+    let turns_left = remaining_fight_length(after);
     let damage_weight = context.damage_weight;
     let p = params();
     let hp_frac = after.player.hp as f32 / after.player.max_hp.max(1) as f32;
@@ -932,6 +1075,8 @@ fn score_state(before: &Game, after: &Game) -> f32 {
 
 fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f32 {
     let before = context.before;
+    let turn_advanced =
+        before.combat.as_ref().map(|c| c.turn) != after.combat.as_ref().map(|c| c.turn);
     if after.player.hp <= 0 {
         return doomed_score(context, after, 0);
     }
@@ -950,6 +1095,7 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
     let mut dealt = 0.0;
     let mut stripped_block = 0.0;
     let mut dead = 0;
+    let mut phase_transitions = 0;
     let mut laga_wake_penalty = 0.0;
     if let (Some(before_combat), Some(after_combat)) = (&before.combat, &after.combat) {
         for (index, monster) in before_combat.monsters.iter().enumerate() {
@@ -958,25 +1104,37 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
             }
             let hp_after = after_combat.monsters.get(index).map_or(0, |m| m.hp.max(0));
             let hp_damage = (monster.hp - hp_after).max(0);
-            dealt += hp_damage as f32 * target_priority(monster.id);
+            let priority = encounter_target_priority(&before_combat.monsters, index);
+            dealt += hp_damage as f32 * priority;
             if monster.id == MonsterId::Lagavulin && monster.extra < 3 && hp_after > 0 {
                 if let Some(monster_after) = after_combat.monsters.get(index) {
                     let woke_early = monster_after.extra >= 3 && hp_damage > 0;
                     let kill_is_close = hp_damage > 0
                         && hp_after as f32 / hp_damage as f32 <= p.laga_wake_kill_ratio;
-                    if woke_early && !kill_is_close {
+                    let passive_wake_is_inevitable =
+                        lagavulin_passive_wake_is_inevitable(&before.player, monster);
+                    if woke_early && turn_advanced && !kill_is_close && !passive_wake_is_inevitable
+                    {
                         laga_wake_penalty += p.laga_wake_penalty;
                     }
                 }
             }
             if monster.power_amount(PowerId::Barricade) > 0 && monster.block >= monster.hp.max(1) {
                 if let Some(monster_after) = after_combat.monsters.get(index) {
-                    stripped_block += (monster.block - monster_after.block).max(0) as f32
-                        * target_priority(monster.id);
+                    stripped_block +=
+                        (monster.block - monster_after.block).max(0) as f32 * priority;
                 }
             }
             if hp_after <= 0 {
-                dead += 1;
+                if after_combat
+                    .monsters
+                    .get(index)
+                    .is_some_and(|monster_after| monster_after.half_dead)
+                {
+                    phase_transitions += 1;
+                } else {
+                    dead += 1;
+                }
             }
         }
     }
@@ -985,8 +1143,6 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
         .map(|monster| projected_incoming(&after.player, monster))
         .sum();
 
-    let turn_advanced =
-        before.combat.as_ref().map(|c| c.turn) != after.combat.as_ref().map(|c| c.turn);
     let scripted = if !turn_advanced && p.spike_danger > 0.0 {
         let horizon = p.spike_horizon.round().clamp(1.0, 3.0) as i32;
         living
@@ -1022,12 +1178,17 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
     let mut value = dealt * damage_weight;
     value += stripped_block * damage_weight * p.strip_block_mult;
     value += dead as f32 * p.kill_bonus;
+    // Reaching a rebirth is still a full phase milestone. Its imminent phase
+    // two attack is priced separately by encounter_deadline_pressure.
+    value += phase_transitions as f32 * p.kill_bonus;
     value -= laga_wake_penalty;
     value -= unblocked * danger;
     if scripted > 0 {
         let bank = persistent_block_bank(after);
         value -= (scripted - bank).max(0) as f32 * p.spike_danger;
     }
+    value -= encounter_deadline_pressure(after);
+    value -= collector_debuff_pressure(after);
     if !turn_advanced {
         // Do not tax setup cards merely because their immediate block exceeds
         // a quiet intent when a larger deterministic attack is imminent.
@@ -1050,34 +1211,42 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
         value += next_hand_orb_value(after, damage_weight);
     }
 
+    let persistent_horizon = remaining_fight_length(after);
     let strength = after.player.power_amount(PowerId::Strength)
         - before.player.power_amount(PowerId::Strength);
     let dexterity = after.player.power_amount(PowerId::Dexterity)
         - before.player.power_amount(PowerId::Dexterity);
     let focus =
         after.player.power_amount(PowerId::Focus) - before.player.power_amount(PowerId::Focus);
-    value += strength as f32 * p.strength_weight * turns_left;
-    value += dexterity as f32 * p.dexterity_weight * turns_left;
-    value += focus as f32 * p.focus_weight * turns_left;
+    value += strength as f32 * p.strength_weight * persistent_horizon;
+    value += dexterity as f32 * p.dexterity_weight * persistent_horizon;
+    value += focus as f32 * p.focus_weight * persistent_horizon;
     if let (Some(before_combat), Some(after_combat)) = (&before.combat, &after.combat) {
-        let enemy_strength_gain: i32 = after_combat
+        let enemy_strength_cost: f32 = after_combat
             .monsters
             .iter()
             .enumerate()
             .map(|(index, monster)| {
-                let old = before_combat
-                    .monsters
-                    .get(index)
-                    .map_or(0, |old| old.power_amount(PowerId::Strength));
-                (monster.power_amount(PowerId::Strength) - old).max(0)
+                let Some(old) = before_combat.monsters.get(index) else {
+                    return 0.0;
+                };
+                let gain = (monster.power_amount(PowerId::Strength)
+                    - old.power_amount(PowerId::Strength))
+                .max(0) as f32;
+                // Curiosity Strength acquired in phase one survives the
+                // rebirth. In phase two a Power creates no Strength delta, so
+                // delaying the same card naturally avoids this lifetime tax.
+                let exposure = persistent_horizon;
+                gain * exposure
             })
             .sum();
-        value -= enemy_strength_gain as f32 * p.enemy_strength_penalty * turns_left;
+        value -= enemy_strength_cost * p.enemy_strength_penalty;
     }
     let status_gain = (status_card_count(&after.player) - status_card_count(&before.player)).max(0);
     value -= status_gain as f32 * p.status_gain_penalty;
     let focus_decay = after.player.power_amount(PowerId::Bias).max(0) as f32;
-    value -= focus_decay * p.bias_decay_weight * (turns_left * (turns_left + 1.0) / 2.0);
+    value -=
+        focus_decay * p.bias_decay_weight * (persistent_horizon * (persistent_horizon + 1.0) / 2.0);
     value += orb_value(after, turns_left, damage_weight) - context.before_orb_value;
     value += after.player.energy as f32 * p.energy_value;
     value
@@ -1149,6 +1318,32 @@ fn scripted_incoming(player: &Player, monster: &Monster, horizon: i32) -> i32 {
             1,
             4,
         ),
+        // Crossing half HP schedules Anger and then Execute. Once Anger is
+        // the current intent, Execute is the very next monster action.
+        MonsterId::Champ if !monster.split_triggered && monster.hp < monster.max_hp / 2 => (
+            2,
+            10,
+            2,
+            if monster.ascension >= 19 {
+                12
+            } else if monster.ascension >= 4 {
+                9
+            } else {
+                6
+            },
+        ),
+        MonsterId::Champ if monster.split_triggered && monster.next_move == 7 => (
+            1,
+            10,
+            2,
+            if monster.ascension >= 19 {
+                12
+            } else if monster.ascension >= 4 {
+                9
+            } else {
+                6
+            },
+        ),
         MonsterId::GiantHead if monster.extra <= 2 => {
             let start = if monster.ascension >= 3 { 40 } else { 30 };
             if monster.extra >= 1 {
@@ -1159,6 +1354,20 @@ fn scripted_incoming(player: &Player, monster: &Monster, horizon: i32) -> i32 {
         }
         MonsterId::AwakenedOne if monster.half_dead || monster.next_move == 3 => {
             (1, 40, 1, 0) // Rebirth -> Dark Echo
+        }
+        // Both shapes alternate deterministically. Donu's intervening buff
+        // adds three Strength to the next two-hit attack from either shape.
+        MonsterId::Donu if monster.next_move == 2 => {
+            (1, if monster.ascension >= 4 { 12 } else { 10 }, 2, 3)
+        }
+        MonsterId::Donu if monster.next_move == 0 => {
+            (2, if monster.ascension >= 4 { 12 } else { 10 }, 2, 3)
+        }
+        MonsterId::Deca if monster.next_move == 2 => {
+            (1, if monster.ascension >= 4 { 12 } else { 10 }, 2, 0)
+        }
+        MonsterId::Deca if monster.next_move == 0 => {
+            (2, if monster.ascension >= 4 { 12 } else { 10 }, 2, 3)
         }
         MonsterId::CorruptHeart => match monster.next_move {
             3 | 1 => (1, 40, 1, 0), // Debilitate/Blood Shots -> Echo
@@ -1180,6 +1389,64 @@ fn scripted_incoming(player: &Player, monster: &Monster, horizon: i32) -> i32 {
     } else {
         projected_attack(player, monster, base, hits, future_strength)
     }
+}
+
+/// Cost of entering Collector's scripted Weak/Vulnerable/Frail window without
+/// an answer. Each Artifact charge blocks one of the three applications;
+/// Orange Pellets makes the position recoverable when all three card types
+/// remain available.
+fn collector_debuff_pressure(game: &Game) -> f32 {
+    let Some(combat) = &game.combat else {
+        return 0.0;
+    };
+    let Some(collector) = combat
+        .monsters
+        .iter()
+        .find(|monster| monster.alive() && monster.id == MonsterId::TheCollector)
+    else {
+        return 0.0;
+    };
+    if collector.split_triggered {
+        return 0.0;
+    }
+    let imminent = collector.next_move == 4 || collector.extra == 2;
+    if !imminent {
+        return 0.0;
+    }
+    let duration = if collector.ascension >= 19 { 5.0 } else { 3.0 };
+    let uncovered = (3 - game.player.power_amount(PowerId::Artifact).clamp(0, 3)) as f32 / 3.0;
+    let pellets_ready = game.player.has_relic(RelicId::OrangePellets)
+        && [CardType::ATTACK, CardType::SKILL, CardType::POWER]
+            .into_iter()
+            .all(|kind| live_combat_cards(&game.player).any(|card| card.card_type() == kind));
+    duration * uncovered * if pellets_ready { 4.0 } else { 10.0 }
+}
+
+/// Small reservation signal for deterministic boss beats that sit beyond the
+/// exact next-hand simulation. It is intentionally boss-only and much smaller
+/// than current-intent damage, so it breaks close choices without replacing
+/// the exact search.
+fn encounter_deadline_pressure(game: &Game) -> f32 {
+    let Some(combat) = &game.combat else {
+        return 0.0;
+    };
+    let scripted: i32 = combat
+        .monsters
+        .iter()
+        .filter(|monster| {
+            monster.alive()
+                && matches!(
+                    monster.id,
+                    MonsterId::BronzeAutomaton
+                        | MonsterId::Champ
+                        | MonsterId::AwakenedOne
+                        | MonsterId::Donu
+                        | MonsterId::Deca
+                )
+        })
+        .map(|monster| scripted_incoming(&game.player, monster, 2))
+        .sum();
+    (scripted - persistent_block_bank(game)).max(0) as f32 * 0.2
 }
 
 /// Block that can still exist on the scripted attack turn. Ordinary Defend
@@ -1258,6 +1525,59 @@ fn fight_length(kind: FightKind, act: Act) -> f32 {
     }
 }
 
+/// Measured fight lengths are full-fight priors. Convert them to a continuation
+/// horizon by consuming one unit for every completed player turn.
+fn remaining_fight_length(game: &Game) -> f32 {
+    let kind = fight_kind(game);
+    let minimum = match (game.dungeon.act, kind) {
+        (Act::Exordium, FightKind::Normal) => 3.5,
+        (Act::Exordium, FightKind::Elite) => 7.0,
+        (Act::Exordium, FightKind::Boss) => 11.0,
+        (Act::City, FightKind::Normal) => 6.0,
+        (Act::City, FightKind::Elite) => 8.0,
+        (Act::City, FightKind::Boss) => 12.0,
+        (Act::Beyond, FightKind::Normal) => 7.0,
+        (Act::Beyond, FightKind::Elite) => 8.0,
+        (Act::Beyond, FightKind::Boss) => 14.0,
+        (Act::Ending, FightKind::Normal) => 5.0,
+        (Act::Ending, FightKind::Elite) => 7.0,
+        (Act::Ending, FightKind::Boss) => 15.0,
+    };
+    // Empirical durations from losing runs are censored at death. In
+    // particular, the A20 bake reports Act 2 elites as 2.7 turns even though
+    // surviving Book/Leader/Slavers fights commonly last 5-9 turns. Do not let
+    // that death bias erase the continuation value of powers after turn two.
+    let baseline = fight_length(kind, game.dungeon.act).max(minimum);
+    let elapsed = game
+        .combat
+        .as_ref()
+        .map_or(0, |combat| combat.turn.saturating_sub(1)) as f32;
+    (baseline - elapsed).max(1.0)
+}
+
+/// Once passive Lightning will pierce Lagavulin's remaining block at End Turn,
+/// waking is no longer an option the player can preserve. Do not prune attacks
+/// that complete that final setup turn.
+fn lagavulin_passive_wake_is_inevitable(player: &Player, monster: &Monster) -> bool {
+    if monster.id != MonsterId::Lagavulin || monster.extra >= 3 {
+        return false;
+    }
+    let passive = (3 + player.power_amount(PowerId::Focus)).max(0);
+    let lightning = player
+        .orbs
+        .iter()
+        .filter(|orb| orb.kind == OrbKind::Lightning)
+        .count() as i32;
+    let cables = i32::from(
+        player.has_relic(RelicId::Cables)
+            && player
+                .orbs
+                .first()
+                .is_some_and(|orb| orb.kind == OrbKind::Lightning),
+    );
+    passive.saturating_mul(lightning + cables) > monster.block.max(0)
+}
+
 fn target_priority(id: MonsterId) -> f32 {
     match id {
         MonsterId::Healer => 1.6,
@@ -1275,6 +1595,95 @@ fn target_priority(id: MonsterId) -> f32 {
         MonsterId::SpireShield => 0.85,
         _ => 1.0,
     }
+}
+
+fn stasis_card_priority(card: &Card) -> f32 {
+    match card.id {
+        CardId::Echo_Form
+        | CardId::Buffer
+        | CardId::Biased_Cognition
+        | CardId::Glacier
+        | CardId::Reinforced_Body
+        | CardId::Core_Surge
+        | CardId::Fission
+        | CardId::Multi_Cast
+        | CardId::Redo => 0.9,
+        CardId::Defragment
+        | CardId::Doom_and_Gloom
+        | CardId::Darkness
+        | CardId::Sunder
+        | CardId::Genetic_Algorithm
+        | CardId::Hologram => 0.6,
+        _ if card.card_type() == CardType::POWER || card.cost >= 2 => 0.4,
+        _ => 0.2,
+    }
+}
+
+/// Target value depends on the encounter state, not just the monster type.
+/// This keeps the static table useful for ordinary fights while representing
+/// boss-specific deadlines and recoverable resources.
+fn encounter_target_priority(monsters: &[Monster], index: usize) -> f32 {
+    let Some(monster) = monsters.get(index) else {
+        return 1.0;
+    };
+    let mut priority = target_priority(monster.id);
+    if !matches!(
+        monster.id,
+        MonsterId::BronzeOrb
+            | MonsterId::TorchHead
+            | MonsterId::TheCollector
+            | MonsterId::Donu
+            | MonsterId::Deca
+    ) {
+        return priority;
+    }
+    match monster.id {
+        MonsterId::BronzeOrb => {
+            if let Some(card) = &monster.stasis_card {
+                let hyper_beam_close = monsters.iter().any(|other| {
+                    other.alive() && other.id == MonsterId::BronzeAutomaton && other.extra >= 3
+                });
+                let urgency = if hyper_beam_close { 1.35 } else { 1.0 };
+                priority += stasis_card_priority(card) * urgency;
+            }
+        }
+        MonsterId::TorchHead => {
+            if monsters.iter().any(|other| {
+                other.alive() && other.id == MonsterId::TheCollector && other.hp <= other.max_hp / 4
+            }) {
+                // Stop feeding the resummon loop when the boss itself is in
+                // a short, reliable kill window.
+                priority = 0.85;
+            }
+        }
+        MonsterId::TheCollector if monster.hp <= monster.max_hp / 4 => {
+            priority = 1.45;
+        }
+        MonsterId::Donu | MonsterId::Deca => {
+            let donu = monsters
+                .iter()
+                .find(|other| other.alive() && other.id == MonsterId::Donu);
+            let deca = monsters
+                .iter()
+                .find(|other| other.alive() && other.id == MonsterId::Deca);
+            if let (Some(donu), Some(deca)) = (donu, deca) {
+                let donu_ehp = donu.hp.max(0).saturating_add(donu.block.max(0)) as i64;
+                let deca_ehp = deca.hp.max(0).saturating_add(deca.block.max(0)) as i64;
+                let deca_is_immediate_kill = deca_ehp * 4 <= donu_ehp;
+                priority = match monster.id {
+                    MonsterId::Deca if deca_is_immediate_kill => 1.45,
+                    MonsterId::Donu if deca_is_immediate_kill => 1.3,
+                    MonsterId::Donu => 1.4,
+                    MonsterId::Deca => 0.9,
+                    _ => unreachable!(),
+                };
+            } else {
+                priority = 1.0;
+            }
+        }
+        _ => {}
+    }
+    priority
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1384,7 +1793,7 @@ fn orb_target_budgets(game: &Game) -> Vec<OrbTargetBudget> {
                     index,
                     hp: monster.hp.max(0),
                     remaining: monster.hp.max(0).saturating_add(monster.block.max(0)) as f32,
-                    priority: target_priority(monster.id),
+                    priority: encounter_target_priority(&combat.monsters, index),
                     lock_on: monster.power_amount(PowerId::LockOn) > 0,
                 })
                 .collect()
@@ -1468,14 +1877,14 @@ fn queue_forecast(game: &Game, horizon: f32) -> QueueForecast {
     }
 }
 
-fn orb_damage_on(monster: &Monster, amount: f32) -> f32 {
+fn orb_damage_on(monster: &Monster, amount: f32, priority: f32) -> f32 {
     let amount = if monster.power_amount(PowerId::LockOn) > 0 {
         (amount * 1.5).floor()
     } else {
         amount
     };
     let ehp = monster.hp.max(0).saturating_add(monster.block.max(0)) as f32;
-    amount.min(ehp) * target_priority(monster.id)
+    amount.min(ehp) * priority
 }
 
 /// Combat-score value of one Lightning trigger. Without Electrodynamics the
@@ -1488,14 +1897,21 @@ fn lightning_trigger_value(game: &Game, amount: i32, damage_weight: f32) -> f32 
     let living: Vec<_> = combat
         .monsters
         .iter()
-        .filter(|monster| monster.alive())
+        .enumerate()
+        .filter(|(_, monster)| monster.alive())
         .collect();
     if living.is_empty() || amount <= 0 {
         return 0.0;
     }
     let total = living
         .iter()
-        .map(|monster| orb_damage_on(monster, amount as f32))
+        .map(|(index, monster)| {
+            orb_damage_on(
+                monster,
+                amount as f32,
+                encounter_target_priority(&combat.monsters, *index),
+            )
+        })
         .sum::<f32>();
     let expected = if game.player.power_amount(PowerId::Electro) > 0 {
         total
@@ -1518,12 +1934,17 @@ fn forced_dark_value(game: &Game, amount: i32, damage_weight: f32) -> f32 {
         combat
             .monsters
             .iter()
-            .filter(|monster| monster.alive())
-            .min_by_key(|monster| monster.hp)
+            .enumerate()
+            .filter(|(_, monster)| monster.alive())
+            .min_by_key(|(_, monster)| monster.hp)
+            .map(|(index, monster)| (monster, encounter_target_priority(&combat.monsters, index)))
     });
-    forced.map_or(amount.max(0) as f32 * damage_weight, |monster| {
-        orb_damage_on(monster, amount.max(0) as f32) * damage_weight
-    })
+    forced.map_or(
+        amount.max(0) as f32 * damage_weight,
+        |(monster, priority)| {
+            orb_damage_on(monster, amount.max(0) as f32, priority) * damage_weight
+        },
+    )
 }
 
 fn orb_evoke_option_value(game: &Game, orb: crate::creature::Orb, damage_weight: f32) -> f32 {
@@ -2504,6 +2925,52 @@ mod tests {
     }
 
     #[test]
+    fn continuation_horizon_shrinks_as_combat_turns_pass() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Hexaghost,
+            &mut game.player,
+            &mut game.rng,
+            16,
+            1,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        assert_eq!(remaining_fight_length(&game), params().fl_a1_boss);
+
+        game.combat.as_mut().unwrap().turn = 7;
+        assert_eq!(remaining_fight_length(&game), params().fl_a1_boss - 6.0);
+    }
+
+    #[test]
+    fn act_two_elite_horizon_is_not_censored_by_early_deaths() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.dungeon.act = Act::City;
+        game.current_room = RoomType::Elite;
+        game.combat = Some(Combat::start(
+            EncounterId::BookOfStabbing,
+            &mut game.player,
+            &mut game.rng,
+            23,
+            2,
+            20,
+        ));
+        game.screen = Screen::Combat;
+
+        assert!(params().fl_a2_elite < 3.0);
+        assert_eq!(remaining_fight_length(&game), 8.0);
+        game.combat.as_mut().unwrap().turn = 5;
+        assert_eq!(remaining_fight_length(&game), 4.0);
+    }
+
+    #[test]
     fn effective_end_of_turn_block_includes_frost_powers_and_relics() {
         let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
         game.player.block = 0;
@@ -2853,6 +3320,35 @@ mod tests {
         );
         assert!(target_priority(MonsterId::Cultist) > target_priority(MonsterId::AwakenedOne));
         assert!(target_priority(MonsterId::Donu) > target_priority(MonsterId::Deca));
+    }
+
+    #[test]
+    fn automaton_orb_priority_tracks_the_stolen_card_and_hyper_beam_deadline() {
+        let mut rng = RngSet::generate_seeds(2);
+        let mut automaton = spawn_monster(MonsterId::BronzeAutomaton, &mut rng, 20);
+        automaton.extra = 3;
+        let orb = spawn_monster(MonsterId::BronzeOrb, &mut rng, 20);
+        let ordinary = vec![automaton.clone(), orb.clone()];
+
+        let mut critical = vec![automaton, orb];
+        critical[1].stasis_card = Some(Card::new(CardId::Buffer));
+        assert!(
+            encounter_target_priority(&critical, 1) > encounter_target_priority(&ordinary, 1) + 1.0
+        );
+    }
+
+    #[test]
+    fn donu_and_deca_priority_switches_for_a_short_deca_kill() {
+        let mut rng = RngSet::generate_seeds(2);
+        let mut donu = spawn_monster(MonsterId::Donu, &mut rng, 20);
+        donu.next_move = 2;
+        let deca = spawn_monster(MonsterId::Deca, &mut rng, 20);
+        let mut monsters = vec![donu, deca];
+
+        assert!(encounter_target_priority(&monsters, 0) > encounter_target_priority(&monsters, 1));
+        monsters[0].hp = 240;
+        monsters[1].hp = 40;
+        assert!(encounter_target_priority(&monsters, 1) > encounter_target_priority(&monsters, 0));
     }
 
     #[test]
@@ -3519,6 +4015,45 @@ mod tests {
     }
 
     #[test]
+    fn mixed_lethal_uses_focus_setup_before_end_turn_lightning() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::Cultist,
+            &mut game.player,
+            &mut game.rng,
+            1,
+            1,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 1;
+        *game.player.hand = vec![Card::new(CardId::Defragment)];
+        *game.player.orbs = vec![Orb {
+            kind: OrbKind::Lightning,
+            evoke: 8,
+        }];
+        let monster = &mut game.combat.as_mut().unwrap().monsters[0];
+        monster.hp = 4;
+        monster.block = 0;
+
+        let legal = game.legal_actions();
+        let checkpoint = game.combat_search_checkpoint();
+        let mut scratch = game.clone();
+        let mut stats = SearchStats::default();
+        assert_eq!(
+            exact_mixed_turn_lethal(&game, &legal, &checkpoint, &mut scratch, &mut stats),
+            Some(Action::Play {
+                hand_index: 0,
+                target_index: None,
+            })
+        );
+        assert!(stats.lethal_expansions >= 2);
+    }
+
+    #[test]
     fn boss_opening_spends_long_duration_potions() {
         use crate::combat::Combat;
         use crate::ids::EncounterId;
@@ -3620,6 +4155,101 @@ mod tests {
     }
 
     #[test]
+    fn awakened_one_power_tax_ends_after_rebirth() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut phase_one = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        phase_one.combat = Some(Combat::start(
+            EncounterId::AwakenedOne,
+            &mut phase_one.player,
+            &mut phase_one.rng,
+            31,
+            3,
+            20,
+        ));
+        phase_one.screen = Screen::Combat;
+
+        let mut powered_one = phase_one.clone();
+        powered_one.player.add_power(PowerId::Focus, 1);
+        let awakened = powered_one
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::AwakenedOne)
+            .unwrap();
+        awakened.add_power(PowerId::Strength, awakened.power_amount(PowerId::Curiosity));
+        let phase_one_gain =
+            score_state(&phase_one, &powered_one) - score_state(&phase_one, &phase_one);
+
+        let mut phase_two = phase_one.clone();
+        let awakened = phase_two
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::AwakenedOne)
+            .unwrap();
+        awakened.extra = 1;
+        awakened.half_dead = false;
+        let mut powered_two = phase_two.clone();
+        powered_two.player.add_power(PowerId::Focus, 1);
+        let phase_two_gain =
+            score_state(&phase_two, &powered_two) - score_state(&phase_two, &phase_two);
+
+        assert!(phase_two_gain > phase_one_gain + 100.0);
+    }
+
+    #[test]
+    fn awakened_one_rebirth_keeps_phase_value_but_reserves_for_dark_echo() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut before = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        before.combat = Some(Combat::start(
+            EncounterId::AwakenedOne,
+            &mut before.player,
+            &mut before.rng,
+            31,
+            3,
+            20,
+        ));
+        before.screen = Screen::Combat;
+        let mut rebirth = before.clone();
+        let awakened = rebirth
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::AwakenedOne)
+            .unwrap();
+        awakened.hp = 0;
+        awakened.half_dead = true;
+        awakened.dead = false;
+
+        let mut truly_dead = rebirth.clone();
+        let awakened = truly_dead
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::AwakenedOne)
+            .unwrap();
+        awakened.half_dead = false;
+        awakened.dead = true;
+
+        let rebirth_score = score_state(&before, &rebirth);
+        let dead_score = score_state(&before, &truly_dead);
+        assert!(encounter_deadline_pressure(&rebirth) > 0.0);
+        assert!(dead_score > rebirth_score);
+    }
+
+    #[test]
     fn lagavulin_wake_guard_allows_only_kill_proximity() {
         use crate::combat::Combat;
         use crate::ids::EncounterId;
@@ -3637,13 +4267,33 @@ mod tests {
         let mut asleep = before.clone();
         let asleep_monster = &mut asleep.combat.as_mut().unwrap().monsters[0];
         asleep_monster.hp -= 10;
-        let mut woken = asleep.clone();
-        woken.combat.as_mut().unwrap().monsters[0].extra = 3;
+        let mut partial_wake = asleep.clone();
+        partial_wake.combat.as_mut().unwrap().monsters[0].extra = 3;
+        assert_eq!(
+            score_state(&before, &partial_wake),
+            score_state(&before, &asleep)
+        );
+
+        let mut woken = partial_wake;
+        woken.combat.as_mut().unwrap().turn += 1;
         assert!(score_state(&before, &woken) < score_state(&before, &asleep));
 
         let mut near_lethal = woken.clone();
         near_lethal.combat.as_mut().unwrap().monsters[0].hp = 20;
         assert!(score_state(&before, &near_lethal) > score_state(&before, &woken));
+
+        let before_monster = &mut before.combat.as_mut().unwrap().monsters[0];
+        before_monster.block = 0;
+        assert!(lagavulin_passive_wake_is_inevitable(
+            &before.player,
+            before_monster
+        ));
+        let mut forced_wake = before.clone();
+        let forced_monster = &mut forced_wake.combat.as_mut().unwrap().monsters[0];
+        forced_monster.hp -= 10;
+        forced_monster.extra = 3;
+        forced_wake.combat.as_mut().unwrap().turn += 1;
+        assert!(score_state(&before, &forced_wake) > score_state(&before, &before));
     }
 
     #[test]
@@ -3669,6 +4319,56 @@ mod tests {
         awakened.half_dead = true;
         awakened.next_move = 3;
         assert_eq!(scripted_incoming(&player, &awakened, 1), 40);
+
+        let mut champ = spawn_monster(MonsterId::Champ, &mut rng, 20);
+        champ.hp = champ.max_hp / 2 - 1;
+        assert_eq!(scripted_incoming(&player, &champ, 1), 0);
+        assert_eq!(scripted_incoming(&player, &champ, 2), 44);
+        champ.split_triggered = true;
+        champ.next_move = 7;
+        assert_eq!(scripted_incoming(&player, &champ, 1), 44);
+
+        let mut donu = spawn_monster(MonsterId::Donu, &mut rng, 20);
+        donu.next_move = 2;
+        assert_eq!(scripted_incoming(&player, &donu, 1), 30);
+        let mut deca = spawn_monster(MonsterId::Deca, &mut rng, 20);
+        deca.next_move = 2;
+        assert_eq!(scripted_incoming(&player, &deca, 1), 24);
+    }
+
+    #[test]
+    fn collector_mega_debuff_pressure_is_answered_by_artifact() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::Collector,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        let collector = game
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::TheCollector)
+            .unwrap();
+        collector.first_move = false;
+        collector.extra = 2;
+        assert!(collector_debuff_pressure(&game) >= 50.0);
+
+        let unprotected = collector_debuff_pressure(&game);
+        game.player.add_power(PowerId::Artifact, 1);
+        assert!(collector_debuff_pressure(&game) < unprotected);
+        assert!(collector_debuff_pressure(&game) > 0.0);
+        game.player.add_power(PowerId::Artifact, 2);
+        assert_eq!(collector_debuff_pressure(&game), 0.0);
     }
 
     #[test]
