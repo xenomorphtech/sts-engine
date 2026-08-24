@@ -176,11 +176,157 @@ fn evaluated_after_end(
     if after.player.hp <= 0 {
         stats.score_evaluations += 1;
         doomed_score(context, after, projected_hp)
+    } else if let Some(score) = exact_deadline_continuation_score(context, after, stats) {
+        score
     } else if let Some(reset_score) = evaluated_time_warp_reset(context, after, stats) {
         reset_score
     } else {
         evaluated_score(context, after, stats)
     }
+}
+
+/// Some boss scripts expose one final setup hand before a deterministic spike.
+/// Once End Turn has produced that real hand, search it completely and resolve
+/// the enemy turn instead of reducing the draw to independent damage and orb
+/// scalars. Restrict the extension to explicit scripts so random combats keep
+/// the cheaper one-hand heuristic.
+fn exact_deadline_continuation_score(
+    context: &EvaluationContext<'_>,
+    start: &Game,
+    stats: &mut SearchStats,
+) -> Option<f32> {
+    if !is_exact_deadline_hand(start) {
+        return None;
+    }
+
+    let checkpoint = start.combat_search_checkpoint();
+    let root = checkpoint.root();
+    let beam_evaluation = EvaluationContext::new(start);
+    let width = params().search_width.round().max(1.0) as usize;
+    let depth = params().search_depth.round().max(1.0) as usize;
+    let mut scratch = start.clone();
+    let mut seen = ExactStateSet::with_capacity(width.saturating_mul(depth + 1));
+    let root_index = seen
+        .insert(root.clone())
+        .expect("an empty deadline fact table accepts its root");
+    let mut frontier = vec![(root_index, evaluated_score(&beam_evaluation, start, stats))];
+    let mut best: Option<f32> = None;
+
+    for _ in 0..depth {
+        let current = std::mem::take(&mut frontier);
+        let mut next = Vec::new();
+        for (state_index, _) in current {
+            stats.expanded_nodes += 1;
+            scratch.restore_combat_search_state(&checkpoint, seen.get(state_index));
+            let legal = scratch.legal_actions();
+            if let Some(end) = legal
+                .iter()
+                .find(|action| matches!(action, Action::EndTurn))
+            {
+                scratch.restore_combat_search_state(&checkpoint, seen.get(state_index));
+                let score = evaluated_forced_end(context, &mut scratch, end, stats);
+                best = Some(best.map_or(score, |current| current.max(score)));
+            }
+            for play in legal
+                .iter()
+                .filter(|action| matches!(action, Action::Play { .. }))
+            {
+                scratch.restore_combat_search_state(&checkpoint, seen.get(state_index));
+                let status_baseline = StatusPlayBaseline::capture(&scratch, play);
+                simulated_step(&mut scratch, play, stats);
+                resolve_grid_selects(&mut scratch, stats);
+                if status_baseline.is_non_progressing(&scratch) {
+                    continue;
+                }
+                if scratch.screen != Screen::Combat
+                    || scratch.player.hp <= 0
+                    || scratch
+                        .combat
+                        .as_ref()
+                        .is_some_and(|combat| combat.all_dead())
+                {
+                    let score = evaluated_score(context, &scratch, stats);
+                    best = Some(best.map_or(score, |current| current.max(score)));
+                    continue;
+                }
+                match seen.insert(scratch.combat_search_state()) {
+                    Ok(index) => {
+                        let score = evaluated_score(&beam_evaluation, &scratch, stats);
+                        next.push((index, score));
+                    }
+                    Err(_) => stats.dedup_hits += 1,
+                }
+            }
+        }
+        if next.is_empty() {
+            frontier = next;
+            break;
+        }
+        next.sort_by(|(_, a_score), (_, b_score)| b_score.total_cmp(a_score));
+        next.truncate(width);
+        frontier = next;
+    }
+
+    // States admitted at the final depth have not yet had their End Turn
+    // evaluated by the loop above.
+    for (state_index, _) in frontier {
+        scratch.restore_combat_search_state(&checkpoint, seen.get(state_index));
+        if let Some(end) = scratch
+            .legal_actions()
+            .into_iter()
+            .find(|action| matches!(action, Action::EndTurn))
+        {
+            let score = evaluated_forced_end(context, &mut scratch, &end, stats);
+            best = Some(best.map_or(score, |current| current.max(score)));
+        }
+    }
+    best
+}
+
+fn evaluated_forced_end(
+    context: &EvaluationContext<'_>,
+    scratch: &mut Game,
+    end: &Action,
+    stats: &mut SearchStats,
+) -> f32 {
+    let projected_hp = projected_end_hp(scratch);
+    simulated_step(scratch, end, stats);
+    if scratch.player.hp <= 0 {
+        stats.score_evaluations += 1;
+        doomed_score(context, scratch, projected_hp)
+    } else {
+        evaluated_score(context, scratch, stats)
+    }
+}
+
+fn is_exact_deadline_hand(game: &Game) -> bool {
+    game.combat.as_ref().is_some_and(|combat| {
+        combat.monsters.iter().any(|monster| {
+            if !monster.alive() {
+                return false;
+            }
+            match monster.id {
+                MonsterId::Hexaghost => monster.extra == 5 && monster.next_move == 4,
+                MonsterId::BronzeAutomaton => monster.extra == 4,
+                _ => false,
+            }
+        })
+    })
+}
+
+fn is_pre_exact_deadline_turn(game: &Game) -> bool {
+    game.combat.as_ref().is_some_and(|combat| {
+        combat.monsters.iter().any(|monster| {
+            if !monster.alive() {
+                return false;
+            }
+            match monster.id {
+                MonsterId::Hexaghost => monster.extra == 4 && monster.next_move == 2,
+                MonsterId::BronzeAutomaton => monster.extra == 3,
+                _ => false,
+            }
+        })
+    })
 }
 
 /// An EndTurn that preserves Time Eater's counter at eleven does not expose a
@@ -655,11 +801,29 @@ fn searched_turn(
         frontier = next;
     }
 
-    // The depth horizon is itself a valid continuation value.
+    // Ordinarily the depth horizon is itself a valid continuation value. On a
+    // scripted pre-spike turn, however, leaving a partial state open would
+    // bypass the exact next-hand extension and restore the old scalar judgment.
+    // Close those frontier states with the real enemy turn.
+    let close_frontier = is_pre_exact_deadline_turn(origin);
     for (state_index, score) in frontier {
         let first = first_actions[state_index]
             .as_ref()
             .expect("frontier facts have provenance");
+        let score = if close_frontier {
+            scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
+            scratch
+                .legal_actions()
+                .into_iter()
+                .find(|action| matches!(action, Action::EndTurn))
+                .map_or(score, |end| {
+                    let projected_hp = projected_end_hp(scratch);
+                    simulated_step(scratch, &end, stats);
+                    evaluated_after_end(&evaluation, scratch, projected_hp, stats)
+                })
+        } else {
+            score
+        };
         keep_best(&mut best_play, first, score);
     }
     match (best_play, root_end) {
@@ -4509,6 +4673,63 @@ mod tests {
         let mut deca = spawn_monster(MonsterId::Deca, &mut rng, 20);
         deca.next_move = 2;
         assert_eq!(scripted_incoming(&player, &deca, 1), 24);
+    }
+
+    #[test]
+    fn exact_next_hand_extension_is_limited_to_scripted_boss_spikes() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::Hexaghost,
+            &mut game.player,
+            &mut game.rng,
+            16,
+            1,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        let hex = &mut game.combat.as_mut().unwrap().monsters[0];
+        hex.split_triggered = true;
+        hex.extra = 5;
+        hex.next_move = 4;
+        assert!(is_exact_deadline_hand(&game));
+        assert!(!is_pre_exact_deadline_turn(&game));
+
+        game.combat.as_mut().unwrap().monsters[0].extra = 4;
+        game.combat.as_mut().unwrap().monsters[0].next_move = 2;
+        assert!(!is_exact_deadline_hand(&game));
+        assert!(is_pre_exact_deadline_turn(&game));
+
+        game.combat = Some(Combat::start(
+            EncounterId::Automaton,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            20,
+        ));
+        let automaton = game
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::BronzeAutomaton)
+            .unwrap();
+        automaton.extra = 3;
+        assert!(is_pre_exact_deadline_turn(&game));
+        assert!(!is_exact_deadline_hand(&game));
+        game.combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::BronzeAutomaton)
+            .unwrap()
+            .extra = 4;
+        assert!(is_exact_deadline_hand(&game));
     }
 
     #[test]

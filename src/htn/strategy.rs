@@ -68,7 +68,18 @@ fn action_value(
         } => (*x, *y, *r),
         _ => return 0.0,
     };
-    node_value(game, x, y, room, hp_frac, act, gold, strength, need_emerald)
+    node_value(
+        game,
+        x,
+        y,
+        room,
+        hp_frac,
+        act,
+        gold,
+        strength,
+        need_emerald,
+        0,
+    )
 }
 
 fn node_value(
@@ -81,8 +92,20 @@ fn node_value(
     gold: i32,
     strength: i32,
     need_emerald: bool,
+    elites_seen: usize,
 ) -> f32 {
-    let own = room_value(game, x, y, room, hp_frac, act, gold, strength, need_emerald);
+    let own = room_value(
+        game,
+        x,
+        y,
+        room,
+        hp_frac,
+        act,
+        gold,
+        strength,
+        need_emerald,
+        queued_elite(game, elites_seen),
+    );
     let projected_hp = projected_hp_after_room(game, room, hp_frac, act, y, strength);
     let survival = if projected_hp <= 0.0 {
         -2_000.0 + projected_hp * 500.0
@@ -94,6 +117,7 @@ fn node_value(
     if projected_hp <= 0.0 {
         return own + survival;
     }
+    let child_elites_seen = elites_seen + usize::from(room == RoomType::Elite);
     let children = lookup_node(game, x, y)
         .map(|n| {
             n.edges
@@ -112,6 +136,7 @@ fn node_value(
                         gold,
                         strength,
                         need_emerald,
+                        child_elites_seen,
                     )
                 })
                 .fold(None, |acc: Option<f32>, v| {
@@ -120,6 +145,10 @@ fn node_value(
         })
         .flatten();
     own + survival + children.unwrap_or(0.0)
+}
+
+fn queued_elite(game: &Game, elites_seen: usize) -> Option<EncounterId> {
+    game.dungeon.elite_list.get(elites_seen).copied()
 }
 
 /// Carry an HP budget through map lookahead. The map is known, but exact
@@ -203,6 +232,7 @@ fn room_value(
     gold: i32,
     strength: i32,
     need_emerald: bool,
+    next_elite: Option<EncounterId>,
 ) -> f32 {
     match room {
         RoomType::Elite => {
@@ -213,8 +243,7 @@ fn room_value(
                     >= p.elite_strength_base
                         + p.elite_strength_slope * act as f32
                         + if game.ascension >= 15 { 2.0 } else { 0.0 };
-            let matchup =
-                elite_matchup(game.dungeon.elite_list.first().copied(), metrics, strength);
+            let matchup = elite_matchup(next_elite, metrics, strength);
             let mut v = if afford {
                 p.elite_value + matchup as f32
             } else {
@@ -1760,6 +1789,17 @@ mod tests {
         assert_eq!(elite_matchup(Some(EncounterId::Slavers), prepared, 6), 10);
         assert_eq!(elite_matchup(Some(EncounterId::GiantHead), weak, 0), -50);
         assert_eq!(elite_matchup(Some(EncounterId::Nemesis), prepared, 6), 10);
+    }
+
+    #[test]
+    fn route_lookahead_advances_the_deterministic_elite_queue() {
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.dungeon.elite_list =
+            vec![EncounterId::BookOfStabbing, EncounterId::GremlinLeader].into();
+
+        assert_eq!(queued_elite(&game, 0), Some(EncounterId::BookOfStabbing));
+        assert_eq!(queued_elite(&game, 1), Some(EncounterId::GremlinLeader));
+        assert_eq!(queued_elite(&game, 2), None);
     }
 
     #[test]
