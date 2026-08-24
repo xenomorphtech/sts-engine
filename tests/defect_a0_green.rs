@@ -3,11 +3,17 @@
 //! The file `exact-text-sim/runtime/oracles/defect/a0/green_registry.jsonl`
 //! is the source of truth. Do not keep a Rust array of seeds.
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::thread;
 use sts_engine::green_registry::{GreenRegistry, GreenStatus};
 use sts_engine::ids::Character;
 use sts_engine::walk::{default_config, walk_oracle};
 use sts_engine::Unlocks;
-use std::path::PathBuf;
+
+const A0_GREEN_THREADS: usize = 12;
+static A0_GREEN_WALK_LOCK: Mutex<()> = Mutex::new(());
 
 fn registry_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -17,6 +23,45 @@ fn registry_path() -> PathBuf {
 fn walk_a0(seed: &str) -> Result<sts_engine::walk::WalkOk, sts_engine::walk::WalkFail> {
     let cfg = default_config(Character::Defect, seed, Unlocks::fixture(), 0);
     walk_oracle(&cfg)
+}
+
+fn walk_a0_parallel(
+    seeds: &[String],
+) -> Vec<(
+    String,
+    Result<sts_engine::walk::WalkOk, sts_engine::walk::WalkFail>,
+)> {
+    // The test harness may run both corpus tests at once. Serialize their pool
+    // creation so the binary has twelve active oracle walkers, not twenty-four.
+    let _pool_guard = A0_GREEN_WALK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let next = AtomicUsize::new(0);
+    let mut results = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(A0_GREEN_THREADS.min(seeds.len()));
+        for _ in 0..A0_GREEN_THREADS.min(seeds.len()) {
+            let next = &next;
+            workers.push(scope.spawn(move || {
+                let mut local = Vec::new();
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(seed) = seeds.get(index) else {
+                        break;
+                    };
+                    local.push((seed.clone(), walk_a0(seed)));
+                }
+                local
+            }));
+        }
+
+        let mut results = Vec::with_capacity(seeds.len());
+        for worker in workers {
+            results.extend(worker.join().expect("a0 oracle worker panicked"));
+        }
+        results
+    });
+    results.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    results
 }
 
 #[test]
@@ -63,8 +108,7 @@ fn registry_file_is_loadable() {
 fn harvested_a0_oracles_walk_or_report() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../exact-text-sim/runtime/oracles/defect/a0");
-    let mut seen = 0usize;
-    let mut green = 0usize;
+    let mut seeds = Vec::new();
     for entry in std::fs::read_dir(&root).expect("a0 oracle dir") {
         let entry = entry.unwrap();
         if !entry.file_type().unwrap().is_dir() {
@@ -78,8 +122,18 @@ fn harvested_a0_oracles_walk_or_report() {
         {
             continue;
         }
-        seen += 1;
-        match walk_a0(&seed) {
+        seeds.push(seed.into_owned());
+    }
+    assert!(
+        !seeds.is_empty(),
+        "no harvested a0 oracles under {}",
+        root.display()
+    );
+
+    let seen = seeds.len();
+    let mut green = 0usize;
+    for (seed, result) in walk_a0_parallel(&seeds) {
+        match result {
             Ok(ok) => {
                 assert!(ok.snaps > 0, "{seed} empty GREEN walk");
                 green += 1;
@@ -95,7 +149,6 @@ fn harvested_a0_oracles_walk_or_report() {
             }
         }
     }
-    assert!(seen > 0, "no harvested a0 oracles under {}", root.display());
     eprintln!("a0 harvested {green} GREEN / {seen} oracles");
 }
 
@@ -108,8 +161,8 @@ fn registry_greens_still_walk() {
     }
     let reg = GreenRegistry::load(&path).expect("load a0 registry");
     let seeds: Vec<String> = reg.green_seeds().into_iter().map(str::to_string).collect();
-    for seed in &seeds {
-        match walk_a0(seed) {
+    for (seed, result) in walk_a0_parallel(&seeds) {
+        match result {
             Ok(ok) => {
                 assert!(ok.snaps > 0, "{seed} empty walk");
             }
