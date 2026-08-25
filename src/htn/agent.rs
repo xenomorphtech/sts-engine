@@ -11,6 +11,7 @@ use turnplan::SearchStats;
 pub struct HtnAgent {
     visited_shop_floors: Vec<i32>,
     recent: VecDeque<DecisionKey>,
+    turn_plan: turnplan::TurnPlanMemory,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,7 +249,8 @@ impl HtnAgent {
         }
         match game.screen {
             Screen::Combat => {
-                let (action, turn_stats) = turnplan::plan_turn_with_stats(game, legal);
+                let (action, turn_stats) =
+                    turnplan::plan_turn_with_memory(game, legal, &mut self.turn_plan);
                 *stats += turn_stats;
                 Some(action)
             }

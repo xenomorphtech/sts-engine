@@ -89,10 +89,532 @@ struct EvaluationContext<'a> {
     damage_weight: f32,
     before_orb_value: f32,
     before_genetic_training: Option<i32>,
+    time_warp_plan: Option<TimeWarpPlan>,
+    donu_deca_plan: Option<DonuDecaPlan>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TimeWarpMethod {
+    /// Complete the current twelve-card window before ending the turn.
+    SpendWindow,
+    /// End the turn inside the current window and carry its remaining card
+    /// budget into the next-hand task.
+    BankWindow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AwakenedMethod {
+    /// Build durable output in phase one without starting unprotected Focus
+    /// decay many turns before rebirth.
+    BuildPhaseOne,
+    /// End the turn with phase one still alive.
+    HoldPhase,
+    /// Finish phase one and enter the real phase-two opening hand.
+    CrossRebirth,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TimeWarpPlan {
+    start_counter: i32,
+    cards_remaining: i32,
+    method: TimeWarpMethod,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AwakenedPlan {
+    start_hp: i32,
+    start_bias: i32,
+    method: AwakenedMethod,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DonuDecaTarget {
+    Donu,
+    Deca,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DonuDecaPlan {
+    target: DonuDecaTarget,
+    start_ehp: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TurnMethod {
+    TimeWarp(TimeWarpPlan),
+    Awakened(AwakenedPlan),
+    DonuDeca(DonuDecaPlan),
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TurnPlanMemory {
+    time_warp: Option<CommittedTimeWarpPlan>,
+    awakened: Option<CommittedAwakenedPlan>,
+    donu_deca: Option<DonuDecaPlan>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CommittedTimeWarpPlan {
+    combat_turn: i32,
+    plan: TimeWarpPlan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CommittedAwakenedPlan {
+    combat_turn: i32,
+    plan: AwakenedPlan,
+}
+
+impl TimeWarpPlan {
+    /// Decompose an actionable encounter window into alternative methods.
+    /// Whether SpendWindow is achievable is established by the ordinary
+    /// bounded turn planner, not a second special-case search.
+    fn methods(game: &Game) -> Option<[Self; 2]> {
+        let start_counter = time_eater_counter(game)?;
+        let cards_remaining = 12 - start_counter;
+        // Outside the last three slots, the current bounded hand does not
+        // usually face a close-vs-bank decision. Keep ordinary turn planning
+        // in control until both methods are genuine alternatives.
+        (1..=3).contains(&cards_remaining).then_some([
+            Self {
+                start_counter,
+                cards_remaining,
+                method: TimeWarpMethod::BankWindow,
+            },
+            Self {
+                start_counter,
+                cards_remaining,
+                method: TimeWarpMethod::SpendWindow,
+            },
+        ])
+    }
+
+    fn reset_reached(self, game: &Game) -> bool {
+        time_eater_counter(game).is_none_or(|counter| counter < self.start_counter)
+    }
+
+    fn allows(self, game: &Game) -> bool {
+        self.method != TimeWarpMethod::BankWindow || !self.reset_reached(game)
+    }
+
+    fn completed(self, before: &Game, after: &Game) -> bool {
+        if time_eater_counter(after).is_none() {
+            return true;
+        }
+        match self.method {
+            TimeWarpMethod::SpendWindow => self.reset_reached(after),
+            TimeWarpMethod::BankWindow => {
+                before.combat.as_ref().map(|combat| combat.turn)
+                    != after.combat.as_ref().map(|combat| combat.turn)
+                    && !self.reset_reached(after)
+            }
+        }
+    }
+
+    /// This is a method-local beam heuristic only. It helps SpendWindow keep
+    /// partial lines that approach its completion condition, but never changes
+    /// the score used to compare completed HTN methods.
+    fn search_guidance(self, game: &Game) -> f32 {
+        if self.method == TimeWarpMethod::SpendWindow {
+            time_eater_counter(game)
+                .map(|counter| {
+                    (counter - self.start_counter).clamp(0, self.cards_remaining) as f32 * 12.0
+                })
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+impl AwakenedPlan {
+    fn methods(game: &Game) -> Option<Vec<Self>> {
+        let combat = game.combat.as_ref()?;
+        let awakened = combat
+            .monsters
+            .iter()
+            .find(|monster| monster.id == MonsterId::AwakenedOne && monster.alive())?;
+        if awakened.extra != 0 || awakened.half_dead {
+            return None;
+        }
+        let start_bias = game.player.power_amount(PowerId::Bias);
+        if awakened.hp > awakened.max_hp / 3
+            || combat
+                .monsters
+                .iter()
+                .any(|monster| monster.id == MonsterId::Cultist && monster.alive())
+        {
+            return Some(vec![Self {
+                start_hp: awakened.hp,
+                start_bias,
+                method: AwakenedMethod::BuildPhaseOne,
+            }]);
+        }
+        let cross = Self {
+            start_hp: awakened.hp,
+            start_bias,
+            method: AwakenedMethod::CrossRebirth,
+        };
+        let dark_echo = projected_attack(&game.player, awakened, 40, 1, 0);
+        if game.player.hp > dark_echo || game.player.power_amount(PowerId::Buffer) > 0 {
+            Some(vec![cross])
+        } else {
+            Some(vec![
+                Self {
+                    start_hp: awakened.hp,
+                    start_bias,
+                    method: AwakenedMethod::HoldPhase,
+                },
+                cross,
+            ])
+        }
+    }
+
+    fn allows(self, game: &Game) -> bool {
+        match self.method {
+            AwakenedMethod::BuildPhaseOne => {
+                return game.player.power_amount(PowerId::Bias) <= self.start_bias;
+            }
+            AwakenedMethod::CrossRebirth => return true,
+            AwakenedMethod::HoldPhase => {}
+        }
+        game.combat.as_ref().is_some_and(|combat| {
+            combat.monsters.iter().any(|monster| {
+                monster.id == MonsterId::AwakenedOne
+                    && monster.alive()
+                    && monster.extra == 0
+                    && !monster.half_dead
+            })
+        })
+    }
+
+    fn completed(self, before: &Game, after: &Game) -> bool {
+        if before.combat.as_ref().map(|combat| combat.turn)
+            == after.combat.as_ref().map(|combat| combat.turn)
+        {
+            return false;
+        }
+        let Some(awakened) = after.combat.as_ref().and_then(|combat| {
+            combat
+                .monsters
+                .iter()
+                .find(|monster| monster.id == MonsterId::AwakenedOne && monster.alive())
+        }) else {
+            return false;
+        };
+        match self.method {
+            AwakenedMethod::BuildPhaseOne => awakened.extra == 0 && !awakened.half_dead,
+            AwakenedMethod::HoldPhase => awakened.extra == 0 && !awakened.half_dead,
+            AwakenedMethod::CrossRebirth => awakened.extra > 0 && !awakened.half_dead,
+        }
+    }
+
+    fn search_guidance(self, game: &Game) -> f32 {
+        if self.method != AwakenedMethod::CrossRebirth {
+            return 0.0;
+        }
+        game.combat
+            .as_ref()
+            .and_then(|combat| {
+                combat
+                    .monsters
+                    .iter()
+                    .find(|monster| monster.id == MonsterId::AwakenedOne && monster.alive())
+            })
+            .map_or(0.0, |awakened| {
+                if awakened.half_dead || awakened.extra > 0 {
+                    300.0
+                } else {
+                    (self.start_hp - awakened.hp).max(0) as f32 * 2.0
+                }
+            })
+    }
+}
+
+impl DonuDecaPlan {
+    fn methods(game: &Game) -> Option<Vec<Self>> {
+        let combat = game.combat.as_ref()?;
+        let donu = combat
+            .monsters
+            .iter()
+            .find(|monster| monster.id == MonsterId::Donu && monster.alive())?;
+        let deca = combat
+            .monsters
+            .iter()
+            .find(|monster| monster.id == MonsterId::Deca && monster.alive())?;
+        let donu_ehp = donu.hp.max(0).saturating_add(donu.block.max(0));
+        let deca_ehp = deca.hp.max(0).saturating_add(deca.block.max(0));
+        let donu_plan = Self {
+            target: DonuDecaTarget::Donu,
+            start_ehp: donu_ehp,
+        };
+        if i64::from(deca_ehp) * 4 <= i64::from(donu_ehp) {
+            Some(vec![
+                Self {
+                    target: DonuDecaTarget::Deca,
+                    start_ehp: deca_ehp,
+                },
+                donu_plan,
+            ])
+        } else {
+            // Donu's repeated Strength buffs are the encounter's compounding
+            // clock. Make disabling that engine the explicit first-kill task;
+            // incidental AOE remains legal while the task is active.
+            Some(vec![donu_plan])
+        }
+    }
+
+    fn target_id(self) -> MonsterId {
+        match self.target {
+            DonuDecaTarget::Donu => MonsterId::Donu,
+            DonuDecaTarget::Deca => MonsterId::Deca,
+        }
+    }
+
+    fn target_alive(self, game: &Game) -> bool {
+        game.combat.as_ref().is_some_and(|combat| {
+            combat
+                .monsters
+                .iter()
+                .any(|monster| monster.id == self.target_id() && monster.alive())
+        })
+    }
+
+    fn allows(self, _game: &Game) -> bool {
+        true
+    }
+
+    fn completed(self, before: &Game, after: &Game) -> bool {
+        combat_won(after)
+            || before.combat.as_ref().map(|combat| combat.turn)
+                != after.combat.as_ref().map(|combat| combat.turn)
+    }
+
+    fn search_guidance(self, game: &Game) -> f32 {
+        let ehp = game
+            .combat
+            .as_ref()
+            .and_then(|combat| {
+                combat
+                    .monsters
+                    .iter()
+                    .find(|monster| monster.id == self.target_id())
+            })
+            .map_or(0, |monster| {
+                if monster.alive() {
+                    monster.hp.max(0).saturating_add(monster.block.max(0))
+                } else {
+                    0
+                }
+            });
+        (self.start_ehp - ehp).max(0) as f32 * 2.0
+    }
+
+    fn damage_priority(
+        self,
+        before_monsters: &[Monster],
+        after_monsters: &[Monster],
+        index: usize,
+    ) -> f32 {
+        let Some(monster) = before_monsters.get(index) else {
+            return 1.0;
+        };
+        if !matches!(monster.id, MonsterId::Donu | MonsterId::Deca) {
+            return encounter_target_priority(before_monsters, index);
+        }
+        if monster.id == self.target_id() {
+            return 1.65;
+        }
+        let target_still_alive = after_monsters
+            .iter()
+            .any(|other| other.id == self.target_id() && other.alive());
+        if target_still_alive {
+            0.45
+        } else {
+            1.0
+        }
+    }
+}
+
+impl TurnMethod {
+    fn time_warp(self) -> Option<TimeWarpPlan> {
+        match self {
+            Self::TimeWarp(plan) => Some(plan),
+            Self::Awakened(_) | Self::DonuDeca(_) => None,
+        }
+    }
+
+    fn donu_deca(self) -> Option<DonuDecaPlan> {
+        match self {
+            Self::DonuDeca(plan) => Some(plan),
+            Self::TimeWarp(_) | Self::Awakened(_) => None,
+        }
+    }
+
+    fn allows(self, game: &Game) -> bool {
+        match self {
+            Self::TimeWarp(plan) => plan.allows(game),
+            Self::Awakened(plan) => plan.allows(game),
+            Self::DonuDeca(plan) => plan.allows(game),
+        }
+    }
+
+    fn completed(self, before: &Game, after: &Game) -> bool {
+        match self {
+            Self::TimeWarp(plan) => plan.completed(before, after),
+            Self::Awakened(plan) => plan.completed(before, after),
+            Self::DonuDeca(plan) => plan.completed(before, after),
+        }
+    }
+
+    fn search_guidance(self, game: &Game) -> f32 {
+        match self {
+            Self::TimeWarp(plan) => plan.search_guidance(game),
+            Self::Awakened(plan) => plan.search_guidance(game),
+            Self::DonuDeca(plan) => plan.search_guidance(game),
+        }
+    }
+}
+
+fn committed_time_warp_plan(game: &Game, memory: &mut TurnPlanMemory) -> Option<TimeWarpPlan> {
+    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
+        memory.time_warp = None;
+        return None;
+    };
+    let Some(counter) = time_eater_counter(game) else {
+        memory.time_warp = None;
+        return None;
+    };
+    if let Some(committed) = memory.time_warp {
+        if committed.combat_turn == combat_turn
+            && counter >= committed.plan.start_counter
+            && counter < 12
+        {
+            return Some(committed.plan);
+        }
+        // BankWindow is a two-hand method: preserve the slots now, then spend
+        // that same window with the real next hand. Carry the commitment over
+        // exactly one turn so re-decomposition cannot bank forever.
+        if committed.plan.method == TimeWarpMethod::BankWindow
+            && combat_turn == committed.combat_turn + 1
+            && counter >= committed.plan.start_counter
+            && counter < 12
+        {
+            let continuation = TimeWarpPlan {
+                start_counter: counter,
+                cards_remaining: 12 - counter,
+                method: TimeWarpMethod::SpendWindow,
+            };
+            memory.time_warp = Some(CommittedTimeWarpPlan {
+                combat_turn,
+                plan: continuation,
+            });
+            return Some(continuation);
+        }
+    }
+    memory.time_warp = None;
+    None
+}
+
+fn commit_time_warp_plan(game: &Game, memory: &mut TurnPlanMemory, plan: TimeWarpPlan) {
+    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
+        return;
+    };
+    memory.time_warp = Some(CommittedTimeWarpPlan { combat_turn, plan });
+}
+
+fn committed_awakened_plan(game: &Game, memory: &mut TurnPlanMemory) -> Option<AwakenedPlan> {
+    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
+        memory.awakened = None;
+        return None;
+    };
+    let awakened_is_present = game.combat.as_ref().is_some_and(|combat| {
+        combat
+            .monsters
+            .iter()
+            .any(|monster| monster.id == MonsterId::AwakenedOne && monster.alive())
+    });
+    if !awakened_is_present {
+        memory.awakened = None;
+        return None;
+    }
+    if let Some(committed) = memory.awakened {
+        if committed.combat_turn == combat_turn {
+            return Some(committed.plan);
+        }
+        if committed.plan.method == AwakenedMethod::HoldPhase
+            && combat_turn == committed.combat_turn + 1
+        {
+            let Some(awakened) = game.combat.as_ref().and_then(|combat| {
+                combat.monsters.iter().find(|monster| {
+                    monster.id == MonsterId::AwakenedOne
+                        && monster.alive()
+                        && monster.extra == 0
+                        && !monster.half_dead
+                })
+            }) else {
+                memory.awakened = None;
+                return None;
+            };
+            let continuation = AwakenedPlan {
+                start_hp: awakened.hp,
+                start_bias: game.player.power_amount(PowerId::Bias),
+                method: AwakenedMethod::CrossRebirth,
+            };
+            memory.awakened = Some(CommittedAwakenedPlan {
+                combat_turn,
+                plan: continuation,
+            });
+            return Some(continuation);
+        }
+    }
+    memory.awakened = None;
+    None
+}
+
+fn commit_awakened_plan(game: &Game, memory: &mut TurnPlanMemory, plan: AwakenedPlan) {
+    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
+        return;
+    };
+    memory.awakened = Some(CommittedAwakenedPlan { combat_turn, plan });
+}
+
+fn committed_donu_deca_plan(game: &Game, memory: &mut TurnPlanMemory) -> Option<DonuDecaPlan> {
+    let Some(plan) = memory.donu_deca else {
+        return None;
+    };
+    let both_alive = game.combat.as_ref().is_some_and(|combat| {
+        combat
+            .monsters
+            .iter()
+            .any(|monster| monster.id == MonsterId::Donu && monster.alive())
+            && combat
+                .monsters
+                .iter()
+                .any(|monster| monster.id == MonsterId::Deca && monster.alive())
+    });
+    if both_alive && plan.target_alive(game) {
+        Some(plan)
+    } else {
+        memory.donu_deca = None;
+        None
+    }
+}
+
+fn commit_donu_deca_plan(memory: &mut TurnPlanMemory, plan: DonuDecaPlan) {
+    memory.donu_deca = Some(plan);
 }
 
 impl<'a> EvaluationContext<'a> {
     fn new(before: &'a Game) -> Self {
+        Self::with_turn_method(before, None)
+    }
+
+    fn with_time_warp_plan(before: &'a Game, time_warp_plan: Option<TimeWarpPlan>) -> Self {
+        Self::with_turn_method(before, time_warp_plan.map(TurnMethod::TimeWarp))
+    }
+
+    fn with_turn_method(before: &'a Game, turn_method: Option<TurnMethod>) -> Self {
         let full_fight_length = fight_length(fight_kind(before), before.dungeon.act);
         let turns_left = remaining_fight_length(before);
         // Immediate damage retains the encounter-level campaign value. Only
@@ -107,8 +629,19 @@ impl<'a> EvaluationContext<'a> {
             damage_weight,
             before_orb_value,
             before_genetic_training,
+            time_warp_plan: turn_method.and_then(TurnMethod::time_warp),
+            donu_deca_plan: turn_method.and_then(TurnMethod::donu_deca),
         }
     }
+}
+
+fn time_eater_counter(game: &Game) -> Option<i32> {
+    game.combat
+        .as_ref()?
+        .monsters
+        .iter()
+        .find(|monster| monster.id == MonsterId::TimeEater && monster.alive())
+        .map(|monster| monster.extra)
 }
 
 fn evaluated_score(context: &EvaluationContext<'_>, after: &Game, stats: &mut SearchStats) -> f32 {
@@ -178,8 +711,6 @@ fn evaluated_after_end(
         doomed_score(context, after, projected_hp)
     } else if let Some(score) = exact_deadline_continuation_score(context, after, stats) {
         score
-    } else if let Some(reset_score) = evaluated_time_warp_reset(context, after, stats) {
-        reset_score
     } else {
         evaluated_score(context, after, stats)
     }
@@ -308,6 +839,7 @@ fn is_exact_deadline_hand(game: &Game) -> bool {
             match monster.id {
                 MonsterId::Hexaghost => monster.extra == 5 && monster.next_move == 4,
                 MonsterId::BronzeAutomaton => monster.extra == 4,
+                MonsterId::Champ => monster.split_triggered && monster.next_move == 3,
                 _ => false,
             }
         })
@@ -323,39 +855,11 @@ fn is_pre_exact_deadline_turn(game: &Game) -> bool {
             match monster.id {
                 MonsterId::Hexaghost => monster.extra == 4 && monster.next_move == 2,
                 MonsterId::BronzeAutomaton => monster.extra == 3,
+                MonsterId::Champ => monster.split_triggered && monster.next_move == 7,
                 _ => false,
             }
         })
     })
-}
-
-/// An EndTurn that preserves Time Eater's counter at eleven does not expose a
-/// normal next hand: the first card played will grant Strength and immediately
-/// run the enemy turn. Score that forced one-card turn exactly instead of
-/// crediting the whole hand through the ordinary continuation heuristics.
-fn evaluated_time_warp_reset(
-    context: &EvaluationContext<'_>,
-    after: &Game,
-    stats: &mut SearchStats,
-) -> Option<f32> {
-    let time_eater = after.combat.as_ref()?.monsters.iter().find(|monster| {
-        monster.id == MonsterId::TimeEater && monster.alive() && monster.extra == 11
-    })?;
-    debug_assert_eq!(time_eater.extra, 11);
-
-    let mut best: Option<f32> = None;
-    for action in after
-        .legal_actions()
-        .into_iter()
-        .filter(|action| matches!(action, Action::Play { .. }))
-    {
-        let mut reset = after.clone();
-        simulated_step(&mut reset, &action, stats);
-        resolve_grid_selects(&mut reset, stats);
-        let score = evaluated_score(context, &reset, stats);
-        best = Some(best.map_or(score, |current| current.max(score)));
-    }
-    best
 }
 
 /// Pick the combat command with one shared search over the rest of the turn.
@@ -369,6 +873,14 @@ pub fn plan_turn(game: &Game, legal: &[Action]) -> Action {
 }
 
 pub fn plan_turn_with_stats(game: &Game, legal: &[Action]) -> (Action, SearchStats) {
+    plan_turn_with_memory(game, legal, &mut TurnPlanMemory::default())
+}
+
+pub(crate) fn plan_turn_with_memory(
+    game: &Game,
+    legal: &[Action],
+    memory: &mut TurnPlanMemory,
+) -> (Action, SearchStats) {
     let mut stats = SearchStats {
         plan_calls: 1,
         ..SearchStats::default()
@@ -398,7 +910,60 @@ pub fn plan_turn_with_stats(game: &Game, legal: &[Action]) -> (Action, SearchSta
     {
         return (lethal, stats);
     }
-    let action = searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats)
+    let committed = committed_time_warp_plan(game, memory)
+        .map(TurnMethod::TimeWarp)
+        .or_else(|| committed_awakened_plan(game, memory).map(TurnMethod::Awakened))
+        .or_else(|| committed_donu_deca_plan(game, memory).map(TurnMethod::DonuDeca));
+    let planned = if let Some(method) = committed {
+        searched_turn(
+            game,
+            legal,
+            &checkpoint,
+            &mut scratch,
+            &mut stats,
+            Some(method),
+        )
+        .or_else(|| searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats, None))
+    } else {
+        let methods: Vec<TurnMethod> = if let Some(methods) = TimeWarpPlan::methods(game) {
+            methods.into_iter().map(TurnMethod::TimeWarp).collect()
+        } else if let Some(methods) = AwakenedPlan::methods(game) {
+            methods.into_iter().map(TurnMethod::Awakened).collect()
+        } else if let Some(methods) = DonuDecaPlan::methods(game) {
+            methods.into_iter().map(TurnMethod::DonuDeca).collect()
+        } else {
+            Vec::new()
+        };
+        let mut best: Option<(Action, f32, TurnMethod)> = None;
+        for method in methods {
+            if let Some((action, score)) = searched_turn(
+                game,
+                legal,
+                &checkpoint,
+                &mut scratch,
+                &mut stats,
+                Some(method),
+            ) {
+                if best
+                    .as_ref()
+                    .is_none_or(|(_, best_score, _)| score > *best_score)
+                {
+                    best = Some((action, score, method));
+                }
+            }
+        }
+        best.map(|(action, score, method)| {
+            match method {
+                TurnMethod::TimeWarp(plan) => commit_time_warp_plan(game, memory, plan),
+                TurnMethod::Awakened(plan) => commit_awakened_plan(game, memory, plan),
+                TurnMethod::DonuDeca(plan) => commit_donu_deca_plan(memory, plan),
+            }
+            (action, score)
+        })
+        .or_else(|| searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats, None))
+    };
+    let action = planned
+        .map(|(action, _)| action)
         .unwrap_or_else(|| plays[0].clone());
     (action, stats)
 }
@@ -666,9 +1231,10 @@ fn searched_turn(
     checkpoint: &CombatSearchCheckpoint,
     scratch: &mut Game,
     stats: &mut SearchStats,
-) -> Option<Action> {
+    turn_method: Option<TurnMethod>,
+) -> Option<(Action, f32)> {
     let root = checkpoint.root();
-    let evaluation = EvaluationContext::new(origin);
+    let evaluation = EvaluationContext::with_turn_method(origin, turn_method);
     let width = params().search_width.round().max(1.0) as usize;
     let depth = params().search_depth.round().max(1.0) as usize;
     let mut seen = ExactStateSet::with_capacity(width.saturating_mul(depth + 1).saturating_mul(12));
@@ -684,14 +1250,18 @@ fn searched_turn(
     let root_end = root_legal
         .iter()
         .find(|action| matches!(action, Action::EndTurn))
-        .map(|end| {
+        .and_then(|end| {
             scratch.restore_combat_search_state(checkpoint, root);
             let projected_hp = projected_end_hp(scratch);
             simulated_step(scratch, end, stats);
-            (
-                end.clone(),
-                evaluated_after_end(&evaluation, scratch, projected_hp, stats),
-            )
+            turn_method
+                .is_none_or(|method| method.completed(origin, scratch))
+                .then(|| {
+                    (
+                        end.clone(),
+                        evaluated_after_end(&evaluation, scratch, projected_hp, stats),
+                    )
+                })
         });
 
     let mut frontier = Vec::new();
@@ -706,25 +1276,33 @@ fn searched_turn(
         if status_baseline.is_non_progressing(scratch) {
             continue;
         }
+        if turn_method.is_some_and(|method| !method.allows(scratch)) {
+            continue;
+        }
+        let method_completed = turn_method.is_some_and(|method| method.completed(origin, scratch));
         if scratch.screen != Screen::Combat
             || scratch.player.hp <= 0
             || scratch
                 .combat
                 .as_ref()
                 .is_some_and(|combat| combat.all_dead())
+            || method_completed
         {
-            keep_best(
-                &mut best_play,
-                first,
-                evaluated_score(&evaluation, scratch, stats),
-            );
+            if turn_method.is_none_or(|method| method.completed(origin, scratch)) {
+                keep_best(
+                    &mut best_play,
+                    first,
+                    evaluated_score(&evaluation, scratch, stats),
+                );
+            }
             continue;
         }
         match seen.insert(scratch.combat_search_state()) {
             Ok(index) => {
                 debug_assert_eq!(index, first_actions.len());
                 first_actions.push(Some(first.clone()));
-                let score = evaluated_score(&evaluation, scratch, stats);
+                let score = evaluated_score(&evaluation, scratch, stats)
+                    + turn_method.map_or(0.0, |method| method.search_guidance(scratch));
                 frontier.push((index, score));
             }
             Err(_) => stats.dedup_hits += 1,
@@ -751,11 +1329,13 @@ fn searched_turn(
                 scratch.restore_combat_search_state(checkpoint, seen.get(state_index));
                 let projected_hp = projected_end_hp(scratch);
                 simulated_step(scratch, end, stats);
-                keep_best(
-                    &mut best_play,
-                    &first,
-                    evaluated_after_end(&evaluation, scratch, projected_hp, stats),
-                );
+                if turn_method.is_none_or(|method| method.completed(origin, scratch)) {
+                    keep_best(
+                        &mut best_play,
+                        &first,
+                        evaluated_after_end(&evaluation, scratch, projected_hp, stats),
+                    );
+                }
             }
             for play in legal
                 .iter()
@@ -768,25 +1348,34 @@ fn searched_turn(
                 if status_baseline.is_non_progressing(scratch) {
                     continue;
                 }
+                if turn_method.is_some_and(|method| !method.allows(scratch)) {
+                    continue;
+                }
+                let method_completed =
+                    turn_method.is_some_and(|method| method.completed(origin, scratch));
                 if scratch.screen != Screen::Combat
                     || scratch.player.hp <= 0
                     || scratch
                         .combat
                         .as_ref()
                         .is_some_and(|combat| combat.all_dead())
+                    || method_completed
                 {
-                    keep_best(
-                        &mut best_play,
-                        &first,
-                        evaluated_score(&evaluation, scratch, stats),
-                    );
+                    if turn_method.is_none_or(|method| method.completed(origin, scratch)) {
+                        keep_best(
+                            &mut best_play,
+                            &first,
+                            evaluated_score(&evaluation, scratch, stats),
+                        );
+                    }
                     continue;
                 }
                 match seen.insert(scratch.combat_search_state()) {
                     Ok(index) => {
                         debug_assert_eq!(index, first_actions.len());
                         first_actions.push(Some(first.clone()));
-                        let score = evaluated_score(&evaluation, scratch, stats);
+                        let score = evaluated_score(&evaluation, scratch, stats)
+                            + turn_method.map_or(0.0, |method| method.search_guidance(scratch));
                         next.push((index, score));
                     }
                     Err(_) => stats.dedup_hits += 1,
@@ -807,6 +1396,9 @@ fn searched_turn(
     // Close those frontier states with the real enemy turn.
     let close_frontier = is_pre_exact_deadline_turn(origin);
     for (state_index, score) in frontier {
+        if turn_method.is_some() {
+            continue;
+        }
         let first = first_actions[state_index]
             .as_ref()
             .expect("frontier facts have provenance");
@@ -828,10 +1420,10 @@ fn searched_turn(
     }
     match (best_play, root_end) {
         (Some((play, play_score)), Some((end, end_score))) if end_score > play_score + 5.0 => {
-            Some(end)
+            Some((end, end_score))
         }
-        (Some((play, _)), _) => Some(play),
-        (None, Some((end, _))) => Some(end),
+        (Some((play, score)), _) => Some((play, score)),
+        (None, Some((end, score))) => Some((end, score)),
         (None, None) => None,
     }
 }
@@ -1143,9 +1735,15 @@ fn end_of_turn_block(game: &Game) -> i32 {
 /// Maximum direct block the already-drawn hand can afford next turn. This is
 /// a small 0/1 knapsack rather than a rollout: it prices the energy that must
 /// be reserved for defense without speculating about future card effects.
+#[cfg(test)]
 fn cheap_hand_block(game: &Game) -> i32 {
+    cheap_hand_block_with_card_limit(game, game.player.hand.len())
+}
+
+fn cheap_hand_block_with_card_limit(game: &Game, card_limit: usize) -> i32 {
     let energy = game.player.energy.max(0) as usize;
-    let mut best = vec![0; energy + 1];
+    let card_limit = card_limit.min(game.player.hand.len());
+    let mut best = vec![vec![0; energy + 1]; card_limit + 1];
 
     for card in &game.player.hand {
         let block = crate::combat::derived_block(card, &game.player).max(0);
@@ -1157,10 +1755,12 @@ fn cheap_hand_block(game: &Game) -> i32 {
             // remaining amount. Snapshot the old frontier so the same card
             // is not selected more than once.
             let old = best.clone();
-            for spent_before in 0..=energy {
-                for x in 0..=energy - spent_before {
-                    best[spent_before + x] =
-                        best[spent_before + x].max(old[spent_before] + block * x as i32);
+            for used in 1..=card_limit {
+                for spent_before in 0..=energy {
+                    for x in 0..=energy - spent_before {
+                        best[used][spent_before + x] = best[used][spent_before + x]
+                            .max(old[used - 1][spent_before] + block * x as i32);
+                    }
                 }
             }
             continue;
@@ -1173,26 +1773,25 @@ fn cheap_hand_block(game: &Game) -> i32 {
         if cost > energy {
             continue;
         }
-        if cost == 0 {
-            for value in &mut best {
-                *value += block;
-            }
-        } else {
-            for spent in (cost..=energy).rev() {
-                best[spent] = best[spent].max(best[spent - cost] + block);
+        let old = best.clone();
+        for used in 1..=card_limit {
+            for spent_before in 0..=energy - cost {
+                best[used][spent_before + cost] =
+                    best[used][spent_before + cost].max(old[used - 1][spent_before] + block);
             }
         }
     }
 
-    best.into_iter().max().unwrap_or(0)
+    best.into_iter().flatten().max().unwrap_or(0)
 }
 
 /// Best immediately playable attack output in the real next hand. This is a
 /// compact knapsack continuation value, not another search horizon: EndTurn
 /// has already produced the exact retained/drawn cards and exact next energy.
-fn cheap_hand_damage(game: &Game) -> i32 {
+fn cheap_hand_damage_with_card_limit(game: &Game, card_limit: usize) -> i32 {
     let energy = game.player.energy.max(0) as usize;
-    let mut best = vec![0; energy + 1];
+    let card_limit = card_limit.min(game.player.hand.len());
+    let mut best = vec![vec![0; energy + 1]; card_limit + 1];
 
     for card in &game.player.hand {
         if card.card_type() != CardType::ATTACK {
@@ -1204,10 +1803,12 @@ fn cheap_hand_damage(game: &Game) -> i32 {
         }
         if card.cost_for_turn == -1 {
             let old = best.clone();
-            for spent_before in 0..=energy {
-                for x in 0..=energy - spent_before {
-                    best[spent_before + x] =
-                        best[spent_before + x].max(old[spent_before] + damage * x as i32);
+            for used in 1..=card_limit {
+                for spent_before in 0..=energy {
+                    for x in 0..=energy - spent_before {
+                        best[used][spent_before + x] = best[used][spent_before + x]
+                            .max(old[used - 1][spent_before] + damage * x as i32);
+                    }
                 }
             }
             continue;
@@ -1220,18 +1821,37 @@ fn cheap_hand_damage(game: &Game) -> i32 {
         if cost > energy {
             continue;
         }
-        if cost == 0 {
-            for value in &mut best {
-                *value += damage;
-            }
-        } else {
-            for spent in (cost..=energy).rev() {
-                best[spent] = best[spent].max(best[spent - cost] + damage);
+        let old = best.clone();
+        for used in 1..=card_limit {
+            for spent_before in 0..=energy - cost {
+                best[used][spent_before + cost] =
+                    best[used][spent_before + cost].max(old[used - 1][spent_before] + damage);
             }
         }
     }
 
-    best.into_iter().max().unwrap_or(0)
+    best.into_iter().flatten().max().unwrap_or(0)
+}
+
+fn next_hand_card_budget(context: &EvaluationContext<'_>, game: &Game) -> usize {
+    let hand_size = game.player.hand.len();
+    if context.time_warp_plan.is_none() {
+        return hand_size;
+    }
+    time_eater_counter(game)
+        .map(|counter| (12 - counter).max(0) as usize)
+        .unwrap_or(hand_size)
+        .min(hand_size)
+}
+
+fn banked_time_warp_spend_is_pending(context: &EvaluationContext<'_>, game: &Game) -> bool {
+    let Some(plan) = context.time_warp_plan else {
+        return false;
+    };
+    plan.method == TimeWarpMethod::BankWindow
+        && context.before.combat.as_ref().map(|combat| combat.turn)
+            != game.combat.as_ref().map(|combat| combat.turn)
+        && time_eater_counter(game).is_some_and(|counter| counter >= plan.start_counter)
 }
 
 #[cfg(test)]
@@ -1271,7 +1891,10 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
             }
             let hp_after = after_combat.monsters.get(index).map_or(0, |m| m.hp.max(0));
             let hp_damage = (monster.hp - hp_after).max(0);
-            let priority = encounter_target_priority(&before_combat.monsters, index);
+            let priority = context.donu_deca_plan.map_or_else(
+                || encounter_target_priority(&before_combat.monsters, index),
+                |plan| plan.damage_priority(&before_combat.monsters, &after_combat.monsters, index),
+            );
             dealt += hp_damage as f32 * priority;
             if monster.id == MonsterId::Lagavulin && monster.extra < 3 && hp_after > 0 {
                 if let Some(monster_after) = after_combat.monsters.get(index) {
@@ -1305,9 +1928,22 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
             }
         }
     }
+    let pending_time_warp = banked_time_warp_spend_is_pending(context, after);
     let incoming: i32 = living
         .iter()
-        .map(|monster| projected_incoming(&after.player, monster))
+        .map(|monster| {
+            if pending_time_warp && monster.id == MonsterId::TimeEater {
+                projected_attack(
+                    &after.player,
+                    monster,
+                    monster.intent_damage,
+                    monster.intent_hits,
+                    2,
+                )
+            } else {
+                projected_incoming(&after.player, monster)
+            }
+        })
         .sum();
 
     let scripted = if !turn_advanced && p.spike_danger > 0.0 {
@@ -1374,7 +2010,8 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
         // EndTurn has already rolled the real next intents and drawn the real
         // next hand. Penalize exposed damage as well as block that consumes
         // next turn's energy, while retaining a zero-cost default.
-        let hand_block = cheap_hand_block(after);
+        let hand_block =
+            cheap_hand_block_with_card_limit(after, next_hand_card_budget(context, after));
         let wall = effective_block;
         let exposed = (incoming - wall - hand_block).max(0);
         let taxed_block = hand_block.min((incoming - wall).max(0));
@@ -1382,8 +2019,11 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
         value -= taxed_block as f32 * p.next_block_tax;
     }
     if turn_advanced {
-        value += cheap_hand_damage(after) as f32 * damage_weight * p.next_hand_damage_mult;
-        value += next_hand_orb_value(after, damage_weight);
+        let card_budget = next_hand_card_budget(context, after);
+        value += cheap_hand_damage_with_card_limit(after, card_budget) as f32
+            * damage_weight
+            * p.next_hand_damage_mult;
+        value += next_hand_orb_value(after, damage_weight, card_budget);
     }
 
     let persistent_horizon = remaining_fight_length(after);
@@ -1415,7 +2055,9 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
                 gain * exposure
             })
             .sum();
-        value -= enemy_strength_cost * p.enemy_strength_penalty;
+        let planned_time_warp_strength = if pending_time_warp { 2.0 } else { 0.0 };
+        value -= (enemy_strength_cost + planned_time_warp_strength * persistent_horizon)
+            * p.enemy_strength_penalty;
     }
     let status_gain = (status_card_count(&after.player) - status_card_count(&before.player)).max(0);
     value -= status_gain as f32 * p.status_gain_penalty;
@@ -2407,6 +3049,7 @@ struct RolloutTarget {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct QueueRolloutState {
     remaining_cards: u16,
+    plays_left: u8,
     energy: i16,
     max_orbs: i16,
     focus: i16,
@@ -2733,6 +3376,9 @@ fn play_rollout_card(
     state: &mut QueueRolloutState,
     card_index: usize,
 ) -> Option<f32> {
+    if state.plays_left == 0 {
+        return None;
+    }
     let card = context.cards[card_index];
     let energy_before = state.energy.max(0) as i32;
     let x_card =
@@ -2745,6 +3391,7 @@ fn play_rollout_card(
     }
 
     state.remaining_cards &= !(1u16 << card_index);
+    state.plays_left -= 1;
     let mut x_effect = 0;
     if x_card {
         x_effect = energy_before;
@@ -2861,6 +3508,10 @@ fn solve_queue_rollout(
     if memo.len() >= NEXT_HAND_ROLLOUT_STATE_CAP {
         return result;
     }
+    if state.plays_left == 0 {
+        memo.insert(state, result);
+        return result;
+    }
 
     let mut seen_cards = Vec::new();
     for card_index in 0..context.cards.len() {
@@ -2884,7 +3535,11 @@ fn solve_queue_rollout(
     result
 }
 
-fn next_hand_queue_rollout(game: &Game, damage_weight: f32) -> QueueRolloutResult {
+fn next_hand_queue_rollout(
+    game: &Game,
+    damage_weight: f32,
+    card_budget: usize,
+) -> QueueRolloutResult {
     let cards = queue_rollout_cards(game);
     let (targets, target_hp, target_block) = rollout_target_context(game);
     let context = QueueRolloutContext {
@@ -2900,12 +3555,14 @@ fn next_hand_queue_rollout(game: &Game, damage_weight: f32) -> QueueRolloutResul
         cables: game.player.has_relic(RelicId::Cables),
     };
     let card_count = context.cards.len();
+    let card_budget = card_budget.min(card_count);
     let initial = QueueRolloutState {
         remaining_cards: if card_count == 0 {
             0
         } else {
             (1u16 << card_count) - 1
         },
+        plays_left: card_budget.min(u8::MAX as usize) as u8,
         energy: game.player.energy.max(0).min(i16::MAX as i32) as i16,
         max_orbs: game.player.max_orbs.max(0).min(i16::MAX as i32) as i16,
         focus: game
@@ -2928,7 +3585,8 @@ fn next_hand_queue_rollout(game: &Game, damage_weight: f32) -> QueueRolloutResul
         target_block,
     };
     let baseline_queue = rollout_queue_continuation(&context, &initial);
-    let baseline_damage = cheap_hand_damage(game) as f32 * damage_weight;
+    let baseline_damage =
+        cheap_hand_damage_with_card_limit(game, card_budget) as f32 * damage_weight;
     let mut memo = HashMap::new();
     let solved = solve_queue_rollout(&context, initial, &mut memo);
     QueueRolloutResult {
@@ -2944,18 +3602,18 @@ fn reachable_energy_with_orb_tools(game: &Game) -> i32 {
     }
     let turns_left = fight_length(fight_kind(game), game.dungeon.act);
     let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
-    next_hand_queue_rollout(game, damage_weight).max_energy
+    next_hand_queue_rollout(game, damage_weight, game.player.hand.len()).max_energy
 }
 
 /// Orb-specific output from a memoized, ordered search of the exact next hand.
 /// Its terminal value is a two-turn queue continuation, so card costs,
 /// Plasma releases, capacity changes, front rotation, and queue operators all
 /// compete inside one line instead of receiving independent scalar bonuses.
-fn next_hand_orb_value(game: &Game, damage_weight: f32) -> f32 {
+fn next_hand_orb_value(game: &Game, damage_weight: f32, card_budget: usize) -> f32 {
     if game.player.max_orbs <= 0 {
         return 0.0;
     }
-    next_hand_queue_rollout(game, damage_weight).value * params().next_hand_damage_mult
+    next_hand_queue_rollout(game, damage_weight, card_budget).value * params().next_hand_damage_mult
 }
 
 fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
@@ -3419,6 +4077,7 @@ mod tests {
         ];
         game.player.draw.clear();
         game.player.discard.clear();
+        game.player.discard.clear();
         game.player.exhaust.clear();
 
         let combat = game.combat.as_mut().unwrap();
@@ -3481,7 +4140,7 @@ mod tests {
     fn next_orb_test_value(game: &Game) -> f32 {
         let turns_left = 4.0;
         let damage_weight = params().dmg_base + params().dmg_per_turn * turns_left;
-        next_hand_orb_value(game, damage_weight)
+        next_hand_orb_value(game, damage_weight, game.player.hand.len())
     }
 
     #[test]
@@ -4081,6 +4740,7 @@ mod tests {
         };
         let initial = QueueRolloutState {
             remaining_cards: (1u16 << context.cards.len()) - 1,
+            plays_left: 2,
             energy: 2,
             max_orbs: 2,
             focus: 0,
@@ -4142,6 +4802,7 @@ mod tests {
         };
         let initial = QueueRolloutState {
             remaining_cards: (1u16 << context.cards.len()) - 1,
+            plays_left: 2,
             energy: 3,
             max_orbs: 3,
             focus: 0,
@@ -4676,6 +5337,352 @@ mod tests {
     }
 
     #[test]
+    fn time_warp_decomposes_into_structural_methods() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        let time_eater = &mut game.combat.as_mut().unwrap().monsters[0];
+        time_eater.extra = 10;
+        let [bank, spend] = TimeWarpPlan::methods(&game).unwrap();
+        assert_eq!(bank.method, TimeWarpMethod::BankWindow);
+        assert_eq!(spend.method, TimeWarpMethod::SpendWindow);
+        assert_eq!(spend.cards_remaining, 2);
+
+        let mut banked = game.clone();
+        banked.combat.as_mut().unwrap().turn += 1;
+        assert!(bank.completed(&game, &banked));
+        assert!(!spend.completed(&game, &banked));
+
+        let mut reset = banked;
+        reset.combat.as_mut().unwrap().monsters[0].extra = 0;
+        assert!(!bank.allows(&reset));
+        assert!(spend.completed(&game, &reset));
+    }
+
+    #[test]
+    fn time_warp_plan_caps_next_hand_operators() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 2;
+        *game.player.hand = vec![Card::new(CardId::Defend_B), Card::new(CardId::Leap)];
+        game.combat.as_mut().unwrap().monsters[0].extra = 11;
+
+        let plan = TimeWarpPlan::methods(&game).unwrap()[0];
+        let context = EvaluationContext::with_time_warp_plan(&game, Some(plan));
+
+        assert_eq!(next_hand_card_budget(&context, &game), 1);
+        assert_eq!(cheap_hand_block_with_card_limit(&game, 1), 9);
+        assert_eq!(cheap_hand_block_with_card_limit(&game, 2), 14);
+    }
+
+    #[test]
+    fn time_warp_methods_only_return_completed_lines() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 1;
+        *game.player.hand = vec![Card::new(CardId::Strike_B)];
+        let time_eater = &mut game.combat.as_mut().unwrap().monsters[0];
+        time_eater.extra = 11;
+        time_eater.intent_damage = 0;
+        time_eater.intent_hits = 0;
+
+        let legal = game.legal_actions();
+        let checkpoint = game.combat_search_checkpoint();
+        let mut scratch = game.clone();
+        let mut stats = SearchStats::default();
+        let [bank, spend] = TimeWarpPlan::methods(&game).unwrap();
+        let banked = searched_turn(
+            &game,
+            &legal,
+            &checkpoint,
+            &mut scratch,
+            &mut stats,
+            Some(TurnMethod::TimeWarp(bank)),
+        )
+        .unwrap();
+        assert!(matches!(banked.0, Action::EndTurn));
+
+        let spent = searched_turn(
+            &game,
+            &legal,
+            &checkpoint,
+            &mut scratch,
+            &mut stats,
+            Some(TurnMethod::TimeWarp(spend)),
+        )
+        .unwrap();
+        assert!(matches!(spent.0, Action::Play { .. }));
+    }
+
+    #[test]
+    fn time_warp_method_is_committed_for_the_player_turn() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.energy = 2;
+        *game.player.hand = vec![Card::new(CardId::Defend_B), Card::new(CardId::Leap)];
+        let time_eater = &mut game.combat.as_mut().unwrap().monsters[0];
+        time_eater.extra = 9;
+        time_eater.intent_damage = 15;
+        time_eater.intent_hits = 1;
+
+        let mut memory = TurnPlanMemory::default();
+        let spend = TimeWarpPlan::methods(&game).unwrap()[1];
+        commit_time_warp_plan(&game, &mut memory, spend);
+        assert_eq!(
+            committed_time_warp_plan(&game, &mut memory).unwrap().method,
+            TimeWarpMethod::SpendWindow
+        );
+
+        game.player.block = 14;
+        *game.player.hand = vec![Card::new(CardId::Strike_B)];
+        game.combat.as_mut().unwrap().monsters[0].extra = 11;
+        assert_eq!(
+            committed_time_warp_plan(&game, &mut memory).unwrap().method,
+            TimeWarpMethod::SpendWindow
+        );
+    }
+
+    #[test]
+    fn banked_time_warp_window_is_spent_by_the_next_hand() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.combat.as_mut().unwrap().monsters[0].extra = 10;
+
+        let bank = TimeWarpPlan::methods(&game).unwrap()[0];
+        let mut memory = TurnPlanMemory::default();
+        commit_time_warp_plan(&game, &mut memory, bank);
+
+        game.combat.as_mut().unwrap().turn += 1;
+        game.combat.as_mut().unwrap().monsters[0].extra = 11;
+        let continuation = committed_time_warp_plan(&game, &mut memory).unwrap();
+        assert_eq!(continuation.method, TimeWarpMethod::SpendWindow);
+        assert_eq!(continuation.start_counter, 11);
+        assert_eq!(continuation.cards_remaining, 1);
+    }
+
+    #[test]
+    fn awakened_one_decomposes_hold_and_cross_rebirth_methods() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::AwakenedOne,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        game.player.hp = 1;
+        let combat = game.combat.as_mut().unwrap();
+        for cultist in combat
+            .monsters
+            .iter_mut()
+            .filter(|monster| monster.id == MonsterId::Cultist)
+        {
+            cultist.hp = 0;
+            cultist.dead = true;
+        }
+        let awakened = combat
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::AwakenedOne)
+            .unwrap();
+        awakened.hp = awakened.max_hp / 3;
+
+        let methods = AwakenedPlan::methods(&game).unwrap();
+        let hold = methods[0];
+        let cross = methods[1];
+        assert_eq!(hold.method, AwakenedMethod::HoldPhase);
+        assert_eq!(cross.method, AwakenedMethod::CrossRebirth);
+
+        let mut held = game.clone();
+        held.combat.as_mut().unwrap().turn += 1;
+        assert!(hold.completed(&game, &held));
+        assert!(!cross.completed(&game, &held));
+
+        let mut reborn = held.clone();
+        let awakened = reborn
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::AwakenedOne)
+            .unwrap();
+        awakened.extra = 1;
+        awakened.hp = awakened.max_hp;
+        awakened.half_dead = false;
+        awakened.next_move = 5;
+        assert!(!hold.allows(&reborn));
+        assert!(cross.completed(&game, &reborn));
+
+        let mut memory = TurnPlanMemory::default();
+        commit_awakened_plan(&game, &mut memory, hold);
+        let continuation = committed_awakened_plan(&held, &mut memory).unwrap();
+        assert_eq!(continuation.method, AwakenedMethod::CrossRebirth);
+    }
+
+    #[test]
+    fn awakened_phase_one_build_reserves_unprotected_bias() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::AwakenedOne,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        let build = AwakenedPlan::methods(&game).unwrap()[0];
+        assert_eq!(build.method, AwakenedMethod::BuildPhaseOne);
+
+        let mut decaying = game.clone();
+        decaying.player.add_power(PowerId::Bias, 1);
+        assert!(!build.allows(&decaying));
+
+        let mut protected = game;
+        protected.player.add_power(PowerId::Focus, 4);
+        assert!(build.allows(&protected));
+    }
+
+    #[test]
+    fn donu_and_deca_commit_donu_as_the_first_kill_task() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::DonuAndDeca,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            20,
+        ));
+        game.screen = Screen::Combat;
+
+        let methods = DonuDecaPlan::methods(&game).unwrap();
+        assert_eq!(methods.len(), 1);
+        let plan = methods[0];
+        assert_eq!(plan.target, DonuDecaTarget::Donu);
+
+        let mut memory = TurnPlanMemory::default();
+        commit_donu_deca_plan(&mut memory, plan);
+        game.combat.as_mut().unwrap().turn += 1;
+        assert_eq!(committed_donu_deca_plan(&game, &mut memory), Some(plan));
+
+        let donu = game
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::Donu)
+            .unwrap();
+        donu.hp = 0;
+        donu.dead = true;
+        assert_eq!(committed_donu_deca_plan(&game, &mut memory), None);
+    }
+
+    #[test]
+    fn donu_and_deca_offer_the_short_deca_kill_as_an_alternative() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::DonuAndDeca,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        let combat = game.combat.as_mut().unwrap();
+        let donu = combat
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::Donu)
+            .unwrap();
+        donu.hp = 200;
+        donu.block = 0;
+        let deca = combat
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::Deca)
+            .unwrap();
+        deca.hp = 40;
+        deca.block = 0;
+
+        let methods = DonuDecaPlan::methods(&game).unwrap();
+        assert_eq!(methods.len(), 2);
+        assert_eq!(methods[0].target, DonuDecaTarget::Deca);
+        assert_eq!(methods[1].target, DonuDecaTarget::Donu);
+    }
+
+    #[test]
     fn exact_next_hand_extension_is_limited_to_scripted_boss_spikes() {
         use crate::combat::Combat;
         use crate::ids::EncounterId;
@@ -4730,6 +5737,23 @@ mod tests {
             .unwrap()
             .extra = 4;
         assert!(is_exact_deadline_hand(&game));
+
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            20,
+        ));
+        let champ = &mut game.combat.as_mut().unwrap().monsters[0];
+        champ.split_triggered = true;
+        champ.next_move = 7;
+        assert!(is_pre_exact_deadline_turn(&game));
+        assert!(!is_exact_deadline_hand(&game));
+        game.combat.as_mut().unwrap().monsters[0].next_move = 3;
+        assert!(is_exact_deadline_hand(&game));
+        assert!(!is_pre_exact_deadline_turn(&game));
     }
 
     #[test]
