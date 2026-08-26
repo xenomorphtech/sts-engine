@@ -1253,6 +1253,13 @@ fn write_native_hrm_reports(
             "model_inference": policy.inference_time().as_secs_f64(),
             "action_step": step_time.as_secs_f64(),
         },
+        "inference_batching": {
+            "configured_max_batch_size": policy.batch_size(),
+            "fixed_batch": policy.has_fixed_batch_size(),
+            "calls": policy.inference_calls(),
+            "rows": policy.inference_rows(),
+            "mean_rows_per_call": policy.inference_rows() as f64 / policy.inference_calls().max(1) as f64,
+        },
         "checkpoint": metadata_path.canonicalize().unwrap_or_else(|_| metadata_path.to_path_buf()),
         "onnx": onnx_path.canonicalize().unwrap_or_else(|_| onnx_path.to_path_buf()),
         "puzzles": results.len(),
@@ -1438,13 +1445,15 @@ fn evaluate_hrm_native(
     output_dir: &Path,
     report_stem: &str,
     device: HrmDevice,
+    batch_size: Option<usize>,
     max_actions: usize,
 ) -> Result<(), String> {
-    let mut policy = HrmPolicy::load(metadata_path, onnx_path, device)?;
+    let mut policy = HrmPolicy::load(metadata_path, onnx_path, device, batch_size)?;
     eprintln!(
-        "native HRM policy loaded on {} from {}",
+        "native HRM policy loaded on {} from {} (batch size {})",
         policy.device(),
-        onnx_path.display()
+        onnx_path.display(),
+        policy.batch_size()
     );
     let started = Instant::now();
     let mut rollouts = Vec::with_capacity(checkpoints.len());
@@ -1540,9 +1549,10 @@ fn generate_hrm_branches(
     onnx_path: &Path,
     output_path: &Path,
     device: HrmDevice,
+    batch_size: Option<usize>,
     max_actions: usize,
 ) -> Result<(), String> {
-    let mut policy = HrmPolicy::load(metadata_path, onnx_path, device)?;
+    let mut policy = HrmPolicy::load(metadata_path, onnx_path, device, batch_size)?;
     let mut examples = Vec::new();
     let mut sources = Vec::new();
     let mut rollouts = Vec::new();
@@ -2928,6 +2938,7 @@ HRM options:
                                  Score every training-split opening action
       --hrm-device auto|cuda|cpu
                                  Inference device (default: auto)
+      --hrm-batch-size N         Maximum states per ONNX call (device-tuned default)
       --rollout-max-actions N    Per-puzzle action cap (default: 1000)
 
 The normal batch run prints throughput, win rate, mean floor, and death
@@ -2955,6 +2966,7 @@ fn main() {
     let mut eval_hrm_onnx: Option<(PathBuf, PathBuf, PathBuf, PathBuf)> = None;
     let mut generate_hrm_branches_mode: Option<(PathBuf, PathBuf, PathBuf, PathBuf)> = None;
     let mut hrm_device = HrmDevice::Auto;
+    let mut hrm_batch_size: Option<usize> = None;
     let mut rollout_max_actions: usize = 1000;
     let mut target_states: usize = 500;
     let mut randomize = false;
@@ -3043,6 +3055,17 @@ fn main() {
                     eprintln!("--hrm-device must be auto, cuda, or cpu");
                     std::process::exit(2);
                 });
+            }
+            "--hrm-batch-size" => {
+                hrm_batch_size = Some(
+                    args.next()
+                        .and_then(|value| value.parse().ok())
+                        .filter(|batch_size| *batch_size > 0)
+                        .unwrap_or_else(|| {
+                            eprintln!("--hrm-batch-size must be a positive integer");
+                            std::process::exit(2);
+                        }),
+                );
             }
             "--rollout-max-actions" => {
                 rollout_max_actions = args.next().and_then(|s| s.parse().ok()).unwrap_or(1000)
@@ -3149,6 +3172,7 @@ fn main() {
             &onnx_path,
             &output_path,
             hrm_device,
+            hrm_batch_size,
             rollout_max_actions,
         ) {
             eprintln!("{message}");
@@ -3184,6 +3208,7 @@ fn main() {
             &output_dir,
             &report_stem,
             hrm_device,
+            hrm_batch_size,
             rollout_max_actions,
         ) {
             eprintln!("{message}");

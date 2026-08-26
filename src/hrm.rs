@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 const RUNTIME_FORMAT: &str = "sts-combat-hrm-onnx";
 const DEFAULT_ORT_LIBRARY: &str = "/usr/lib/libonnxruntime.so";
+const DEFAULT_CUDA_BATCH_SIZE: usize = 10;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Act3Boss {
@@ -79,6 +80,8 @@ struct RuntimeMetadata {
     vocabulary: Vec<String>,
     action_list: Vec<String>,
     model_defaults: ModelDefaults,
+    #[serde(default)]
+    fixed_batch_size: Option<usize>,
     split_map: HashMap<String, String>,
 }
 
@@ -100,10 +103,13 @@ pub struct HrmPolicy {
     actions: Vec<Action>,
     max_tokens: usize,
     batch_size: usize,
+    fixed_batch_size: bool,
     split_map: HashMap<usize, String>,
     device: &'static str,
     encoding_time: Duration,
     inference_time: Duration,
+    inference_calls: usize,
+    inference_rows: usize,
 }
 
 impl HrmPolicy {
@@ -111,12 +117,13 @@ impl HrmPolicy {
         metadata_path: &Path,
         onnx_path: &Path,
         requested_device: HrmDevice,
+        requested_batch_size: Option<usize>,
     ) -> Result<Self, String> {
         let metadata_bytes = std::fs::read(metadata_path)
             .map_err(|error| format!("read {}: {error}", metadata_path.display()))?;
         let metadata: RuntimeMetadata = serde_json::from_slice(&metadata_bytes)
             .map_err(|error| format!("parse {}: {error}", metadata_path.display()))?;
-        if metadata.schema_version != 1 || metadata.format != RUNTIME_FORMAT {
+        if !matches!(metadata.schema_version, 1 | 2) || metadata.format != RUNTIME_FORMAT {
             return Err(format!(
                 "{} is not a supported combat HRM runtime manifest",
                 metadata_path.display()
@@ -172,7 +179,7 @@ impl HrmPolicy {
             .map_err(|error| format!("create ONNX session builder: {error}"))?
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(|error| format!("configure ONNX graph optimization: {error}"))?
-            .with_memory_pattern(false)
+            .with_memory_pattern(metadata.fixed_batch_size.is_some())
             .map_err(|error| format!("configure dynamic-batch memory handling: {error}"))?;
         if use_cuda {
             builder = builder
@@ -218,9 +225,34 @@ impl HrmPolicy {
             })
             .collect::<Result<HashMap<_, _>, _>>()?;
 
-        // Two training batches amortize launches without exhausting an 8 GiB
-        // card on the model's quadratic 384-token attention workspace.
-        let batch_size = metadata.model_defaults.batch_size.saturating_mul(2).max(1);
+        // Measurements on the 8 GiB target show that this small half-precision
+        // graph is fastest with ten states per call. Larger CUDA batches make
+        // its attention kernels slower, while smaller ones lose time to launch
+        // overhead. A fixed runtime supplies its own batch size on either device;
+        // legacy dynamic CPU runtimes retain the historical two-training-batch
+        // size. Independent sessions and ONNX's parallel graph scheduler were
+        // benchmarked too, but only added synchronization overhead on the target.
+        let batch_size = requested_batch_size
+            .or(metadata.fixed_batch_size)
+            .unwrap_or_else(|| {
+                if use_cuda {
+                    DEFAULT_CUDA_BATCH_SIZE
+                } else {
+                    metadata.model_defaults.batch_size.saturating_mul(2).max(1)
+                }
+            });
+        if batch_size == 0 {
+            return Err("HRM inference batch size must be positive".to_string());
+        }
+        if metadata
+            .fixed_batch_size
+            .is_some_and(|fixed| fixed != batch_size)
+        {
+            return Err(format!(
+                "runtime requires batch size {}, but batch size {batch_size} was requested",
+                metadata.fixed_batch_size.expect("checked as present")
+            ));
+        }
         Ok(Self {
             session,
             token_to_id,
@@ -228,10 +260,13 @@ impl HrmPolicy {
             actions,
             max_tokens: metadata.model_defaults.max_tokens,
             batch_size,
+            fixed_batch_size: metadata.fixed_batch_size.is_some(),
             split_map,
             device: if use_cuda { "cuda" } else { "cpu" },
             encoding_time: Duration::ZERO,
             inference_time: Duration::ZERO,
+            inference_calls: 0,
+            inference_rows: 0,
         })
     }
 
@@ -251,64 +286,115 @@ impl HrmPolicy {
         self.inference_time
     }
 
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
+
+    pub fn inference_calls(&self) -> usize {
+        self.inference_calls
+    }
+
+    pub fn has_fixed_batch_size(&self) -> bool {
+        self.fixed_batch_size
+    }
+
+    pub fn inference_rows(&self) -> usize {
+        self.inference_rows
+    }
+
     pub fn choose(
         &mut self,
         inputs: &[HrmInferenceInput<'_>],
     ) -> Result<Vec<HrmInferenceChoice>, String> {
-        let mut choices = Vec::with_capacity(inputs.len());
-        for chunk in inputs.chunks(self.batch_size) {
-            let encoding_started = Instant::now();
-            let mut input_ids = vec![0_i64; chunk.len() * self.max_tokens];
-            let encoded_rows = chunk
-                .par_iter()
-                .map(|input| {
-                    let tokens = state_tokens(input.boss, input.state, input.legal_actions);
-                    let token_ids = tokens
-                        .into_iter()
-                        .take(self.max_tokens)
-                        .map(|token| self.token_to_id.get(&token).copied().unwrap_or(1))
-                        .collect::<Vec<_>>();
-                    let legal_ids = input
-                        .legal_actions
-                        .iter()
-                        .filter_map(|action| {
-                            self.action_to_id
-                                .get(&canonical_action_key(action))
-                                .copied()
-                        })
-                        .collect::<Vec<_>>();
-                    (token_ids, legal_ids)
-                })
-                .collect::<Vec<_>>();
-            let mut legal_ids = Vec::with_capacity(chunk.len());
-            for (row, (token_ids, row_legal_ids)) in encoded_rows.into_iter().enumerate() {
-                let offset = row * self.max_tokens;
-                input_ids[offset..offset + token_ids.len()].copy_from_slice(&token_ids);
-                legal_ids.push(row_legal_ids);
-            }
-            self.encoding_time += encoding_started.elapsed();
+        struct InferenceChunk {
+            rows: usize,
+            input_ids: Vec<i64>,
+        }
 
-            let inference_started = Instant::now();
-            let tensor = Tensor::<i64>::from_array(([chunk.len(), self.max_tokens], input_ids))
-                .map_err(|error| format!("build HRM input tensor: {error}"))?;
-            let outputs = self
-                .session
-                .run(ort::inputs!["input_ids" => tensor])
-                .map_err(|error| format!("run HRM ONNX inference: {error}"))?;
-            let (shape, logits) = outputs["action_logits"]
-                .try_extract_tensor::<f32>()
-                .map_err(|error| format!("read HRM action logits: {error}"))?;
-            if shape.as_ref() != [chunk.len() as i64, self.actions.len() as i64] {
-                return Err(format!(
-                    "unexpected HRM output shape {:?}; expected [{}, {}]",
-                    shape,
-                    chunk.len(),
-                    self.actions.len()
-                ));
+        let encoding_started = Instant::now();
+        let encoded_rows = inputs
+            .par_iter()
+            .map(|input| {
+                let tokens = state_tokens(input.boss, input.state, input.legal_actions);
+                let token_ids = tokens
+                    .into_iter()
+                    .take(self.max_tokens)
+                    .map(|token| self.token_to_id.get(&token).copied().unwrap_or(1))
+                    .collect::<Vec<_>>();
+                let legal_ids = input
+                    .legal_actions
+                    .iter()
+                    .filter_map(|action| {
+                        self.action_to_id
+                            .get(&canonical_action_key(action))
+                            .copied()
+                    })
+                    .collect::<Vec<_>>();
+                (token_ids, legal_ids)
+            })
+            .collect::<Vec<_>>();
+        let mut chunks = Vec::with_capacity(inputs.len().div_ceil(self.batch_size));
+        for rows in encoded_rows.chunks(self.batch_size) {
+            let mut input_ids = vec![0_i64; rows.len() * self.max_tokens];
+            for (row, (token_ids, _)) in rows.iter().enumerate() {
+                let offset = row * self.max_tokens;
+                input_ids[offset..offset + token_ids.len()].copy_from_slice(token_ids);
             }
-            self.inference_time += inference_started.elapsed();
-            for (row, input) in chunk.iter().enumerate() {
-                if legal_ids[row].is_empty() {
+            chunks.push(InferenceChunk {
+                rows: rows.len(),
+                input_ids,
+            });
+        }
+        let legal_ids = encoded_rows
+            .into_iter()
+            .map(|(_, legal_ids)| legal_ids)
+            .collect::<Vec<_>>();
+        self.encoding_time += encoding_started.elapsed();
+
+        let inference_started = Instant::now();
+        let action_count = self.actions.len();
+        let max_tokens = self.max_tokens;
+        let fixed_batch_size = self.fixed_batch_size.then_some(self.batch_size);
+        let logits_by_chunk = chunks
+            .iter_mut()
+            .map(|chunk| {
+                let tensor_rows = fixed_batch_size.unwrap_or(chunk.rows);
+                if chunk.input_ids.len() < tensor_rows * max_tokens {
+                    chunk.input_ids.resize(tensor_rows * max_tokens, 0);
+                }
+                let tensor = Tensor::<i64>::from_array((
+                    [tensor_rows, max_tokens],
+                    std::mem::take(&mut chunk.input_ids),
+                ))
+                .map_err(|error| format!("build HRM input tensor: {error}"))?;
+                let outputs = self
+                    .session
+                    .run(ort::inputs!["input_ids" => tensor])
+                    .map_err(|error| format!("run HRM ONNX inference: {error}"))?;
+                let (shape, logits) = outputs["action_logits"]
+                    .try_extract_tensor::<f32>()
+                    .map_err(|error| format!("read HRM action logits: {error}"))?;
+                if shape.as_ref() != [tensor_rows as i64, action_count as i64] {
+                    return Err(format!(
+                        "unexpected HRM output shape {:?}; expected [{}, {}]",
+                        shape, tensor_rows, action_count
+                    ));
+                }
+                Ok(logits[..chunk.rows * action_count].to_vec())
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.inference_time += inference_started.elapsed();
+        self.inference_calls += chunks.len();
+        self.inference_rows += inputs.len();
+
+        let mut choices = Vec::with_capacity(inputs.len());
+        let mut input_offset = 0usize;
+        for logits in logits_by_chunk {
+            let rows = logits.len() / action_count;
+            for row in 0..rows {
+                let input = &inputs[input_offset + row];
+                let row_legal_ids = &legal_ids[input_offset + row];
+                if row_legal_ids.is_empty() {
                     let action = input
                         .legal_actions
                         .first()
@@ -320,8 +406,8 @@ impl HrmPolicy {
                     });
                     continue;
                 }
-                let row_logits = &logits[row * self.actions.len()..(row + 1) * self.actions.len()];
-                let best_id = legal_ids[row]
+                let row_logits = &logits[row * action_count..(row + 1) * action_count];
+                let best_id = row_legal_ids
                     .iter()
                     .copied()
                     .max_by(|left, right| row_logits[*left].total_cmp(&row_logits[*right]))
@@ -331,7 +417,9 @@ impl HrmPolicy {
                     fallback: false,
                 });
             }
+            input_offset += rows;
         }
+        debug_assert_eq!(input_offset, inputs.len());
         Ok(choices)
     }
 }

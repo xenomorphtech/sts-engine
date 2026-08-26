@@ -14,24 +14,27 @@ const DEFAULT_CHECKPOINT: &str = "artifacts/hrm/combat-hrm-10m.pt";
 const EXPORT_SCRIPT: &str = "tools/export_hrm_onnx.py";
 const DEFAULT_OUTPUT_DIR: &str = "artifacts/hrm";
 const PYTORCH_INDEX: &str = "https://download.pytorch.org/whl/cu128";
+const RUNTIME_SCHEMA_VERSION: u64 = 2;
 
 struct Options {
     checkpoint: PathBuf,
     device: String,
     output_dir: PathBuf,
     max_actions: usize,
+    batch_size: Option<usize>,
     branches_output: Option<PathBuf>,
 }
 
 fn usage() {
     println!(
         "Usage: sts-hrm-eval [--checkpoint PATH] [--device auto|cuda|cpu] \
-[--output-dir PATH] [--max-actions N] [--branches-output PATH]\n\n\
+[--output-dir PATH] [--max-actions N] [--batch-size N] [--branches-output PATH]\n\n\
 Defaults: artifacts/hrm/combat-hrm-10m.pt, checked-in 500-puzzle Defect A0 Act 3 \
 boss fixture, automatic CUDA selection, 1000 actions per puzzle, and reports \
 under artifacts/hrm.\n\n\
 Inference, exact rollouts, loop detection, and reporting run in Rust. If the \
 trainer-neutral ONNX artifact is missing or stale, it is exported once first. \
+--batch-size overrides dynamic runtimes for benchmarking; fixed runtimes reject mismatches. \
 --branches-output instead scores every legal opening action for training-split \
 states and writes outcome-aware training data."
     );
@@ -52,6 +55,7 @@ fn parse_options(root: &Path) -> Result<Options, String> {
         device: "auto".to_string(),
         output_dir: root.join(DEFAULT_OUTPUT_DIR),
         max_actions: 1000,
+        batch_size: None,
         branches_output: None,
     };
     let mut args = env::args().skip(1);
@@ -86,6 +90,17 @@ fn parse_options(root: &Path) -> Result<Options, String> {
                 if options.max_actions == 0 {
                     return Err("--max-actions must be positive".to_string());
                 }
+            }
+            "--batch-size" => {
+                let batch_size = args
+                    .next()
+                    .ok_or_else(|| "--batch-size requires a value".to_string())?
+                    .parse()
+                    .map_err(|_| "--batch-size must be a positive integer".to_string())?;
+                if batch_size == 0 {
+                    return Err("--batch-size must be positive".to_string());
+                }
+                options.batch_size = Some(batch_size);
             }
             "--branches-output" => {
                 let raw = args
@@ -179,6 +194,13 @@ fn runtime_paths(checkpoint: &Path) -> (PathBuf, PathBuf) {
 
 fn runtime_needs_export(checkpoint: &Path, onnx: &Path, metadata: &Path) -> bool {
     if !onnx.is_file() || !metadata.is_file() {
+        return true;
+    }
+    let current_schema = fs::read(metadata)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|manifest| manifest.get("schema_version")?.as_u64());
+    if current_schema != Some(RUNTIME_SCHEMA_VERSION) {
         return true;
     }
     let Some(checkpoint_time) = modified(checkpoint) else {
@@ -341,6 +363,9 @@ fn run() -> Result<(), String> {
         .arg(&options.device)
         .arg("--rollout-max-actions")
         .arg(options.max_actions.to_string());
+    if let Some(batch_size) = options.batch_size {
+        command.arg("--hrm-batch-size").arg(batch_size.to_string());
+    }
     let result = run_checked(command, "evaluate the combat HRM in Rust");
     let _ = fs::remove_file(&decoded);
     result.map(|_| ())
