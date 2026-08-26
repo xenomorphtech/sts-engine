@@ -29,7 +29,10 @@ pub mod unlocks;
 pub mod walk;
 
 pub use action::Action;
-pub use env::TrainEnv;
+pub use env::{
+    RunMeasurements, RunOutcome, StepInfo, TrainEnv, TrainingAction, TrainingObservation,
+    TRAINING_FEATURE_BUCKETS,
+};
 pub use game::{Game, Screen};
 pub use ids::Character;
 pub use replay::{load_commands, open_jsonl, replay_seed};
