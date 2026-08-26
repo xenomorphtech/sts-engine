@@ -33,12 +33,12 @@
   },
   "checkpoint": "/home/sdancer/slay_the_spire/sts-engine/artifacts/hrm/combat-hrm-10m.runtime.json",
   "device": "cuda",
-  "elapsed_seconds": 23.478321246,
+  "elapsed_seconds": 23.249398072,
   "fallback_actions": 0,
   "inference_batching": {
     "calls": 3694,
     "configured_max_batch_size": 10,
-    "fixed_batch": true,
+    "fixed_batch_size": true,
     "mean_rows_per_call": 9.698700595560368,
     "rows": 35827
   },
@@ -78,11 +78,11 @@
   "terminal_mean_actions_played": 72.07287449392713,
   "terminal_puzzles": 494,
   "timing_seconds": {
-    "action_step": 0.994229743,
-    "model_inference": 19.635834381,
-    "state_snapshot": 1.714358833,
-    "token_encoding": 0.582417462,
-    "total": 23.478321246
+    "action_step": 0.945041654,
+    "model_inference": 19.621828932,
+    "state_snapshot": 1.62697023,
+    "token_encoding": 0.53582865,
+    "total": 23.249398072
   },
   "win_rate": 0.38
 }
