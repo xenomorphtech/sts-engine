@@ -1,0 +1,82 @@
+{
+  "by_boss": {
+    "AwakenedOne": {
+      "capped": 1,
+      "loss": 114,
+      "win": 55
+    },
+    "DonuAndDeca": {
+      "capped": 1,
+      "loss": 91,
+      "win": 76
+    },
+    "TimeEater": {
+      "capped": 3,
+      "loss": 117,
+      "win": 42
+    }
+  },
+  "by_split": {
+    "test": {
+      "capped": 1,
+      "loss": 33,
+      "win": 16
+    },
+    "train": {
+      "capped": 4,
+      "loss": 259,
+      "win": 137
+    },
+    "val": {
+      "loss": 30,
+      "win": 20
+    }
+  },
+  "checkpoint": "/home/sdancer/slay_the_spire/sts-engine/artifacts/hrm/combat-hrm-5m.runtime.json",
+  "device": "cuda",
+  "elapsed_seconds": 36.241952723,
+  "fallback_actions": 0,
+  "mean_actions_played": 70.622,
+  "mean_turns_played": 11.624,
+  "median_actions_played": 67.5,
+  "median_turns_played": 11.0,
+  "onnx": "/home/sdancer/slay_the_spire/sts-engine/artifacts/hrm/combat-hrm-5m.onnx",
+  "outcomes": {
+    "capped": 5,
+    "loss": 322,
+    "win": 173
+  },
+  "puzzles": 500,
+  "runtime": "rust-onnxruntime",
+  "schema_version": 1,
+  "score_by_outcome": {
+    "capped": {
+      "count": 5,
+      "kind": "monster_hp_delta",
+      "mean": 92.8,
+      "median": 62.0
+    },
+    "loss": {
+      "count": 322,
+      "kind": "monster_hp_delta",
+      "mean": 356.8074534161491,
+      "median": 345.0
+    },
+    "win": {
+      "count": 173,
+      "kind": "player_hp_delta",
+      "mean": -41.017341040462426,
+      "median": -43.0
+    }
+  },
+  "terminal_mean_actions_played": 71.12121212121212,
+  "terminal_puzzles": 495,
+  "timing_seconds": {
+    "action_step": 2.451756624,
+    "model_inference": 18.195216185,
+    "state_snapshot": 5.793047342,
+    "token_encoding": 8.878361344,
+    "total": 36.241952723
+  },
+  "win_rate": 0.346
+}

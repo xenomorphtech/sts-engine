@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A source-grounded HRM reference and experiment design for training Slay the Spire combat models.">
+  <title>HRM for Combat Training — Research Reference</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d12;
+      --panel: #121722;
+      --panel-2: #181e2b;
+      --ink: #edf0f7;
+      --muted: #aab2c4;
+      --line: #2a3243;
+      --amber: #ffb454;
+      --amber-dim: #5a3b1c;
+      --cyan: #67d8e8;
+      --cyan-dim: #173f48;
+      --violet: #ad91ff;
+      --violet-dim: #352958;
+      --green: #72d89c;
+      --max: 1160px;
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(173,145,255,.10), transparent 27rem),
+        radial-gradient(circle at 88% 4%, rgba(255,180,84,.08), transparent 25rem),
+        var(--bg);
+      color: var(--ink);
+      font: 16px/1.62 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--cyan); text-decoration-thickness: 1px; text-underline-offset: .18em; }
+    a:hover { color: #a9eff8; }
+    code, pre, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code {
+      padding: .12em .34em;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #0c111a;
+      font-size: .91em;
+    }
+    pre {
+      margin: 1rem 0;
+      padding: 1rem 1.1rem;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #090c12;
+      color: #dbe3f2;
+      line-height: 1.55;
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      max-width: 1480px;
+      margin: 0 auto;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      padding: 1.5rem 1rem 2rem 1.25rem;
+      overflow: auto;
+      border-right: 1px solid var(--line);
+      background: rgba(11,13,18,.86);
+      backdrop-filter: blur(14px);
+    }
+    .nav-title {
+      display: block;
+      margin: 0 0 1rem;
+      color: var(--ink);
+      font-weight: 750;
+      letter-spacing: -.02em;
+      text-decoration: none;
+    }
+    nav ol { margin: 0; padding: 0; list-style: none; }
+    nav li { margin: .1rem 0; }
+    nav li.sub a { padding-left: 1.4rem; color: #8f99ad; font-size: .85rem; }
+    nav a {
+      display: block;
+      padding: .42rem .58rem;
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: .9rem;
+      text-decoration: none;
+    }
+    nav a:hover, nav a.active { background: var(--panel-2); color: var(--ink); }
+    .nav-meta { margin-top: 1.25rem; color: #7f899d; font-size: .75rem; }
+    main { min-width: 0; padding: 0 3.2rem 6rem; }
+    article { max-width: var(--max); margin: 0 auto; }
+    header.hero { padding: 5.5rem 0 3.7rem; border-bottom: 1px solid var(--line); }
+    .eyebrow {
+      margin: 0 0 .55rem;
+      color: var(--amber);
+      font: 700 .77rem/1.2 "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, h4 { line-height: 1.16; letter-spacing: -.025em; }
+    h1 { max-width: 900px; margin: 0; font-size: clamp(2.7rem, 7vw, 5.4rem); }
+    h2 { margin: 0 0 1.2rem; font-size: clamp(1.8rem, 4vw, 2.7rem); }
+    h3 { margin: 2rem 0 .75rem; font-size: 1.35rem; }
+    h4 { margin: 1.35rem 0 .4rem; font-size: 1rem; color: var(--amber); }
+    .dek { max-width: 800px; margin: 1.4rem 0; color: #c4cbda; font-size: 1.15rem; }
+    .meta-row { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: 1.5rem; }
+    .badge, .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: .36rem;
+      padding: .28rem .6rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(18,23,34,.75);
+      color: var(--muted);
+      font: 650 .75rem/1.2 "SFMono-Regular", Consolas, monospace;
+    }
+    .tag.fact { border-color: #376e78; background: var(--cyan-dim); color: #a8eff7; }
+    .tag.translation { border-color: #69569e; background: var(--violet-dim); color: #d8ccff; }
+    .tag.proposal { border-color: #74502a; background: var(--amber-dim); color: #ffd69c; }
+    section { padding: 4.3rem 0 1rem; scroll-margin-top: 1.5rem; }
+    section + section { border-top: 1px solid var(--line); }
+    p { margin: .7rem 0 1rem; }
+    ul, ol { padding-left: 1.3rem; }
+    li + li { margin-top: .42rem; }
+    .lead { color: #d6dbe7; font-size: 1.08rem; }
+    .small { color: var(--muted); font-size: .87rem; }
+    .grid { display: grid; gap: 1rem; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      padding: 1.1rem 1.15rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(24,30,43,.92), rgba(16,21,31,.92));
+    }
+    .card > :first-child { margin-top: 0; }
+    .card > :last-child { margin-bottom: 0; }
+    .card h3, .card h4 { margin-top: 0; }
+    .metric { font-size: 1.7rem; font-weight: 780; letter-spacing: -.04em; }
+    .metric-label { color: var(--muted); font-size: .82rem; }
+    .callout {
+      margin: 1.25rem 0;
+      padding: 1rem 1.2rem;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--amber);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background: rgba(255,180,84,.065);
+    }
+    .callout.cyan { border-left-color: var(--cyan); background: rgba(103,216,232,.06); }
+    .callout.violet { border-left-color: var(--violet); background: rgba(173,145,255,.065); }
+    .callout.green { border-left-color: var(--green); background: rgba(114,216,156,.06); }
+    .callout strong:first-child { color: #fff; }
+    .table-wrap { margin: 1rem 0 1.4rem; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; min-width: 680px; background: rgba(13,17,25,.76); }
+    th, td { padding: .78rem .85rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #161c28; color: #dfe4ef; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; }
+    td { color: #c7cedc; }
+    tr:last-child td { border-bottom: 0; }
+    td:first-child { color: var(--ink); font-weight: 620; }
+    .architecture {
+      display: grid;
+      grid-template-columns: minmax(110px,.65fr) 1.4fr 1.4fr minmax(110px,.65fr);
+      align-items: stretch;
+      gap: .7rem;
+      margin: 1.5rem 0;
+    }
+    .arch-box {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 116px;
+      padding: .85rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      text-align: center;
+    }
+    .arch-box.low { border-color: #426c75; background: linear-gradient(180deg, #17333b, #111a22); }
+    .arch-box.high { border-color: #655594; background: linear-gradient(180deg, #292340, #161724); }
+    .arch-box .title { font-weight: 760; }
+    .arch-box .detail { margin-top: .35rem; color: var(--muted); font-size: .82rem; }
+    .equation {
+      margin: 1rem 0;
+      padding: 1rem 1.2rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0a0e15;
+      color: #e6eaf2;
+      font: .94rem/1.7 "SFMono-Regular", Consolas, monospace;
+      overflow-x: auto;
+    }
+    .timeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: .55rem; margin: 1.2rem 0; }
+    .timeline > div { padding: .8rem; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+    .timeline .n { color: var(--amber); font: 700 .75rem/1 monospace; }
+    .timeline b { display: block; margin: .3rem 0; }
+    .timeline span { color: var(--muted); font-size: .78rem; }
+    .score {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: .8rem;
+      align-items: stretch;
+      margin: 1.3rem 0;
+    }
+    .score .branch { padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .score .branch.win { border-color: #356c4e; }
+    .score .branch.loss { border-color: #75434a; }
+    .score .or { align-self: center; color: var(--muted); font: .75rem monospace; }
+    details { margin: .8rem 0; border: 1px solid var(--line); border-radius: 10px; background: rgba(18,23,34,.65); }
+    summary { cursor: pointer; padding: .8rem 1rem; color: #e1e5ee; font-weight: 650; }
+    details > div { padding: 0 1rem .9rem; color: #c3cad8; }
+    .checklist { list-style: none; padding-left: 0; }
+    .checklist li { position: relative; padding-left: 1.55rem; }
+    .checklist li::before { content: "□"; position: absolute; left: 0; color: var(--amber); font-family: monospace; }
+    .rank { counter-reset: rank; list-style: none; padding: 0; }
+    .rank li { position: relative; padding: .8rem .9rem .8rem 3.2rem; border-bottom: 1px solid var(--line); }
+    .rank li::before { counter-increment: rank; content: counter(rank, decimal-leading-zero); position: absolute; left: .8rem; color: var(--amber); font: 700 .78rem monospace; }
+    .rank li:last-child { border-bottom: 0; }
+    .source-list li { margin-bottom: .8rem; }
+    .source-list span { display: block; color: var(--muted); font-size: .86rem; }
+    footer { margin-top: 5rem; padding: 2rem 0; border-top: 1px solid var(--line); color: var(--muted); font-size: .84rem; }
+    @media (max-width: 980px) {
+      .shell { display: block; }
+      nav { position: static; width: auto; height: auto; padding: 1rem 1.2rem; border-right: 0; border-bottom: 1px solid var(--line); }
+      nav ol { display: flex; gap: .25rem; overflow-x: auto; }
+      nav li { flex: 0 0 auto; }
+      nav li.sub, .nav-meta { display: none; }
+      main { padding: 0 1.4rem 4rem; }
+      header.hero { padding-top: 3.5rem; }
+      .architecture { grid-template-columns: 1fr 1fr; }
+      .timeline { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 700px) {
+      .grid.two, .grid.three, .score { grid-template-columns: 1fr; }
+      .architecture, .timeline { grid-template-columns: 1fr; }
+      .score .or { text-align: center; }
+      main { padding-inline: 1rem; }
+      h1 { font-size: 2.7rem; }
+    }
+    @media print {
+      :root { color-scheme: light; --bg: #fff; --ink: #111; --muted: #4b5563; --line: #d1d5db; --panel: #f8fafc; --panel-2: #f1f5f9; }
+      body { background: #fff; color: #111; font-size: 10.5pt; }
+      .shell { display: block; }
+      nav { display: none; }
+      main { padding: 0; }
+      header.hero { padding-top: 1rem; }
+      section { padding-top: 2rem; }
+      .card, .callout, .table-wrap, details { break-inside: avoid; background: #fff; }
+      a { color: #0b5a75; }
+      code, pre, .equation { background: #f6f7f8; color: #111; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav aria-label="Document navigation">
+      <a class="nav-title" href="#top">HRM × Combat</a>
+      <ol>
+        <li><a href="#verdict">Verdict</a></li>
+        <li><a href="#source-baseline">Source baseline</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li class="sub"><a href="#gradient">Gradient &amp; supervision</a></li>
+        <li class="sub"><a href="#act">Adaptive compute</a></li>
+        <li><a href="#implementation">Official implementation</a></li>
+        <li><a href="#evidence">Evidence</a></li>
+        <li><a href="#transfer">Transfer to combat</a></li>
+        <li><a href="#combat-model">Combat model</a></li>
+        <li class="sub"><a href="#state">State tokens</a></li>
+        <li class="sub"><a href="#actions">Action head</a></li>
+        <li class="sub"><a href="#score">Progress score</a></li>
+        <li><a href="#dataset">500-puzzle dataset</a></li>
+        <li><a href="#objectives">Training objectives</a></li>
+        <li><a href="#frontend">Training frontend</a></li>
+        <li><a href="#experiments">Experiment ladder</a></li>
+        <li><a href="#evaluation">Evaluation</a></li>
+        <li><a href="#risks">Failure modes</a></li>
+        <li><a href="#blueprint">Implementation blueprint</a></li>
+        <li><a href="#sources">Sources</a></li>
+      </ol>
+      <div class="nav-meta">Research reference<br>26 Aug 2026<br>HRM source pinned to <span class="mono">ac15626</span></div>
+    </nav>
+
+    <main>
+      <article>
+        <header class="hero" id="top">
+          <p class="eyebrow">Architecture review · experiment specification</p>
+          <h1>Hierarchical Reasoning Models for combat</h1>
+          <p class="dek">A source-grounded distillation of Sapient’s HRM, rewritten as a practical reference for training a model to solve complete Slay the Spire boss combats from engine checkpoints.</p>
+          <div class="meta-row">
+            <span class="badge">self-contained HTML</span>
+            <span class="badge">official paper v3</span>
+            <span class="badge">official code @ ac15626</span>
+            <span class="badge">combat adaptation clearly labeled</span>
+          </div>
+        </header>
+
+        <section id="verdict">
+          <p class="eyebrow">Executive answer</p>
+          <h2>Promising as a planner architecture, not a drop-in agent</h2>
+          <p class="lead">HRM’s useful idea is recurrent latent computation at two timescales: a slowly changing state can represent the fight plan while a faster state resolves card order, targeting, energy, orbs, and immediate consequences. Its published training problem, however, is static supervised sequence-to-sequence prediction—not interactive game play or reinforcement learning.</p>
+          <div class="grid three">
+            <div class="card">
+              <span class="tag fact">HRM fact</span>
+              <h3>What transfers</h3>
+              <p>Coupled high/low recurrent states, repeated latent refinement, deep supervision, constant-memory approximate gradients, and optional adaptive inference compute.</p>
+            </div>
+            <div class="card">
+              <span class="tag translation">Translation</span>
+              <h3>What must change</h3>
+              <p>Grid-token decoding becomes legal-action scoring. One static answer becomes repeated decisions against exact engine transitions. Puzzle identity becomes encounter context—not seed identity.</p>
+            </div>
+            <div class="card">
+              <span class="tag proposal">Combat proposal</span>
+              <h3>First experiment</h3>
+              <p>Behavior-clone the winning suffixes of 500 held-out-by-seed Act 3 boss-entry puzzles, then compare HRM against compute- and parameter-matched direct and single-recurrent baselines.</p>
+            </div>
+          </div>
+          <div class="callout green">
+            <strong>The 500 winner-only entries are sufficient for the scoped task.</strong>
+            Each entry is a complete, multi-turn planning puzzle with a verified winning continuation. The task is to choose strong actions and make measurable progress from the supplied state; state classification is outside the objective.
+          </div>
+          <div class="callout">
+            <strong>Non-negotiable semantic boundary:</strong> HRM’s <em>halt</em> action means “stop internal computation and emit the current prediction.” It must never be mapped to the game’s <code>EndTurn</code> action.
+          </div>
+          <h3>Label legend</h3>
+          <p><span class="tag fact">HRM fact</span> is directly described by the paper or official implementation. <span class="tag translation">Translation</span> is an inference about mapping HRM into this engine. <span class="tag proposal">Combat proposal</span> is an experiment design, not a claim made by Sapient.</p>
+        </section>
+
+        <section id="source-baseline">
+          <p class="eyebrow">Research provenance</p>
+          <h2>Source baseline</h2>
+          <p>The technical summary is based on the official paper and official repository. Repository behavior was inspected at commit <a href="https://github.com/sapientinc/HRM/tree/ac15626f8db096a63c775b84c9dc868776a6feda"><code>ac15626f8db096a63c775b84c9dc868776a6feda</code></a>; later upstream changes may differ.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Source</th><th>Used for</th><th>Interpretation rule</th></tr></thead>
+              <tbody>
+                <tr><td><a href="https://arxiv.org/html/2506.21734">HRM paper, arXiv v3</a></td><td>Architecture, gradient approximation, deep supervision, ACT, benchmarks, and authors’ interpretation.</td><td>Reported results are paper claims, not independently reproduced here.</td></tr>
+                <tr><td><a href="https://github.com/sapientinc/HRM">Official repository</a></td><td>Runnable model, loss, data loader, training loop, configuration, and operational notes.</td><td>Code behavior takes precedence when prose and implementation differ.</td></tr>
+                <tr><td><a href="https://github.com/sapientinc/HRM/blob/ac15626f8db096a63c775b84c9dc868776a6feda/models/hrm/hrm_act_v1.py">Official model source</a></td><td>Exact recurrent schedule, detached carry, Q head, batching, and inference behavior.</td><td>Pinned link keeps this document reproducible.</td></tr>
+                <tr><td><a href="../../src/env.rs">Local <code>TrainEnv</code></a>, <a href="../../src/game.rs">game transitions</a>, <a href="../../src/action.rs">actions</a></td><td>Engine-specific action and transition interface.</td><td>Combat design is scoped to the current local engine.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small">The paper is CC BY 4.0; the code repository is Apache-2.0. This document paraphrases rather than reproduces their text.</p>
+        </section>
+
+        <section id="architecture">
+          <p class="eyebrow">HRM fact</p>
+          <h2>What HRM actually computes</h2>
+          <p>HRM has four learned transformations: input encoding <span class="mono">fI</span>, low-level recurrence <span class="mono">fL</span>, high-level recurrence <span class="mono">fH</span>, and output decoding <span class="mono">fO</span>. The two recurrent modules hold full sequence-shaped hidden states.</p>
+          <div class="architecture" role="img" aria-label="Input tokens feed low-level recurrence, which exchanges state with a slower high-level recurrence, whose state is decoded to output tokens.">
+            <div class="arch-box"><span class="title">Input tokens</span><span class="detail">x → fI(x)</span></div>
+            <div class="arch-box low"><span class="title">Low state zL</span><span class="detail">fast detail · updates T times per cycle</span></div>
+            <div class="arch-box high"><span class="title">High state zH</span><span class="detail">slow context · updates once per cycle</span></div>
+            <div class="arch-box"><span class="title">Output</span><span class="detail">fO(zH)</span></div>
+          </div>
+          <div class="equation" aria-label="HRM recurrence equations">
+            x̃ = fI(x)<br>
+            zLᵢ = fL(zLᵢ₋₁, zHᵢ₋₁, x̃)<br>
+            zHᵢ = fH(zHᵢ₋₁, zLᵢ₋₁) &nbsp;when i mod T = 0; otherwise zH is held fixed<br>
+            ŷ = fO(zHᴺᵀ)
+          </div>
+          <p>A segment contains <span class="mono">N</span> high-level cycles and <span class="mono">T</span> low-level updates per cycle. The paper calls the resulting behavior <em>hierarchical convergence</em>: the low state settles under one high-level context, then the high state changes that context and starts another refinement phase. Effective recurrent depth is <span class="mono">N × T</span> per segment, multiplied again by the number of deep-supervision segments.</p>
+          <div class="grid two">
+            <div class="card">
+              <h3>High module</h3>
+              <p>Updates slowly after receiving the last low-level state for a cycle. The authors associate it with abstract planning, but the architecture does not force a human-readable plan into this state.</p>
+            </div>
+            <div class="card">
+              <h3>Low module</h3>
+              <p>Updates repeatedly while the high state remains fixed. The authors associate it with detailed computation, but “search” and “backtracking” are interpretations of observed predictions—not explicit algorithms in the model.</p>
+            </div>
+          </div>
+          <div class="callout cyan">
+            <strong>Important epistemic limit:</strong> visualizations suggest exploration, pruning, and correction on maze/Sudoku tasks. They do not prove that HRM learned a discrete search algorithm or that the high and low states will spontaneously separate into strategy and tactics in combat.
+          </div>
+
+          <h3 id="gradient">One-step gradient approximation</h3>
+          <p>Ordinary backpropagation through time stores the unrolled recurrence. HRM instead executes every recurrent update except the last low update and last high update under <code>no_grad</code>, then differentiates through those final two updates. Segment-to-segment carry is detached.</p>
+          <div class="timeline" aria-label="One HRM training segment">
+            <div><span class="n">01</span><b>Encode</b><span>Embed all input tokens.</span></div>
+            <div><span class="n">02</span><b>Recur detached</b><span>Run early H/L cycles without an autograd history.</span></div>
+            <div><span class="n">03</span><b>Final L + H</b><span>Track gradients through one update of each module.</span></div>
+            <div><span class="n">04</span><b>Decode</b><span>Predict output and halt/continue values.</span></div>
+            <div><span class="n">05</span><b>Update</b><span>Optimize, detach carry, optionally continue.</span></div>
+          </div>
+          <p>The paper motivates this as the first term of a Neumann-series approximation to an implicit fixed-point gradient. It offers constant activation-memory growth with recurrent depth, but it is still an approximation: early recurrent computations receive no exact temporal credit assignment.</p>
+
+          <h3>Deep supervision</h3>
+          <p>A sample can run for several segments. Every segment decodes an answer, incurs the supervised loss, and performs an optimizer update. The hidden state is then detached and reused. This makes intermediate computations directly predictive and supplies frequent learning signals without supervising an explicit reasoning trace.</p>
+
+          <h3 id="act">Adaptive computation time (ACT)</h3>
+          <p>A two-output Q head on the high state estimates <span class="mono">halt</span> and <span class="mono">continue</span>. Halting receives a binary reward for exact output correctness; continuing bootstraps from the next segment’s Q values. Exploration sometimes imposes a random minimum number of segments.</p>
+          <div class="grid two">
+            <div class="card"><h4>Training</h4><p>Stop when maximum segments is reached or halt value exceeds continue value after the sampled minimum. Halt/continue BCE is added to sequence loss.</p></div>
+            <div class="card"><h4>Official batched evaluation</h4><p>The implementation runs to the configured maximum for batching rather than using learned early exits. True adaptive serving therefore needs a separate evaluation path.</p></div>
+          </div>
+          <div class="callout">
+            <strong>Combat meaning:</strong> ACT selects how long the network thinks about one legal-action decision. It neither advances the simulator nor ends the player turn.
+          </div>
+        </section>
+
+        <section id="implementation">
+          <p class="eyebrow">HRM fact</p>
+          <h2>Official implementation profile</h2>
+          <p>The default architecture is a non-causal encoder over a fixed-length sequence. Both recurrent modules use the same Transformer-block shape; their parameters are separate.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Component</th><th>Official default / behavior</th><th>Why it matters</th></tr></thead>
+              <tbody>
+                <tr><td>Model size</td><td>Paper describes approximately 27M parameters.</td><td>Baselines must be parameter- and compute-matched; “small” is relative.</td></tr>
+                <tr><td>Hidden / heads</td><td>512 hidden units, 8 attention heads.</td><td>Full attention cost scales quadratically with serialized state length.</td></tr>
+                <tr><td>Module depth</td><td>4 Transformer layers in H and 4 in L.</td><td>Each recurrent update is already an 8-layer total H/L computation.</td></tr>
+                <tr><td>Cycles</td><td><code>H_cycles: 2</code>, <code>L_cycles: 2</code>.</td><td>One segment performs four L updates and two H updates before decoding.</td></tr>
+                <tr><td>Max segments</td><td>16, with halt exploration probability 0.1.</td><td>Worst-case compute can be much larger than a direct Transformer.</td></tr>
+                <tr><td>Blocks</td><td>Non-causal attention, RoPE, SwiGLU, bias-free linear layers, Post-RMSNorm.</td><td>Any architectural ablation must preserve these choices or isolate them explicitly.</td></tr>
+                <tr><td>State initialization</td><td>Fixed truncated-normal H/L buffers; reset when a batch slot receives a fresh sample.</td><td>They are not learned initial-state parameters in the pinned implementation.</td></tr>
+                <tr><td>Input fusion</td><td>Elementwise addition of recurrent/context inputs.</td><td>Simple but may obscure roles; gated fusion is an untested alternative.</td></tr>
+                <tr><td>Token loss</td><td>Stablemax cross-entropy by default; ignored label is <code>-100</code>.</td><td>Stablemax is a hypothesis to ablate, not a universal requirement.</td></tr>
+                <tr><td>ACT loss</td><td>Sequence loss plus 0.5 × (halt BCE + continue BCE).</td><td>Halting has its own training target and scale.</td></tr>
+                <tr><td>Precision</td><td>bfloat16 model path.</td><td>Requires checking numerical behavior on the target GPU.</td></tr>
+                <tr><td>Optimization</td><td>Adam-atan2, warmup then constant LR; official base config uses LR 1e-4 and weight decay 0.1.</td><td>Compare with AdamW before attributing gains to recurrence.</td></tr>
+                <tr><td>Batching</td><td>Default global batch 768; halted slots are refilled with fresh samples.</td><td>Sample count is not the same as number of optimizer segments.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details>
+            <summary>Stablemax in the official loss</summary>
+            <div><p>The implementation maps nonnegative logits with <span class="mono">s(x)=x+1</span> and negative logits with approximately <span class="mono">s(x)=1/(1−x)</span>, normalizes these positive values, and takes their logarithm for cross-entropy. The paper uses it for small-sample generalization. Combat experiments should compare stablemax and ordinary softmax under the same seeds.</p></div>
+          </details>
+          <details>
+            <summary>Operational notes from the official README</summary>
+            <div><p>The repository expects PyTorch/CUDA and FlashAttention, integrates Weights &amp; Biases, and describes single-GPU and eight-GPU recipes. It warns that 1K-sample experiments can vary by roughly two accuracy points and that late Sudoku training can overfit or destabilize Q-learning, recommending early stopping near full training accuracy.</p></div>
+          </details>
+        </section>
+
+        <section id="evidence">
+          <p class="eyebrow">Paper-reported evidence</p>
+          <h2>What the published results establish—and what they do not</h2>
+          <div class="grid three">
+            <div class="card"><div class="metric">~27M</div><div class="metric-label">parameters reported</div></div>
+            <div class="card"><div class="metric">1,000</div><div class="metric-label">training examples in the small-data Sudoku and Maze settings</div></div>
+            <div class="card"><div class="metric">40.3%</div><div class="metric-label">paper-reported ARC-AGI-1 score with augmentation and voting</div></div>
+          </div>
+          <p>The paper reports near-perfect exact solutions on difficult Sudoku and optimal 30×30 maze pathfinding from 1,000 examples, while a direct 8-layer Transformer with a matched training setup fails on those small-data tasks. It also reports that increasing the inference segment cap can improve Sudoku accuracy.</p>
+          <div class="callout violet">
+            <strong>Do not transfer the headline sample-efficiency claim literally.</strong> A Sudoku example supplies 81 dense output-token labels, a maze supplies up to 900, augmentation creates many variants, and the target is deterministic and fully observed. One combat entry is interactive and branches after every action; the engine creates comparable density through suffix replay and optional counterfactual rollouts.
+          </div>
+          <h3>Evidence strength for this project</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Claim</th><th>Current support</th><th>Required combat test</th></tr></thead>
+              <tbody>
+                <tr><td>Two timescales improve long reasoning</td><td>Positive evidence on static algorithmic puzzles.</td><td>Beat a matched single-recurrent model on held-out boss entries.</td></tr>
+                <tr><td>One-step gradients are sufficient</td><td>Positive evidence in the reported HRM setup.</td><td>Compare against truncated BPTT at equal memory or wall-clock budget.</td></tr>
+                <tr><td>ACT saves compute</td><td>Paper ablation; official evaluation path often uses max steps.</td><td>Measure actual per-decision segments, latency, and score regret with learned early exits.</td></tr>
+                <tr><td>Latent hierarchy becomes strategy/tactics</td><td>Suggestive visualizations and state statistics.</td><td>Probe high/low states against boss phase, turn plan, target, energy, and card-order labels.</td></tr>
+                <tr><td>1K examples suffice</td><td>Task-specific paper result with structured augmentation.</td><td>Learning curve over 50/100/250/500 entry puzzles and all replayed decision states.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="transfer">
+          <p class="eyebrow">Translation</p>
+          <h2>The transfer gap: puzzle completion → interactive combat</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Original HRM task</th><th>Combat reality</th><th>Design consequence</th></tr></thead>
+              <tbody>
+                <tr><td>One fixed input</td><td>Every played card mutates hand, energy, enemies, powers, orbs, RNG, and legal actions.</td><td>Re-encode and decide after every engine transition; do not emit an unchecked full-fight script.</td></tr>
+                <tr><td>One fixed-length token output</td><td>Legal action count and semantics vary by state.</td><td>Score the current legal-action set with a mask or pointer-style head.</td></tr>
+                <tr><td>Exact output correctness</td><td>Several actions may lead to equally strong wins.</td><td>Use expert action distribution, search score/regret, or multi-label near-optimal targets.</td></tr>
+                <tr><td>Fully observed deterministic puzzle</td><td>Combat includes randomized draw/intent paths and potentially private engine bookkeeping.</td><td>Define an observation contract and prevent unavailable state from leaking into inputs.</td></tr>
+                <tr><td>Dense token supervision</td><td>Terminal combat result arrives after many choices.</td><td>Replay expert suffixes into per-decision examples; add terminal progress scores and optional counterfactual action labels.</td></tr>
+                <tr><td>Learnable puzzle ID (ARC)</td><td>A seed ID uniquely identifies a trajectory.</td><td>Never embed raw seed or checkpoint ID; that invites memorization.</td></tr>
+                <tr><td>Semantics-preserving grid transforms</td><td>Most card/enemy permutations change action indices or game meaning.</td><td>Only augment with proven symmetries and remap every affected action target.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Recommended problem formulation</h3>
+          <p>Train a <strong>receding-horizon policy</strong>. At decision state <span class="mono">sₜ</span>, the model reasons internally, scores only <span class="mono">legal_actions(sₜ)</span>, selects <span class="mono">aₜ</span>, and lets the exact engine produce <span class="mono">sₜ₊₁</span>. The model may retain a recurrent planning state across decisions as an ablation, but correctness must not depend on stale hidden state after unexpected outcomes.</p>
+          <div class="equation">
+            sₜ → serialize(sₜ) → HRM segments → scores(a ∈ Legal(sₜ)) → choose aₜ<br>
+            sₜ₊₁ = Engine.step(sₜ, aₜ) → repeat until terminal
+          </div>
+        </section>
+
+        <section id="combat-model">
+          <p class="eyebrow">Combat proposal</p>
+          <h2>A combat-native HRM</h2>
+          <p class="lead">Use HRM as the state encoder and latent deliberation core. Replace the grid decoder with structured action scoring and a required terminal-progress head.</p>
+          <div class="grid two">
+            <div class="card">
+              <span class="tag translation">Intended high state</span>
+              <h3>Slow fight plan</h3>
+              <ul>
+                <li>boss phase and upcoming transition window;</li>
+                <li>damage race and survivability budget;</li>
+                <li>power setup versus immediate tempo;</li>
+                <li>orb release/protection schedule;</li>
+                <li>next-turn resource and draw expectations.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <span class="tag translation">Intended low state</span>
+              <h3>Fast turn tactics</h3>
+              <ul>
+                <li>card order, costs, X-cost allocation, and targets;</li>
+                <li>lethal/block arithmetic and overkill;</li>
+                <li>orb channel/evoke sequencing;</li>
+                <li>potion timing;</li>
+                <li>legality and exact post-action consequences.</li>
+              </ul>
+            </div>
+          </div>
+          <p class="small">These roles are desired representations, not guaranteed emergent behavior. Auxiliary probes can measure whether the separation appears; auxiliary losses can encourage it only after a plain model baseline exists.</p>
+
+          <h3 id="state">State-token contract</h3>
+          <p>Serialize entities as typed groups, preserve meaningful order, and attach numeric features through bucket tokens or projected scalar features. A practical sequence is:</p>
+          <pre>[CLS]
+[RUN] ascension act floor character max_hp hp gold
+[TURN] turn energy block cards_played stance/phase bookkeeping
+[PLAYER_POWERS] (power_id amount ...)
+[ORBS] capacity focus [SLOT 0 type passive evoke ...] ...
+[HAND] [CARD 0 id upgrade cost flags ...] ...
+[DRAW] aggregate or ordered observable cards
+[DISCARD] card multiset / ordered list when relevant
+[EXHAUST] card multiset
+[ENEMIES] [ENEMY 0 id hp block intent powers phase ...] ...
+[RELICS] (relic_id counter ...)
+[POTIONS] (slot potion_id usable ...)
+[LEGAL] structured encodings of every legal action
+[END]</pre>
+          <div class="grid two">
+            <div class="card"><h4>Observable-policy track</h4><p>Include only information available to a real player or explicitly derived from it. This is the fair deployment target.</p></div>
+            <div class="card"><h4>Engine-oracle track</h4><p>Include RNG/private bookkeeping only as a separate upper-bound experiment. Never mix oracle examples into the observable-policy evaluation.</p></div>
+          </div>
+
+          <h3 id="actions">Legal-action head</h3>
+          <p>The engine already exposes a state-dependent <a href="../../src/game.rs"><code>Game::legal_actions()</code></a> set containing card plays with optional targets, <code>EndTurn</code>, and potion operations. Encode each candidate action, cross-attend it to the final high state, and emit one scalar per candidate:</p>
+          <div class="equation">
+            eₐ = ActionEncoder(type, card/slot, target, cost, local features)<br>
+            logit(a) = MLP([pool(zH); eₐ; interaction(pool(zH), eₐ)])<br>
+            π(a | s) = softmax(logit(a)) over a ∈ Legal(s) only
+          </div>
+          <ul>
+            <li>Never learn legality as the only guardrail; use the exact engine mask.</li>
+            <li>Prefer semantic action identities over the transient list index. Hand and enemy indices remain features because they identify current entities.</li>
+            <li>If equivalent actions occur, canonicalize them or allow a set of acceptable labels.</li>
+            <li>ACT halt/continue logits come from a separate head and cannot enter this action softmax.</li>
+          </ul>
+
+          <h3 id="score">Terminal progress score</h3>
+          <p>Rollouts receive a piecewise terminal score that measures actual progress and remains informative when a candidate line dies.</p>
+          <div class="score">
+            <div class="branch win">
+              <span class="tag proposal">Combat won</span>
+              <h3>Player HP delta</h3>
+              <p><span class="mono">ΔHPplayer = HPend − HPentry</span></p>
+              <p class="small">Prefer the winning line that preserves more player HP; values closer to zero are better when no healing exceeds entry HP.</p>
+            </div>
+            <div class="or">ELSE</div>
+            <div class="branch loss">
+              <span class="tag proposal">Combat lost</span>
+              <h3>Monster HP delta</h3>
+              <p><span class="mono">ΔHPmonsters = M(entry) − M(end)</span></p>
+              <p class="small">Prefer the failed line that removed more phase-normalized encounter HP, so training/search still sees progress toward a kill.</p>
+            </div>
+          </div>
+          <div class="callout green">
+            <strong>Ordering rule:</strong> compare terminal outcome first (a win outranks a loss), then compare the applicable HP delta within that outcome. This avoids a high-damage loss outranking a win while retaining dense ranking among failed continuations.
+          </div>
+          <p>Here <span class="mono">M(s)</span> is total remaining monster HP across every required living or latent boss phase. Donu and Deca contribute both living HP pools; Awakened One includes its current and still-unseen form; a Time Eater heal increases remaining HP again. Defining the delta this way keeps phase transitions continuous and prevents a newly spawned form from looking like negative progress.</p>
+          <p>Use this score for teacher search, counterfactual action ranking, rollout regret, and the model’s progress head. Without the loss branch, failed continuations would have no direction of improvement.</p>
+        </section>
+
+        <section id="dataset">
+          <p class="eyebrow">Combat proposal · available corpus</p>
+          <h2>500 independent Act 3 boss puzzles</h2>
+          <p>The local corpus <a href="../../fixtures/htn/defect-a0-act3-boss-winning-entry-500.README.md"><code>defect-a0-act3-boss-winning-entry-500</code></a> contains 500 unique Defect A0 states at Act 3 boss-combat entry. Every record includes complete structured state, an authoritative replay prefix, a verified winning suffix, and encounter metadata.</p>
+          <div class="grid three">
+            <div class="card"><div class="metric">500</div><div class="metric-label">complete boss-entry puzzles</div></div>
+            <div class="card"><div class="metric">multi-turn</div><div class="metric-label">each suffix becomes many decision examples</div></div>
+            <div class="card"><div class="metric">verified</div><div class="metric-label">fresh-process replay and winning terminal state</div></div>
+          </div>
+
+          <h3>Expansion into training examples</h3>
+          <ol class="rank card">
+            <li>Recreate the entry exactly from <code>action_prefix</code>, then verify state equality.</li>
+            <li>At each suffix decision, save the serialized observation, complete semantic legal-action set, chosen expert action, boss/turn metadata, and entry puzzle ID.</li>
+            <li>Apply the expert action through the engine and repeat until terminal. This turns one entry into a trajectory of supervised state/action pairs.</li>
+            <li>Optionally branch alternative legal actions, continue them with HTN/search, and label each by terminal outcome plus the applicable HP delta.</li>
+            <li>Store an exact serializer/schema version and engine commit with every derived shard.</li>
+          </ol>
+
+          <h3>Split unit: the entire entry puzzle</h3>
+          <p>All decision states, counterfactual branches, augmentations, and suffix positions derived from one entry seed must remain in the same split. The implemented default is a deterministic 400 train / 50 validation / 50 test split, proportionally stratified by boss. Entry-HP stratification remains a useful later ablation.</p>
+          <div class="callout">
+            <strong>Trajectory leakage is a split error, not an objection to winner-only entries.</strong> Randomly splitting individual turns would let the model train on earlier states and test on later states from the same deterministic fight. Splitting whole puzzles measures transfer to unseen boss entries.
+          </div>
+          <h3>What this corpus is for</h3>
+          <ul>
+            <li>Training a conditional solver for complete, known-good Act 3 boss-entry puzzles.</li>
+            <li>Testing multi-turn planning, phase timing, action order, and HP preservation.</li>
+            <li>Measuring generalization across unseen seeds and boss-state configurations.</li>
+          </ul>
+          <p>Failed model rollouts supply graded monster-HP progress, while successful rollouts supply player-HP preservation. Both are action-quality signals produced by playing the puzzle.</p>
+
+          <h3>Minimal derived record</h3>
+          <pre>{
+  "schema": "combat-hrm-v1",
+  "puzzle_id": "split-stable opaque id",
+  "boss": "time_eater | awakened_one | donu_deca",
+  "turn": 3,
+  "decision": 7,
+  "observation": { "...": "observable structured state" },
+  "legal_actions": [ { "semantic action": "..." } ],
+  "expert_action": { "semantic action": "..." },
+  "terminal_score": {
+    "outcome": "win",
+    "kind": "player_hp_delta",
+    "value": -12
+  },
+  "engine_commit": "...",
+  "source_record_hash": "..."
+}</pre>
+          <p class="small">For loss targets, choose a single documented sign convention for monster HP delta and keep it everywhere. The equations above use damage dealt as a positive number.</p>
+        </section>
+
+        <section id="objectives">
+          <p class="eyebrow">Combat proposal</p>
+          <h2>Training objectives</h2>
+          <p>Use expert action imitation to anchor the policy and train the piecewise terminal-progress score alongside it. The score is required for rollout improvement: it distinguishes HP-preserving wins and gives every failed line a direction through monster damage.</p>
+          <div class="equation">Ltotal = Lpolicy + λscore·Lprogress + λrank·Lrank + λact·Lhalt + λaux·Laux</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Term</th><th>Target</th><th>Initial status</th></tr></thead>
+              <tbody>
+                <tr><td><span class="mono">Lpolicy</span></td><td>Cross-entropy over the expert action within the exact legal set. Support multiple acceptable actions when search scores tie within tolerance.</td><td>Required.</td></tr>
+                <tr><td><span class="mono">Lprogress</span></td><td>Predict outcome-conditional terminal HP delta: player HP delta on wins, monster HP delta on losses.</td><td>Required; source targets from expert and branched/model rollouts.</td></tr>
+                <tr><td><span class="mono">Lrank</span></td><td>Rank counterfactual actions by outcome first, then applicable HP delta.</td><td>Requires branch rollouts.</td></tr>
+                <tr><td><span class="mono">Lhalt</span></td><td>Choose whether another latent segment materially changes or improves the action prediction.</td><td>Defer until fixed-compute HRM works.</td></tr>
+                <tr><td><span class="mono">Laux</span></td><td>Optional boss phase, incoming damage, next-turn energy, orb events, or exact successor features.</td><td>Diagnostic first; train only with ablation.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>ACT target for combat</h3>
+          <p>The original binary “entire output exactly correct” target is awkward when actions can be near-equivalent. A combat-native halt reward should use teacher agreement or regret:</p>
+          <div class="equation">
+            halt_correct(m) = 1 if chosen action at segment m is expert-acceptable<br>
+            or: halt_utility(m) = −regret(chosen action, best action) − compute_cost·m
+          </div>
+          <p>Implement fixed segment counts first. ACT adds a Q-learning subsystem that can obscure whether gains came from hierarchy or merely more compute.</p>
+          <h3>Teacher choices versus terminal score</h3>
+          <p>The winning suffix supplies the primary action label. The piecewise terminal score resolves candidate continuations and gives failed model rollouts a direction of improvement. A sparse terminal win bit alone cannot express that progress.</p>
+        </section>
+
+        <section id="frontend">
+          <p class="eyebrow">Implemented · default experiment</p>
+          <h2>One command, not twenty parameters</h2>
+          <p>The dedicated <a href="../../src/bin/hrm_train.rs"><code>sts-hrm-train</code></a> binary owns the standard corpus, exact replay expansion, tensor cache, model configuration, device selection, five-minute budget, evaluation, and artifact names. The normal interface is:</p>
+          <pre>cargo run --release --bin sts-hrm-train</pre>
+          <p>With no arguments it uses the checked-in 500-puzzle Defect A0 Act 3 boss corpus, replays every winning suffix through the engine, constructs a deterministic boss-stratified 400/50/50 puzzle split, selects CUDA when available, trains for 300 wall-clock seconds, and writes under <code>artifacts/hrm</code>. It uses an existing training environment when possible and otherwise provisions one through <code>uv</code>, then exports an FP16 ONNX graph and runtime manifest for trainer-neutral Rust inference.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Optional override</th><th>Purpose</th><th>Default</th></tr></thead>
+              <tbody>
+                <tr><td><code>--seconds N</code></td><td>Short smoke tests or longer training budgets.</td><td>300</td></tr>
+                <tr><td><code>--device auto|cuda|cpu</code></td><td>Force the execution device only when needed.</td><td><code>auto</code></td></tr>
+                <tr><td><code>--output-dir PATH</code></td><td>Relocate generated data, cache, checkpoint, and metrics.</td><td><code>artifacts/hrm</code></td></tr>
+                <tr><td><code>--rebuild-data</code></td><td>Discard the replay-expanded data cache and reconstruct it exactly.</td><td>off</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Measured default run · 26 August 2026</h3>
+          <div class="grid three">
+            <div class="card"><div class="metric">40.18%</div><div class="metric-label">held-out decision accuracy</div></div>
+            <div class="card"><div class="metric">300.00 s</div><div class="metric-label">actual optimization time</div></div>
+            <div class="card"><div class="metric">35,951</div><div class="metric-label">optimizer updates</div></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Measured item</th><th>Result</th></tr></thead>
+              <tbody>
+                <tr><td>Hardware / precision</td><td>NVIDIA GeForce RTX 5060; CUDA; bfloat16 autocast.</td></tr>
+                <tr><td>Corpus after exact replay expansion</td><td>500 puzzles and 37,804 decisions; 30,359 train, 3,647 validation, 3,798 test.</td></tr>
+                <tr><td>State serialization</td><td>165–346 tokens, mean 287.98; zero examples truncated by the 384-token budget. This pilot is explicitly an engine-oracle solver: exact combat RNG streams and ordered piles are retained, while raw seed and run-routing data are removed.</td></tr>
+                <tr><td>Model</td><td>4,135,297 parameters; hidden 128; 4 heads; one H and one L layer; 2 × 2 cycles; 2 fixed deep-supervision segments.</td></tr>
+                <tr><td>Held-out test action accuracy</td><td>40.18% overall: Awakened One 37.65%, Donu/Deca 44.36%, Time Eater 39.68%.</td></tr>
+                <tr><td>Baselines</td><td>20.56% legal-frequency policy; 25.14% expected uniform-legal accuracy.</td></tr>
+                <tr><td>Held-out progress error</td><td>16.38 player-HP points mean absolute error.</td></tr>
+                <tr><td>Training fit</td><td>71.44% on a 2,048-decision training sample versus 41.73% validation, exposing a material generalization gap.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout green">
+            <strong>Offline verdict:</strong> the complete training path is functional and learns substantially more than the legal-frequency and uniform-legal baselines within five minutes. Closed-loop rollout below is the outcome-level test; decision agreement alone is not treated as the final result.
+          </div>
+          <p>Every source suffix is a verified win, so this first supervised run trains the progress head on player-HP delta. Closed-loop failures now record the required monster-HP delta for the next policy-improvement pass; it must not be replaced by a winnability label or a flat loss target.</p>
+          <p>The generated training checkpoint is <code>artifacts/hrm/combat-hrm-5m.pt</code>; deployment uses the derived <code>combat-hrm-5m.onnx</code> and <code>combat-hrm-5m.runtime.json</code>. Exact machine-readable training results are in <a href="../../artifacts/hrm/combat-hrm-5m-metrics.json"><code>combat-hrm-5m-metrics.json</code></a>. The detailed trainer and exporter remain behind the stable CLI in <a href="../../tools/train_hrm_combat.py"><code>tools/train_hrm_combat.py</code></a> and <a href="../../tools/export_hrm_onnx.py"><code>tools/export_hrm_onnx.py</code></a>.</p>
+
+          <h3>Closed-loop evaluation on all 500 entries</h3>
+          <p>The companion <a href="../../src/bin/hrm_eval.rs"><code>sts-hrm-eval</code></a> frontend restores every exact entry checkpoint, tokenizes states, batches ONNX inference, applies each selected semantic action, detects repeated Grid decisions, and generates reports in Rust. State preparation, token encoding, and independent game transitions are parallelized; the run continues until victory, player death, or a detected cycle/safety cap:</p>
+          <pre>cargo run --release --bin sts-hrm-eval
+column -ts $'\t' artifacts/hrm/combat-hrm-5m-rollouts.tsv | less -S</pre>
+          <div class="grid three">
+            <div class="card"><div class="metric">34.60%</div><div class="metric-label">wins across all 500 puzzles</div></div>
+            <div class="card"><div class="metric">32.00%</div><div class="metric-label">held-out test wins · 16/50</div></div>
+            <div class="card"><div class="metric">0</div><div class="metric-label">unknown-action fallbacks</div></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Closed-loop result</th><th>Measured value</th></tr></thead>
+              <tbody>
+                <tr><td>Terminal outcomes</td><td>173 wins, 322 player deaths, 5 detected cycles.</td></tr>
+                <tr><td>Awakened One</td><td>55 / 170 wins (32.35%); 114 deaths; 1 cap.</td></tr>
+                <tr><td>Donu and Deca</td><td>76 / 168 wins (45.24%); 91 deaths; 1 cap.</td></tr>
+                <tr><td>Time Eater</td><td>42 / 162 wins (25.93%); 117 deaths; 3 caps.</td></tr>
+                <tr><td>Puzzle splits</td><td>Train 137/400 wins; validation 20/50; held-out test 16/50.</td></tr>
+                <tr><td>Trajectory length</td><td>Median 11 combat turns and 67.5 semantic actions; 495 puzzles reached a true terminal state.</td></tr>
+                <tr><td>Safety caps</td><td>All five capped seeds repeated an exact policy decision on a recent Grid state. They stay distinct from both wins and deaths.</td></tr>
+                <tr><td>Runtime</td><td>21.62 seconds for all 500 on the RTX 5060, including exact prefix restoration: 17.74 s model inference, 1.63 s state snapshots, 0.77 s token encoding, and 0.95 s action application. The former Python-bridged path took 51.03 seconds.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Each row records seed, boss, split, outcome, turns/actions, player HP delta, phase-normalized encounter HP removed/remaining, per-monster HP, final screen, last action, and the outcome-conditional score. Read the complete table in <a href="../../artifacts/hrm/combat-hrm-5m-rollouts.tsv"><code>combat-hrm-5m-rollouts.tsv</code></a> and the aggregate in <a href="../../artifacts/hrm/combat-hrm-5m-rollout-summary.json"><code>combat-hrm-5m-rollout-summary.json</code></a>. The native tokenizer/runtime is in <a href="../../src/hrm.rs"><code>src/hrm.rs</code></a>; exact rollout and report orchestration is in <a href="../../src/bin/htn.rs"><code>src/bin/htn.rs</code></a>.</p>
+        </section>
+
+        <section id="experiments">
+          <p class="eyebrow">Research protocol</p>
+          <h2>Experiment ladder</h2>
+          <p>Every rung answers one question. Use identical puzzle splits, state serializer, legal actions, training examples, model-selection rules, and reporting seeds.</p>
+          <ol class="rank card">
+            <li><strong>Data integrity baseline.</strong> Replay all 500 entries and suffixes, round-trip every action encoding, and prove that every target action appears exactly in the legal set.</li>
+            <li><strong>Direct policy baseline.</strong> Non-causal Transformer state encoder with one forward pass and the same legal-action head.</li>
+            <li><strong>Single recurrent baseline.</strong> One recurrent module with the same executed layer count and approximate parameter budget as HRM.</li>
+            <li><strong>Fixed-compute HRM.</strong> H/L modules, detached one-step gradients, and a constant segment count. This tests hierarchy without ACT.</li>
+            <li><strong>Gradient ablation.</strong> Compare one-step approximation with short truncated BPTT under equal memory or wall-clock budget.</li>
+            <li><strong>Progress/ranking heads.</strong> Add terminal HP-delta prediction and counterfactual ranking. Measure policy and rollout changes separately.</li>
+            <li><strong>Adaptive compute.</strong> Add ACT only after the fixed model is stable. Compare quality at equal mean and maximum executed FLOPs.</li>
+            <li><strong>Policy improvement.</strong> Roll the model through training puzzles, ask HTN/search to relabel disagreements or failures, and retrain without changing the held-out test set.</li>
+          </ol>
+
+          <h3>Implemented pilot configuration</h3>
+          <p>The zero-argument frontend uses this compact fixed-compute model. It is a resource-conscious combat pilot, not the official HRM setting:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Setting</th><th>Start</th><th>Sweep later</th></tr></thead>
+              <tbody>
+                <tr><td>Hidden size</td><td>128</td><td>192 / 256 / 384 / 512</td></tr>
+                <tr><td>Attention heads</td><td>4</td><td>4 / 8</td></tr>
+                <tr><td>H / L layers</td><td>1 / 1</td><td>1–4 each</td></tr>
+                <tr><td>H / L cycles</td><td>2 / 2</td><td>1–4 with executed-FLOP matching</td></tr>
+                <tr><td>Segments</td><td>2 fixed</td><td>1 / 2 / 4 / 8, then ACT max 8</td></tr>
+                <tr><td>Loss</td><td>legal-masked action CE + 0.2 Smooth L1 progress</td><td>stablemax, ranking, and alternate progress weights</td></tr>
+                <tr><td>Precision</td><td>bfloat16 where supported</td><td>float32 stability control</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Fair comparison rules</h3>
+          <ul class="checklist">
+            <li>Report parameters, peak memory, executed layers/FLOPs, segments, examples, and wall-clock time.</li>
+            <li>Match direct baseline depth to actual HRM execution, not just stored layer count.</li>
+            <li>Use at least three training seeds; the official repo itself notes small-data variance.</li>
+            <li>Freeze the 50-puzzle test split before tuning.</li>
+            <li>Select checkpoints using validation rollouts, never test action accuracy.</li>
+            <li>Keep boss mixture and entry-HP distribution visible in every result.</li>
+          </ul>
+        </section>
+
+        <section id="evaluation">
+          <p class="eyebrow">Decision criteria</p>
+          <h2>Measure the solver, not just the classifier</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Level</th><th>Metric</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>Decision</td><td>Expert top-1/top-k agreement; legal-action rate; score regret versus teacher; calibration.</td><td>Fast training diagnostics.</td></tr>
+                <tr><td>Turn</td><td>Damage taken, monster damage, energy unused, missed lethal, boss-mechanic violations.</td><td>Locate tactical failures.</td></tr>
+                <tr><td>Puzzle</td><td>Boss win rate; on wins, player HP delta; on losses, monster HP delta; turns to terminal.</td><td>Primary scoped outcome.</td></tr>
+                <tr><td>Compute</td><td>Mean/p50/p95 segments, latency, peak memory, executed FLOPs per decision.</td><td>Test whether adaptive depth is useful.</td></tr>
+                <tr><td>Generalization</td><td>Results by boss, unseen seed, HP band, deck archetype, relic/orb configuration, and long versus short fights.</td><td>Detect memorization and blind spots.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Primary test report</h3>
+          <pre>held-out puzzles: 50 (never used for tuning)
+boss wins: W / 50
+wins: mean and median ΔHP_player, higher is better
+losses: mean and median ΔHP_monsters, higher damage dealt is better
+mean decisions per puzzle
+mean / p95 latent segments per decision
+mean decision latency and peak memory
+paired comparison against HTN suffix, direct Transformer, and recurrent baseline</pre>
+          <h3>Go / no-go threshold</h3>
+          <p>Continue investing in HRM only if fixed-compute HRM improves held-out puzzle rollouts over both baselines at a defensible compute budget. Action accuracy alone is not enough. ACT is valuable only if it traces a better score–compute frontier than fixed segment counts.</p>
+        </section>
+
+        <section id="risks">
+          <p class="eyebrow">Failure analysis</p>
+          <h2>Known traps</h2>
+          <div class="grid two">
+            <div class="card"><h3>Seed memorization</h3><p>Raw seed, action prefix, exact RNG state, or stable record IDs may identify a training trajectory. Exclude direct identifiers, split entire entry puzzles, and label any exact-RNG experiment as an engine-oracle solver rather than an observable policy.</p></div>
+            <div class="card"><h3>Action-index aliasing</h3><p>The same list index means different cards or targets in different states. Encode semantic actions, using list position only to dispatch the selected candidate.</p></div>
+            <div class="card"><h3>Oracle leakage</h3><p>Full serialized engine state may expose information a deployed agent should not know. Maintain separate observable and oracle schemas.</p></div>
+            <div class="card"><h3>Teacher determinism</h3><p>One suffix can hide alternate wins. Counterfactual search or near-tie labels prevent punishing equivalent strong moves.</p></div>
+            <div class="card"><h3>Compute-confounded gains</h3><p>HRM can execute far more layers than a nominal “8-layer baseline.” Compare actual execution and wall-clock cost.</p></div>
+            <div class="card"><h3>Detached-credit failure</h3><p>One-step gradients may not teach consequences requiring many recurrent updates. BPTT and direct-depth ablations are mandatory.</p></div>
+            <div class="card"><h3>ACT instability</h3><p>The official Q-learning design has neither replay buffer nor target network. Fixed-compute training should establish a stable baseline first.</p></div>
+            <div class="card"><h3>Progress-score sign errors</h3><p>Player HP preservation and monster damage use different semantics. Centralize comparison logic and test win-over-loss ordering.</p></div>
+            <div class="card"><h3>Stale plan state</h3><p>A hidden plan carried across engine actions may assume a branch that did not occur. Re-encoding full state each decision is the safe baseline.</p></div>
+            <div class="card"><h3>Overfitting 500 puzzles</h3><p>Track train/validation rollout gaps, use puzzle-level splits, early stopping, and boss-stratified learning curves.</p></div>
+          </div>
+          <h3>Claims this experiment must not make</h3>
+          <ul>
+            <li>That brain inspiration explains performance.</li>
+            <li>That latent states implement symbolic search without causal evidence.</li>
+            <li>That 500 entry puzzles imply broad full-run or A20 generalization.</li>
+            <li>That a model matching an expert action has found the only winning action.</li>
+            <li>That more segment compute is architectural improvement unless baselines receive equal compute.</li>
+          </ul>
+        </section>
+
+        <section id="blueprint">
+          <p class="eyebrow">Implementation handoff</p>
+          <h2>Minimal build sequence</h2>
+          <ol class="rank card">
+            <li><strong>Freeze semantics.</strong> Implement one tested terminal comparator: outcome first, then player HP delta for wins or monster HP delta for losses.</li>
+            <li><strong>Build the extractor.</strong> Replay all 500 prefixes and suffixes and emit versioned per-decision examples grouped by puzzle.</li>
+            <li><strong>Build semantic candidate actions.</strong> Round-trip every <a href="../../src/action.rs"><code>Action</code></a> variant and assert exact membership in <a href="../../src/game.rs"><code>legal_actions()</code></a>.</li>
+            <li><strong>Define observation v1.</strong> Start with full combat-relevant observable state; log excluded private fields explicitly.</li>
+            <li><strong>Train the direct baseline.</strong> Establish data correctness and rollout evaluation before recurrence.</li>
+            <li><strong>Train single recurrence.</strong> Establish whether iterative refinement itself helps.</li>
+            <li><strong>Train fixed HRM.</strong> Port the pinned H/L schedule and one-step gradient faithfully; keep action head combat-native.</li>
+            <li><strong>Add counterfactuals.</strong> Branch difficult or disagreed actions and label terminal progress with exact engine rollouts.</li>
+            <li><strong>Add ACT last.</strong> Optimize adaptive compute only after a fixed segment count produces reliable held-out wins.</li>
+          </ol>
+          <h3>Integrity tests before any long run</h3>
+          <ul class="checklist">
+            <li>All 500 source suffixes replay to a win under the pinned engine.</li>
+            <li>No puzzle ID occurs in more than one split.</li>
+            <li>No raw seed, prefix hash, source hash, or stable record ID enters model features; exact RNG state is allowed only in an explicitly labeled engine-oracle schema.</li>
+            <li>Every expert target is present in the reconstructed legal-action set.</li>
+            <li>Action encode/decode is bijective for every observed combat action.</li>
+            <li>Any win compares above any loss.</li>
+            <li>Among wins, greater player HP preservation ranks higher.</li>
+            <li>Among losses, greater monster HP removed ranks higher.</li>
+            <li>ACT halt never dispatches <code>EndTurn</code>.</li>
+            <li>Observable and oracle schemas cannot be mixed silently.</li>
+          </ul>
+          <h3>Research questions worth answering</h3>
+          <ol>
+            <li>Does hierarchy improve full-combat win rate beyond a compute-matched recurrent Transformer?</li>
+            <li>Does the high state retain boss-phase and multi-turn resource information longer than the low state?</li>
+            <li>Does terminal HP-delta ranking improve recovery from off-expert states?</li>
+            <li>How many entry puzzles are needed before held-out rollout performance saturates?</li>
+            <li>Does adaptive compute allocate more segments to phase transitions, lethal searches, and dense legal-action states?</li>
+            <li>Can a model trained on the three Act 3 bosses transfer to elites or A20 without sacrificing the scoped solver?</li>
+          </ol>
+        </section>
+
+        <section id="sources">
+          <p class="eyebrow">Primary references</p>
+          <h2>Source map</h2>
+          <ol class="source-list">
+            <li><a href="https://arxiv.org/abs/2506.21734">Wang et al., “Hierarchical Reasoning Model,” arXiv:2506.21734v3 (2025)</a><span>Canonical paper record and PDF.</span></li>
+            <li><a href="https://arxiv.org/html/2506.21734">Official arXiv HTML</a><span>Architecture, approximate gradient, deep supervision, ACT, implementation details, benchmark setup, and reported results.</span></li>
+            <li><a href="https://github.com/sapientinc/HRM">sapientinc/HRM</a><span>Official Apache-2.0 code and operational README.</span></li>
+            <li><a href="https://github.com/sapientinc/HRM/blob/ac15626f8db096a63c775b84c9dc868776a6feda/models/hrm/hrm_act_v1.py">Pinned HRM ACT model</a><span>Exact recurrent schedule, carry behavior, Q head, and evaluation halting behavior.</span></li>
+            <li><a href="https://github.com/sapientinc/HRM/blob/ac15626f8db096a63c775b84c9dc868776a6feda/models/losses.py">Pinned loss implementation</a><span>Stablemax, exact sequence correctness, ACT loss, and metrics.</span></li>
+            <li><a href="https://github.com/sapientinc/HRM/blob/ac15626f8db096a63c775b84c9dc868776a6feda/config/arch/hrm_v1.yaml">Pinned architecture config</a><span>Default cycles, layers, dimensions, and halting settings.</span></li>
+            <li><a href="https://github.com/sapientinc/HRM/blob/ac15626f8db096a63c775b84c9dc868776a6feda/pretrain.py">Pinned training loop</a><span>Distributed training, optimizer arrangement, compilation, carry, and checkpoint behavior.</span></li>
+            <li><a href="../../fixtures/htn/defect-a0-act3-boss-winning-entry-500.README.md">Local 500-puzzle corpus README</a><span>Schema, collection command, verification workflow, and hashes.</span></li>
+            <li><a href="../../src/env.rs">Local training environment</a> · <a href="../../src/game.rs">game and legal actions</a> · <a href="../../src/action.rs">action schema</a><span>Engine interfaces that constrain the proposed combat adaptation.</span></li>
+          </ol>
+          <h3>Reading order</h3>
+          <p>For implementation, read the pinned model source and loss before the paper’s biological motivation. For experimental interpretation, read the benchmark data and evaluation details before comparing sample counts. For this engine, read the corpus README and action interface before defining tensors.</p>
+        </section>
+
+        <footer>
+          <p>Prepared as a research reference for <span class="mono">sts-engine</span>. Sourced claims are marked separately from combat translations and experiment proposals. Last updated 26 August 2026.</p>
+        </footer>
+      </article>
+    </main>
+  </div>
+  <script>
+    (() => {
+      const links = [...document.querySelectorAll('nav a[href^="#"]')];
+      const sections = links.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+      if (!('IntersectionObserver' in window)) return;
+      const observer = new IntersectionObserver(entries => {
+        const visible = entries.filter(entry => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (!visible) return;
+        links.forEach(link => {
+          link.classList.toggle('active', link.getAttribute('href') === '#' + visible.target.id);
+        });
+      }, { rootMargin: '-12% 0px -76% 0px', threshold: 0 });
+      sections.forEach(section => observer.observe(section));
+    })();
+  </script>
+</body>
+</html>

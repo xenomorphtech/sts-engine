@@ -1,2 +1,8 @@
 /target
 **/*.rs.bk
+__pycache__/
+*.pyc
+/artifacts/hrm/*.jsonl
+/artifacts/hrm/*.pt
+/artifacts/hrm/*.onnx
+/artifacts/hrm/*.runtime.json

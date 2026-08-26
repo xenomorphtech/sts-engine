@@ -122,6 +122,44 @@ let obs = env.compact_obs();
 `TrainEnv::step` indexes into the current `legal_actions()` list, the same
 discrete interface the Java headless sim advertises.
 
+### Act 3 boss HRM training
+
+The dedicated frontend runs the standard experiment without exposing the
+preprocessing and model hyperparameters:
+
+```sh
+cargo run --release --bin sts-hrm-train
+```
+
+With no arguments it verifies and expands the checked-in 500-puzzle Defect A0
+Act 3 boss corpus, selects CUDA when available, trains for 300 wall-clock
+seconds, evaluates a deterministic 400/50/50 puzzle split, and writes the
+checkpoint, metrics, trainer-neutral FP16 ONNX graph, and Rust runtime manifest
+to `artifacts/hrm`. It finds an existing training environment or provisions one
+through `uv`. The only routine overrides are `--seconds`, `--device
+auto|cuda|cpu`, `--output-dir`, and `--rebuild-data`; run `sts-hrm-train
+--help` for their concise interface.
+
+Run the resulting checkpoint through all 500 boss entries with live model
+actions and exact engine transitions using the companion frontend:
+
+```sh
+cargo run --release --bin sts-hrm-eval
+column -ts $'\t' artifacts/hrm/combat-hrm-5m-rollouts.tsv | less -S
+```
+
+The zero-argument evaluator performs tokenization, batched ONNX inference,
+parallel state preparation, exact engine transitions, loop detection, and
+report generation in Rust; Python is used only for a one-time export if the
+runtime artifact is absent or stale. It writes one JSONL and TSV row per seed
+plus an aggregate summary. Rows include boss, split, outcome, turns/actions
+played, entry/final player HP, per-monster remaining HP, phase-normalized
+encounter HP, and the outcome-conditional training score. Routine overrides
+are `--checkpoint`, `--device`, `--output-dir`, and `--max-actions`.
+
+The model/data design and measured pilot results are documented in
+[`docs/research/hrm-combat-training-reference.html`](docs/research/hrm-combat-training-reference.html).
+
 ## How this was developed
 
 The engine was not written from the wiki and then tested. It was grown against

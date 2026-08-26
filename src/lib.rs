@@ -16,6 +16,7 @@ pub mod env;
 pub mod game;
 pub mod generated;
 pub mod green_registry;
+pub mod hrm;
 pub mod htn;
 pub mod ids;
 pub mod java_util;

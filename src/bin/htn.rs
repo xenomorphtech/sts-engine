@@ -5,9 +5,10 @@
 //! cargo run --release --bin sts-htn -- --seed 0 --count 100 --concurrent 6 --a0
 //! ```
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -17,6 +18,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sts_engine::creature::OrbKind;
 use sts_engine::game::{CampfireOption, EventOption, Game, RewardKind, Screen};
+use sts_engine::hrm::{
+    canonical_action_key, Act3Boss, HrmDevice, HrmInferenceChoice, HrmInferenceInput, HrmPolicy,
+};
 use sts_engine::htn::{HtnAgent, SearchStats};
 use sts_engine::ids::{Act, CardId, Character, EventId, MonsterId, PowerId, RelicId, RoomType};
 use sts_engine::rng::StsRandom;
@@ -91,12 +95,144 @@ struct WinningBossEntryCheckpoint {
     seed: i64,
     ascension: i32,
     character: String,
-    boss: String,
+    boss: Act3Boss,
     entry_step: usize,
     final_step: usize,
     state: Value,
     action_prefix: Vec<Action>,
     winning_suffix: Vec<Action>,
+}
+
+/// One exact expert decision inside a complete boss-entry training puzzle.
+#[derive(Serialize)]
+struct HrmBossDecision {
+    decision_index: usize,
+    state: Value,
+    legal_actions: Vec<Action>,
+    expert_action: Action,
+}
+
+/// A replay-expanded HRM puzzle. The terminal score follows the combat
+/// training contract: winning lines use final minus entry player HP. The
+/// source corpus contains only verified wins, so no loss score is emitted by
+/// this exporter.
+#[derive(Serialize)]
+struct HrmBossPuzzle {
+    schema_version: u32,
+    source_schema_version: u32,
+    puzzle_index: usize,
+    seed: i64,
+    ascension: i32,
+    character: String,
+    boss: Act3Boss,
+    entry_hp: i32,
+    final_hp: i32,
+    outcome: &'static str,
+    score_kind: &'static str,
+    score: i32,
+    decisions: Vec<HrmBossDecision>,
+}
+
+#[derive(Serialize)]
+struct HrmRolloutDecision {
+    puzzle_index: usize,
+    seed: i64,
+    boss: Act3Boss,
+    state: Value,
+    legal_actions: Vec<Action>,
+}
+
+#[derive(Deserialize)]
+struct HrmRolloutChoice {
+    puzzle_index: usize,
+    action: Action,
+    #[serde(default)]
+    fallback: bool,
+}
+
+#[derive(Deserialize)]
+struct HrmRolloutResponse {
+    #[serde(rename = "type")]
+    kind: String,
+    actions: Vec<HrmRolloutChoice>,
+}
+
+#[derive(Serialize)]
+struct HrmRemainingMonster {
+    id: String,
+    phase: Option<&'static str>,
+    hp: i32,
+    max_hp: i32,
+    half_dead: bool,
+}
+
+#[derive(Serialize)]
+struct HrmRolloutResult {
+    schema_version: u32,
+    puzzle_index: usize,
+    seed: i64,
+    boss: Act3Boss,
+    outcome: &'static str,
+    turns_played: usize,
+    actions_played: usize,
+    fallback_actions: usize,
+    entry_hp: i32,
+    player_hp: i32,
+    player_hp_delta: i32,
+    entry_encounter_hp: i32,
+    encounter_hp_remaining: i32,
+    encounter_hp_removed: i32,
+    score_kind: &'static str,
+    score: i32,
+    final_screen: String,
+    last_action: Option<Action>,
+    monsters_hp_remaining: Vec<HrmRemainingMonster>,
+}
+
+#[derive(Serialize)]
+struct HrmBranchCandidate {
+    action: Action,
+    outcome: &'static str,
+    score_kind: &'static str,
+    score: i32,
+    utility: f32,
+    player_hp: i32,
+    encounter_hp_remaining: i32,
+    actions_played: usize,
+}
+
+#[derive(Serialize)]
+struct HrmBranchExample {
+    schema_version: u32,
+    puzzle_index: usize,
+    seed: i64,
+    boss: Act3Boss,
+    state: Value,
+    legal_actions: Vec<Action>,
+    expert_action: Action,
+    candidates: Vec<HrmBranchCandidate>,
+}
+
+struct HrmBranchSource {
+    branch_index: usize,
+    action: Action,
+}
+
+struct LiveHrmRollout {
+    puzzle_index: usize,
+    seed: i64,
+    boss: Act3Boss,
+    game: Game,
+    entry_hp: i32,
+    entry_encounter_hp: i32,
+    entry_turn: i32,
+    max_turn: i32,
+    actions_played: usize,
+    fallback_actions: usize,
+    last_action: Option<Action>,
+    stopped: bool,
+    looped: bool,
+    recent_policy_choices: Vec<(Value, Action)>,
 }
 
 fn card_state(card: &sts_engine::card::Card) -> Value {
@@ -521,6 +657,1075 @@ fn write_winning_boss_entries(
     out.flush().map_err(|e| e.to_string())
 }
 
+/// Remove run-routing data that is constant or irrelevant after the Act 3
+/// boss has begun. Private RNG state remains: the checkpoint corpus is an
+/// engine-oracle experiment and exact future draws/random effects are part of
+/// each deterministic puzzle.
+fn compact_hrm_combat_state(game: &Game) -> Value {
+    let mut state = training_state(game);
+    let Some(state_fields) = state.as_object_mut() else {
+        return state;
+    };
+    state_fields.remove("dungeon");
+    if let Some(game_fields) = state_fields.get_mut("game").and_then(Value::as_object_mut) {
+        game_fields.remove("seed");
+        game_fields.remove("boss_relics");
+        game_fields.remove("neow_options");
+        game_fields.remove("neow_rng");
+        game_fields.remove("neow_screen");
+        game_fields.remove("legal_actions");
+    }
+    state
+}
+
+fn export_hrm_boss_puzzles(
+    path: &Path,
+    checkpoints: &[WinningBossEntryCheckpoint],
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+) -> Result<usize, String> {
+    let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    let mut out = BufWriter::new(file);
+
+    for (puzzle_index, checkpoint) in checkpoints.iter().enumerate() {
+        if checkpoint.schema_version != 2
+            || checkpoint.ascension != ascension
+            || checkpoint.character != format!("{character:?}")
+            || checkpoint.entry_step != checkpoint.action_prefix.len()
+            || checkpoint.final_step
+                != checkpoint.action_prefix.len() + checkpoint.winning_suffix.len()
+        {
+            return Err(format!(
+                "seed {} has inconsistent or unsupported checkpoint metadata",
+                checkpoint.seed
+            ));
+        }
+
+        let mut game = Game::new(checkpoint.seed, character, ascension, unlocks.clone());
+        for action in &checkpoint.action_prefix {
+            game.step(action);
+        }
+        if game.dungeon.act != Act::Beyond
+            || game.current_room != RoomType::Boss
+            || game.screen != Screen::Combat
+        {
+            return Err(format!(
+                "seed {} prefix did not resume at the Act 3 boss opening",
+                checkpoint.seed
+            ));
+        }
+        let actual_state = training_state(&game);
+        if let Some(difference) = first_state_difference(&checkpoint.state, &actual_state, "state")
+        {
+            return Err(format!(
+                "seed {} structured state differs after prefix replay: {difference}",
+                checkpoint.seed
+            ));
+        }
+
+        let entry_hp = game.player.hp;
+        let mut decisions = Vec::with_capacity(checkpoint.winning_suffix.len());
+        for (decision_index, action) in checkpoint.winning_suffix.iter().enumerate() {
+            let legal_actions = game.legal_actions();
+            if !legal_actions.contains(action) {
+                return Err(format!(
+                    "seed {} decision {} expert action {:?} is not legal",
+                    checkpoint.seed, decision_index, action
+                ));
+            }
+            decisions.push(HrmBossDecision {
+                decision_index,
+                state: compact_hrm_combat_state(&game),
+                legal_actions,
+                expert_action: action.clone(),
+            });
+            game.step(action);
+        }
+        if classify_outcome(&game, false, None) != Outcome::Win {
+            return Err(format!(
+                "seed {} saved suffix did not reproduce a win",
+                checkpoint.seed
+            ));
+        }
+        let final_hp = game.player.hp;
+        let puzzle = HrmBossPuzzle {
+            schema_version: 1,
+            source_schema_version: checkpoint.schema_version,
+            puzzle_index,
+            seed: checkpoint.seed,
+            ascension,
+            character: checkpoint.character.clone(),
+            boss: checkpoint.boss,
+            entry_hp,
+            final_hp,
+            outcome: "win",
+            score_kind: "player_hp_delta",
+            score: final_hp - entry_hp,
+            decisions,
+        };
+        serde_json::to_writer(&mut out, &puzzle).map_err(|e| e.to_string())?;
+        writeln!(out).map_err(|e| e.to_string())?;
+
+        if (puzzle_index + 1) % 50 == 0 || puzzle_index + 1 == checkpoints.len() {
+            eprintln!(
+                "HRM puzzle export: {}/{} exact trajectories",
+                puzzle_index + 1,
+                checkpoints.len()
+            );
+        }
+    }
+    out.flush().map_err(|e| e.to_string())?;
+    Ok(checkpoints.len())
+}
+
+/// Remaining encounter HP with the Awakened One's latent second form made
+/// explicit. This keeps phase-one damage comparable with phase-two damage and
+/// gives closed-loop failures a monotonic terminal progress measure.
+fn hrm_remaining_monsters(game: &Game) -> Vec<HrmRemainingMonster> {
+    let Some(combat) = game.combat.as_ref() else {
+        return Vec::new();
+    };
+    let mut rows = Vec::new();
+    for monster in &combat.monsters {
+        if monster.escaped || monster.dead {
+            continue;
+        }
+        if monster.id == MonsterId::AwakenedOne && monster.extra == 0 {
+            if monster.hp > 0 {
+                rows.push(HrmRemainingMonster {
+                    id: monster.id.sts_id().to_string(),
+                    phase: Some("phase_1"),
+                    hp: monster.hp,
+                    max_hp: monster.max_hp,
+                    half_dead: monster.half_dead,
+                });
+            }
+            rows.push(HrmRemainingMonster {
+                id: monster.id.sts_id().to_string(),
+                phase: Some("phase_2_latent"),
+                hp: monster.max_hp,
+                max_hp: monster.max_hp,
+                half_dead: false,
+            });
+        } else if monster.hp > 0 || monster.half_dead {
+            rows.push(HrmRemainingMonster {
+                id: monster.id.sts_id().to_string(),
+                phase: (monster.id == MonsterId::AwakenedOne).then_some("phase_2"),
+                hp: monster.hp.max(0),
+                max_hp: monster.max_hp,
+                half_dead: monster.half_dead,
+            });
+        }
+    }
+    rows
+}
+
+fn hrm_encounter_hp_remaining(game: &Game) -> i32 {
+    hrm_remaining_monsters(game)
+        .iter()
+        .map(|monster| monster.hp)
+        .sum()
+}
+
+fn hrm_rollout_outcome(rollout: &LiveHrmRollout, max_actions: usize) -> Option<&'static str> {
+    if rollout.game.is_victory() {
+        Some("win")
+    } else if rollout.game.player.hp <= 0 {
+        Some("loss")
+    } else if rollout.looped || rollout.actions_played >= max_actions {
+        Some("capped")
+    } else if rollout.stopped || rollout.game.done || rollout.game.screen == Screen::Terminal {
+        Some("stopped")
+    } else {
+        None
+    }
+}
+
+fn hrm_rollout_results(rollouts: &[LiveHrmRollout], max_actions: usize) -> Vec<HrmRolloutResult> {
+    rollouts
+        .iter()
+        .map(|rollout| {
+            let monsters_hp_remaining = hrm_remaining_monsters(&rollout.game);
+            let encounter_hp_remaining =
+                monsters_hp_remaining.iter().map(|monster| monster.hp).sum();
+            let outcome = hrm_rollout_outcome(rollout, max_actions).unwrap_or("stopped");
+            let player_hp_delta = rollout.game.player.hp - rollout.entry_hp;
+            let encounter_hp_removed = rollout.entry_encounter_hp - encounter_hp_remaining;
+            HrmRolloutResult {
+                schema_version: 1,
+                puzzle_index: rollout.puzzle_index,
+                seed: rollout.seed,
+                boss: rollout.boss,
+                outcome,
+                turns_played: if rollout.max_turn > 0 {
+                    (rollout.max_turn - rollout.entry_turn + 1).max(1) as usize
+                } else {
+                    0
+                },
+                actions_played: rollout.actions_played,
+                fallback_actions: rollout.fallback_actions,
+                entry_hp: rollout.entry_hp,
+                player_hp: rollout.game.player.hp,
+                player_hp_delta,
+                entry_encounter_hp: rollout.entry_encounter_hp,
+                encounter_hp_remaining,
+                encounter_hp_removed,
+                score_kind: if outcome == "win" {
+                    "player_hp_delta"
+                } else {
+                    "monster_hp_delta"
+                },
+                score: if outcome == "win" {
+                    player_hp_delta
+                } else {
+                    encounter_hp_removed
+                },
+                final_screen: format!("{:?}", rollout.game.screen),
+                last_action: rollout.last_action.clone(),
+                monsters_hp_remaining,
+            }
+        })
+        .collect()
+}
+
+fn serve_hrm_rollouts(
+    checkpoints: &[WinningBossEntryCheckpoint],
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+    max_actions: usize,
+) -> Result<(), String> {
+    let mut rollouts = Vec::with_capacity(checkpoints.len());
+    for (puzzle_index, checkpoint) in checkpoints.iter().enumerate() {
+        if checkpoint.schema_version != 2
+            || checkpoint.ascension != ascension
+            || checkpoint.character != format!("{character:?}")
+            || checkpoint.entry_step != checkpoint.action_prefix.len()
+        {
+            return Err(format!(
+                "seed {} has inconsistent or unsupported checkpoint metadata",
+                checkpoint.seed
+            ));
+        }
+        let mut game = Game::new(checkpoint.seed, character, ascension, unlocks.clone());
+        for action in &checkpoint.action_prefix {
+            game.step(action);
+        }
+        let actual_state = training_state(&game);
+        if let Some(difference) = first_state_difference(&checkpoint.state, &actual_state, "state")
+        {
+            return Err(format!(
+                "seed {} structured state differs after prefix replay: {difference}",
+                checkpoint.seed
+            ));
+        }
+        let entry_turn = game.combat.as_ref().map_or(0, |combat| combat.turn);
+        rollouts.push(LiveHrmRollout {
+            puzzle_index,
+            seed: checkpoint.seed,
+            boss: checkpoint.boss,
+            entry_hp: game.player.hp,
+            entry_encounter_hp: hrm_encounter_hp_remaining(&game),
+            max_turn: entry_turn,
+            entry_turn,
+            game,
+            actions_played: 0,
+            fallback_actions: 0,
+            last_action: None,
+            stopped: false,
+            looped: false,
+            recent_policy_choices: Vec::new(),
+        });
+    }
+    eprintln!(
+        "HRM rollout engine restored {} exact boss entries",
+        rollouts.len()
+    );
+
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut output = BufWriter::new(stdout.lock());
+    let mut protocol_round = 0usize;
+    loop {
+        let mut decisions = Vec::new();
+        for rollout in &mut rollouts {
+            if hrm_rollout_outcome(rollout, max_actions).is_some() {
+                continue;
+            }
+            let legal_actions = rollout.game.legal_actions();
+            if legal_actions.is_empty() {
+                rollout.stopped = true;
+                continue;
+            }
+            decisions.push(HrmRolloutDecision {
+                puzzle_index: rollout.puzzle_index,
+                seed: rollout.seed,
+                boss: rollout.boss,
+                state: compact_hrm_combat_state(&rollout.game),
+                legal_actions,
+            });
+        }
+        if decisions.is_empty() {
+            break;
+        }
+
+        serde_json::to_writer(
+            &mut output,
+            &json!({"type": "batch", "decisions": decisions}),
+        )
+        .map_err(|error| error.to_string())?;
+        writeln!(output).map_err(|error| error.to_string())?;
+        output.flush().map_err(|error| error.to_string())?;
+
+        let mut response_line = String::new();
+        if input
+            .read_line(&mut response_line)
+            .map_err(|error| error.to_string())?
+            == 0
+        {
+            return Err("HRM inference process closed the protocol input".to_string());
+        }
+        let response: HrmRolloutResponse = serde_json::from_str(&response_line)
+            .map_err(|error| format!("invalid HRM action response: {error}"))?;
+        if response.kind != "actions" {
+            return Err(format!(
+                "expected HRM action response, got {:?}",
+                response.kind
+            ));
+        }
+        if response.actions.len() != decisions.len() {
+            return Err(format!(
+                "expected {} HRM actions, got {}",
+                decisions.len(),
+                response.actions.len()
+            ));
+        }
+
+        let expected: HashSet<usize> = decisions
+            .iter()
+            .map(|decision| decision.puzzle_index)
+            .collect();
+        let mut received = HashSet::with_capacity(expected.len());
+        for choice in response.actions {
+            if !expected.contains(&choice.puzzle_index) || !received.insert(choice.puzzle_index) {
+                return Err(format!(
+                    "unexpected or duplicate HRM action for puzzle {}",
+                    choice.puzzle_index
+                ));
+            }
+            let rollout = &mut rollouts[choice.puzzle_index];
+            let legal_actions = rollout.game.legal_actions();
+            if !legal_actions.contains(&choice.action) {
+                return Err(format!(
+                    "checkpoint chose illegal action {:?} for seed {}",
+                    choice.action, rollout.seed
+                ));
+            }
+            rollout.actions_played += 1;
+            rollout.fallback_actions += usize::from(choice.fallback);
+            rollout.last_action = Some(choice.action.clone());
+            if matches!(choice.action, Action::Quit) {
+                rollout.stopped = true;
+                continue;
+            }
+            rollout.game.step(&choice.action);
+            if let Some(combat) = rollout.game.combat.as_ref() {
+                rollout.max_turn = rollout.max_turn.max(combat.turn);
+            }
+        }
+        protocol_round += 1;
+        if protocol_round % 10 == 0 {
+            let active = rollouts
+                .iter()
+                .filter(|rollout| hrm_rollout_outcome(rollout, max_actions).is_none())
+                .count();
+            eprintln!(
+                "HRM rollout progress: round {protocol_round}, {active}/{} active",
+                rollouts.len()
+            );
+        }
+    }
+
+    let results = hrm_rollout_results(&rollouts, max_actions);
+    serde_json::to_writer(
+        &mut output,
+        &json!({"type": "complete", "results": results}),
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(output).map_err(|error| error.to_string())?;
+    output.flush().map_err(|error| error.to_string())
+}
+
+fn median_usize(values: impl Iterator<Item = usize>) -> f64 {
+    let mut values = values.collect::<Vec<_>>();
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_unstable();
+    let middle = values.len() / 2;
+    if values.len() % 2 == 0 {
+        (values[middle - 1] as f64 + values[middle] as f64) / 2.0
+    } else {
+        values[middle] as f64
+    }
+}
+
+fn median_i32(values: impl Iterator<Item = i32>) -> f64 {
+    let mut values = values.collect::<Vec<_>>();
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_unstable();
+    let middle = values.len() / 2;
+    if values.len() % 2 == 0 {
+        (values[middle - 1] as f64 + values[middle] as f64) / 2.0
+    } else {
+        values[middle] as f64
+    }
+}
+
+fn write_native_hrm_reports(
+    results: &[HrmRolloutResult],
+    policy: &HrmPolicy,
+    metadata_path: &Path,
+    onnx_path: &Path,
+    output_dir: &Path,
+    report_stem: &str,
+    elapsed: Duration,
+    state_time: Duration,
+    step_time: Duration,
+) -> Result<Value, String> {
+    std::fs::create_dir_all(output_dir)
+        .map_err(|error| format!("create {}: {error}", output_dir.display()))?;
+    let jsonl_path = output_dir.join(format!("{report_stem}-rollouts.jsonl"));
+    let tsv_path = output_dir.join(format!("{report_stem}-rollouts.tsv"));
+    let summary_path = output_dir.join(format!("{report_stem}-rollout-summary.json"));
+
+    let jsonl_pending = jsonl_path.with_extension("jsonl.pending");
+    let mut jsonl = BufWriter::new(
+        File::create(&jsonl_pending)
+            .map_err(|error| format!("create {}: {error}", jsonl_pending.display()))?,
+    );
+    for result in results {
+        let mut row = serde_json::to_value(result).map_err(|error| error.to_string())?;
+        row.as_object_mut()
+            .expect("serialized HRM result is an object")
+            .insert(
+                "split".to_string(),
+                Value::String(
+                    policy
+                        .split(result.puzzle_index)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                ),
+            );
+        serde_json::to_writer(&mut jsonl, &row).map_err(|error| error.to_string())?;
+        writeln!(jsonl).map_err(|error| error.to_string())?;
+    }
+    jsonl.flush().map_err(|error| error.to_string())?;
+    std::fs::rename(&jsonl_pending, &jsonl_path).map_err(|error| {
+        format!(
+            "move {} to {}: {error}",
+            jsonl_pending.display(),
+            jsonl_path.display()
+        )
+    })?;
+
+    let tsv_pending = tsv_path.with_extension("tsv.pending");
+    let mut tsv = BufWriter::new(
+        File::create(&tsv_pending)
+            .map_err(|error| format!("create {}: {error}", tsv_pending.display()))?,
+    );
+    writeln!(
+        tsv,
+        "seed\tboss\tsplit\toutcome\tturns_played\tactions_played\tfallback_actions\tentry_hp\tplayer_hp\tplayer_hp_delta\tentry_encounter_hp\tencounter_hp_remaining\tencounter_hp_removed\tscore_kind\tscore\tfinal_screen\tlast_action\tmonsters_hp_remaining"
+    )
+    .map_err(|error| error.to_string())?;
+    for result in results {
+        let monsters = if result.monsters_hp_remaining.is_empty() {
+            "-".to_string()
+        } else {
+            result
+                .monsters_hp_remaining
+                .iter()
+                .map(|monster| {
+                    let phase = monster
+                        .phase
+                        .map(|phase| format!(":{phase}"))
+                        .unwrap_or_default();
+                    format!("{}{phase}:{}/{}", monster.id, monster.hp, monster.max_hp)
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let last_action = result
+            .last_action
+            .as_ref()
+            .map(canonical_action_key)
+            .unwrap_or_else(|| "-".to_string());
+        writeln!(
+            tsv,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            result.seed,
+            result.boss,
+            policy.split(result.puzzle_index).unwrap_or("unknown"),
+            result.outcome,
+            result.turns_played,
+            result.actions_played,
+            result.fallback_actions,
+            result.entry_hp,
+            result.player_hp,
+            result.player_hp_delta,
+            result.entry_encounter_hp,
+            result.encounter_hp_remaining,
+            result.encounter_hp_removed,
+            result.score_kind,
+            result.score,
+            result.final_screen,
+            last_action,
+            monsters,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    tsv.flush().map_err(|error| error.to_string())?;
+    std::fs::rename(&tsv_pending, &tsv_path).map_err(|error| {
+        format!(
+            "move {} to {}: {error}",
+            tsv_pending.display(),
+            tsv_path.display()
+        )
+    })?;
+
+    let mut outcomes = BTreeMap::<String, usize>::new();
+    let mut by_boss = BTreeMap::<Act3Boss, BTreeMap<String, usize>>::new();
+    let mut by_split = BTreeMap::<String, BTreeMap<String, usize>>::new();
+    for result in results {
+        *outcomes.entry(result.outcome.to_string()).or_default() += 1;
+        *by_boss
+            .entry(result.boss)
+            .or_default()
+            .entry(result.outcome.to_string())
+            .or_default() += 1;
+        *by_split
+            .entry(
+                policy
+                    .split(result.puzzle_index)
+                    .unwrap_or("unknown")
+                    .to_string(),
+            )
+            .or_default()
+            .entry(result.outcome.to_string())
+            .or_default() += 1;
+    }
+    let terminal = results
+        .iter()
+        .filter(|result| result.outcome != "capped")
+        .collect::<Vec<_>>();
+    let mut score_by_outcome = serde_json::Map::new();
+    for outcome in ["win", "loss", "capped", "stopped"] {
+        let selected = results
+            .iter()
+            .filter(|result| result.outcome == outcome)
+            .collect::<Vec<_>>();
+        if !selected.is_empty() {
+            score_by_outcome.insert(
+                outcome.to_string(),
+                json!({
+                    "kind": selected[0].score_kind,
+                    "count": selected.len(),
+                    "mean": selected.iter().map(|result| result.score as f64).sum::<f64>() / selected.len() as f64,
+                    "median": median_i32(selected.iter().map(|result| result.score)),
+                }),
+            );
+        }
+    }
+    let wins = outcomes.get("win").copied().unwrap_or(0);
+    let summary = json!({
+        "schema_version": 1,
+        "runtime": "rust-onnxruntime",
+        "device": policy.device(),
+        "timing_seconds": {
+            "total": elapsed.as_secs_f64(),
+            "state_snapshot": state_time.as_secs_f64(),
+            "token_encoding": policy.encoding_time().as_secs_f64(),
+            "model_inference": policy.inference_time().as_secs_f64(),
+            "action_step": step_time.as_secs_f64(),
+        },
+        "checkpoint": metadata_path.canonicalize().unwrap_or_else(|_| metadata_path.to_path_buf()),
+        "onnx": onnx_path.canonicalize().unwrap_or_else(|_| onnx_path.to_path_buf()),
+        "puzzles": results.len(),
+        "elapsed_seconds": elapsed.as_secs_f64(),
+        "outcomes": outcomes,
+        "win_rate": wins as f64 / results.len().max(1) as f64,
+        "mean_turns_played": results.iter().map(|result| result.turns_played as f64).sum::<f64>() / results.len().max(1) as f64,
+        "median_turns_played": median_usize(results.iter().map(|result| result.turns_played)),
+        "mean_actions_played": results.iter().map(|result| result.actions_played as f64).sum::<f64>() / results.len().max(1) as f64,
+        "median_actions_played": median_usize(results.iter().map(|result| result.actions_played)),
+        "terminal_puzzles": terminal.len(),
+        "terminal_mean_actions_played": terminal.iter().map(|result| result.actions_played as f64).sum::<f64>() / terminal.len().max(1) as f64,
+        "fallback_actions": results.iter().map(|result| result.fallback_actions).sum::<usize>(),
+        "score_by_outcome": Value::Object(score_by_outcome),
+        "by_boss": by_boss,
+        "by_split": by_split,
+    });
+    let summary_pending = summary_path.with_extension("json.pending");
+    let mut summary_output = BufWriter::new(
+        File::create(&summary_pending)
+            .map_err(|error| format!("create {}: {error}", summary_pending.display()))?,
+    );
+    serde_json::to_writer_pretty(&mut summary_output, &summary)
+        .map_err(|error| error.to_string())?;
+    writeln!(summary_output).map_err(|error| error.to_string())?;
+    summary_output.flush().map_err(|error| error.to_string())?;
+    std::fs::rename(&summary_pending, &summary_path).map_err(|error| {
+        format!(
+            "move {} to {}: {error}",
+            summary_pending.display(),
+            summary_path.display()
+        )
+    })?;
+
+    println!(
+        "closed-loop result: wins={wins}/{} ({:.2}%); fallback_actions={}; elapsed={:.2}s",
+        results.len(),
+        100.0 * wins as f64 / results.len().max(1) as f64,
+        results
+            .iter()
+            .map(|result| result.fallback_actions)
+            .sum::<usize>(),
+        elapsed.as_secs_f64(),
+    );
+    println!("rollouts_jsonl={}", jsonl_path.display());
+    println!("rollouts_tsv={}", tsv_path.display());
+    println!("summary={}", summary_path.display());
+    println!(
+        "RESULT {}",
+        serde_json::to_string(&summary).map_err(|error| error.to_string())?
+    );
+    Ok(summary)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_hrm_rollouts(
+    policy: &mut HrmPolicy,
+    rollouts: &mut [LiveHrmRollout],
+    max_actions: usize,
+    progress_label: &str,
+) -> Result<(Duration, Duration), String> {
+    let mut inference_round = 0usize;
+    let mut state_time = Duration::ZERO;
+    let mut step_time = Duration::ZERO;
+    loop {
+        let state_started = Instant::now();
+        let candidates = rollouts
+            .par_iter()
+            .filter(|rollout| hrm_rollout_outcome(rollout, max_actions).is_none())
+            .map(|rollout| {
+                let legal_actions = rollout.game.legal_actions();
+                let decision = (!legal_actions.is_empty()).then(|| HrmRolloutDecision {
+                    puzzle_index: rollout.puzzle_index,
+                    seed: rollout.seed,
+                    boss: rollout.boss,
+                    state: compact_hrm_combat_state(&rollout.game),
+                    legal_actions,
+                });
+                (rollout.puzzle_index, decision)
+            })
+            .collect::<Vec<_>>();
+        let mut decisions = Vec::with_capacity(candidates.len());
+        for (puzzle_index, decision) in candidates {
+            if let Some(decision) = decision {
+                decisions.push(decision);
+            } else {
+                rollouts[puzzle_index].stopped = true;
+            }
+        }
+        state_time += state_started.elapsed();
+        if decisions.is_empty() {
+            break;
+        }
+        let inputs = decisions
+            .iter()
+            .map(|decision| HrmInferenceInput {
+                boss: decision.boss,
+                state: &decision.state,
+                legal_actions: &decision.legal_actions,
+            })
+            .collect::<Vec<_>>();
+        let choices = policy.choose(&inputs)?;
+        if choices.len() != decisions.len() {
+            return Err(format!(
+                "native HRM returned {} actions for {} decisions",
+                choices.len(),
+                decisions.len()
+            ));
+        }
+        let step_started = Instant::now();
+        let mut planned = std::iter::repeat_with(|| None)
+            .take(rollouts.len())
+            .collect::<Vec<Option<(HrmRolloutDecision, HrmInferenceChoice)>>>();
+        for (decision, choice) in decisions.into_iter().zip(choices) {
+            let puzzle_index = decision.puzzle_index;
+            planned[puzzle_index] = Some((decision, choice));
+        }
+        rollouts
+            .par_iter_mut()
+            .zip(planned.into_par_iter())
+            .try_for_each(|(rollout, planned)| -> Result<(), String> {
+                let Some((decision, choice)) = planned else {
+                    return Ok(());
+                };
+                if !decision.legal_actions.contains(&choice.action) {
+                    return Err(format!(
+                        "native HRM chose illegal action {:?} for seed {}",
+                        choice.action, rollout.seed
+                    ));
+                }
+                rollout.actions_played += 1;
+                rollout.fallback_actions += usize::from(choice.fallback);
+                rollout.last_action = Some(choice.action.clone());
+
+                if rollout
+                    .recent_policy_choices
+                    .iter()
+                    .any(|(state, action)| state == &decision.state && action == &choice.action)
+                {
+                    rollout.looped = true;
+                    return Ok(());
+                }
+                if rollout.recent_policy_choices.len() == 4 {
+                    rollout.recent_policy_choices.remove(0);
+                }
+                rollout
+                    .recent_policy_choices
+                    .push((decision.state, choice.action.clone()));
+                if matches!(choice.action, Action::Quit) {
+                    rollout.stopped = true;
+                    return Ok(());
+                }
+                rollout.game.step(&choice.action);
+                if let Some(combat) = rollout.game.combat.as_ref() {
+                    rollout.max_turn = rollout.max_turn.max(combat.turn);
+                }
+                Ok(())
+            })?;
+        step_time += step_started.elapsed();
+        inference_round += 1;
+        if inference_round % 10 == 0 {
+            let active = rollouts
+                .iter()
+                .filter(|rollout| hrm_rollout_outcome(rollout, max_actions).is_none())
+                .count();
+            eprintln!(
+                "{progress_label}: round {inference_round}, {active}/{} active",
+                rollouts.len()
+            );
+        }
+    }
+    Ok((state_time, step_time))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_hrm_native(
+    checkpoints: &[WinningBossEntryCheckpoint],
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+    metadata_path: &Path,
+    onnx_path: &Path,
+    output_dir: &Path,
+    report_stem: &str,
+    device: HrmDevice,
+    max_actions: usize,
+) -> Result<(), String> {
+    let mut policy = HrmPolicy::load(metadata_path, onnx_path, device)?;
+    eprintln!(
+        "native HRM policy loaded on {} from {}",
+        policy.device(),
+        onnx_path.display()
+    );
+    let started = Instant::now();
+    let mut rollouts = Vec::with_capacity(checkpoints.len());
+    for (puzzle_index, checkpoint) in checkpoints.iter().enumerate() {
+        if checkpoint.schema_version != 2
+            || checkpoint.ascension != ascension
+            || checkpoint.character != format!("{character:?}")
+            || checkpoint.entry_step != checkpoint.action_prefix.len()
+        {
+            return Err(format!(
+                "seed {} has inconsistent or unsupported checkpoint metadata",
+                checkpoint.seed
+            ));
+        }
+        let mut game = Game::new(checkpoint.seed, character, ascension, unlocks.clone());
+        for action in &checkpoint.action_prefix {
+            game.step(action);
+        }
+        let actual_state = training_state(&game);
+        if let Some(difference) = first_state_difference(&checkpoint.state, &actual_state, "state")
+        {
+            return Err(format!(
+                "seed {} structured state differs after prefix replay: {difference}",
+                checkpoint.seed
+            ));
+        }
+        let entry_turn = game.combat.as_ref().map_or(0, |combat| combat.turn);
+        rollouts.push(LiveHrmRollout {
+            puzzle_index,
+            seed: checkpoint.seed,
+            boss: checkpoint.boss,
+            entry_hp: game.player.hp,
+            entry_encounter_hp: hrm_encounter_hp_remaining(&game),
+            max_turn: entry_turn,
+            entry_turn,
+            game,
+            actions_played: 0,
+            fallback_actions: 0,
+            last_action: None,
+            stopped: false,
+            looped: false,
+            recent_policy_choices: Vec::new(),
+        });
+    }
+    eprintln!(
+        "native HRM evaluator restored {} exact boss entries",
+        rollouts.len()
+    );
+
+    let (state_time, step_time) = complete_hrm_rollouts(
+        &mut policy,
+        &mut rollouts,
+        max_actions,
+        "native HRM rollout",
+    )?;
+
+    let results = hrm_rollout_results(&rollouts, max_actions);
+    write_native_hrm_reports(
+        &results,
+        &policy,
+        metadata_path,
+        onnx_path,
+        output_dir,
+        report_stem,
+        started.elapsed(),
+        state_time,
+        step_time,
+    )?;
+    Ok(())
+}
+
+fn hrm_branch_utility(result: &HrmRolloutResult) -> f32 {
+    if result.outcome == "win" {
+        1.0 + result.player_hp.max(0) as f32 / result.entry_hp.max(1) as f32
+    } else {
+        let progress =
+            result.encounter_hp_removed.max(0) as f32 / result.entry_encounter_hp.max(1) as f32;
+        match result.outcome {
+            "loss" => progress,
+            "capped" => progress * 0.95,
+            _ => progress * 0.90,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_hrm_branches(
+    checkpoints: &[WinningBossEntryCheckpoint],
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+    metadata_path: &Path,
+    onnx_path: &Path,
+    output_path: &Path,
+    device: HrmDevice,
+    max_actions: usize,
+) -> Result<(), String> {
+    let mut policy = HrmPolicy::load(metadata_path, onnx_path, device)?;
+    let mut examples = Vec::new();
+    let mut sources = Vec::new();
+    let mut rollouts = Vec::new();
+
+    for (puzzle_index, checkpoint) in checkpoints.iter().enumerate() {
+        if policy.split(puzzle_index) != Some("train") {
+            continue;
+        }
+        if checkpoint.schema_version != 2
+            || checkpoint.ascension != ascension
+            || checkpoint.character != format!("{character:?}")
+            || checkpoint.entry_step != checkpoint.action_prefix.len()
+        {
+            return Err(format!(
+                "seed {} has inconsistent or unsupported checkpoint metadata",
+                checkpoint.seed
+            ));
+        }
+        let mut game = Game::new(checkpoint.seed, character, ascension, unlocks.clone());
+        for action in &checkpoint.action_prefix {
+            game.step(action);
+        }
+        let actual_state = training_state(&game);
+        if let Some(difference) = first_state_difference(&checkpoint.state, &actual_state, "state")
+        {
+            return Err(format!(
+                "seed {} structured state differs after prefix replay: {difference}",
+                checkpoint.seed
+            ));
+        }
+        let legal_actions = game.legal_actions();
+        let expert_action = checkpoint
+            .winning_suffix
+            .first()
+            .ok_or_else(|| format!("seed {} has an empty winning suffix", checkpoint.seed))?
+            .clone();
+        if !legal_actions.contains(&expert_action) {
+            return Err(format!(
+                "seed {} opening expert action is not legal",
+                checkpoint.seed
+            ));
+        }
+        let state = compact_hrm_combat_state(&game);
+        let branch_index = examples.len();
+        let entry_hp = game.player.hp;
+        let entry_encounter_hp = hrm_encounter_hp_remaining(&game);
+        let entry_turn = game.combat.as_ref().map_or(0, |combat| combat.turn);
+
+        for action in &legal_actions {
+            let rollout_index = rollouts.len();
+            let mut candidate_game = game.clone();
+            let stopped = matches!(action, Action::Quit);
+            if !stopped {
+                candidate_game.step(action);
+            }
+            let max_turn = candidate_game
+                .combat
+                .as_ref()
+                .map_or(entry_turn, |combat| combat.turn.max(entry_turn));
+            rollouts.push(LiveHrmRollout {
+                puzzle_index: rollout_index,
+                seed: checkpoint.seed,
+                boss: checkpoint.boss,
+                game: candidate_game,
+                entry_hp,
+                entry_encounter_hp,
+                entry_turn,
+                max_turn,
+                actions_played: 1,
+                fallback_actions: 0,
+                last_action: Some(action.clone()),
+                stopped,
+                looped: false,
+                recent_policy_choices: vec![(state.clone(), action.clone())],
+            });
+            sources.push(HrmBranchSource {
+                branch_index,
+                action: action.clone(),
+            });
+        }
+        examples.push(HrmBranchExample {
+            schema_version: 1,
+            puzzle_index,
+            seed: checkpoint.seed,
+            boss: checkpoint.boss,
+            state,
+            legal_actions,
+            expert_action,
+            candidates: Vec::new(),
+        });
+    }
+
+    eprintln!(
+        "scoring {} legal opening actions from {} training-split boss states on {}",
+        rollouts.len(),
+        examples.len(),
+        policy.device()
+    );
+    complete_hrm_rollouts(
+        &mut policy,
+        &mut rollouts,
+        max_actions,
+        "native HRM branch rollout",
+    )?;
+    let results = hrm_rollout_results(&rollouts, max_actions);
+    for (source, result) in sources.into_iter().zip(&results) {
+        examples[source.branch_index]
+            .candidates
+            .push(HrmBranchCandidate {
+                action: source.action,
+                outcome: result.outcome,
+                score_kind: result.score_kind,
+                score: result.score,
+                utility: hrm_branch_utility(result),
+                player_hp: result.player_hp,
+                encounter_hp_remaining: result.encounter_hp_remaining,
+                actions_played: result.actions_played,
+            });
+    }
+
+    let informative = examples
+        .iter()
+        .filter(|example| {
+            let low = example
+                .candidates
+                .iter()
+                .map(|candidate| candidate.utility)
+                .fold(f32::INFINITY, f32::min);
+            let high = example
+                .candidates
+                .iter()
+                .map(|candidate| candidate.utility)
+                .fold(f32::NEG_INFINITY, f32::max);
+            high - low > 1e-4
+        })
+        .count();
+    let expert_not_near_best = examples
+        .iter()
+        .filter(|example| {
+            let best = example
+                .candidates
+                .iter()
+                .map(|candidate| candidate.utility)
+                .fold(f32::NEG_INFINITY, f32::max);
+            example
+                .candidates
+                .iter()
+                .find(|candidate| candidate.action == example.expert_action)
+                .is_some_and(|candidate| best - candidate.utility > 0.05)
+        })
+        .count();
+
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    let pending = output_path.with_extension("jsonl.pending");
+    let mut output = BufWriter::new(
+        File::create(&pending).map_err(|error| format!("create {}: {error}", pending.display()))?,
+    );
+    for example in &examples {
+        serde_json::to_writer(&mut output, example).map_err(|error| error.to_string())?;
+        writeln!(output).map_err(|error| error.to_string())?;
+    }
+    output.flush().map_err(|error| error.to_string())?;
+    std::fs::rename(&pending, output_path).map_err(|error| {
+        format!(
+            "move {} to {}: {error}",
+            pending.display(),
+            output_path.display()
+        )
+    })?;
+    println!(
+        "wrote {} branch states and {} scored actions to {}; informative_states={}; expert_not_near_best={}",
+        examples.len(),
+        results.len(),
+        output_path.display(),
+        informative,
+        expert_not_near_best,
+    );
+    Ok(())
+}
+
 fn load_winning_boss_entries(path: &Path) -> Result<Vec<WinningBossEntryCheckpoint>, String> {
     let input =
         BufReader::new(File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?);
@@ -545,7 +1750,7 @@ fn run_winning_boss_entry(
     let mut game = Game::new(seed, character, ascension, unlocks.clone());
     let mut agent = HtnAgent::new();
     let mut actions = Vec::new();
-    let mut entry: Option<(usize, String, Value)> = None;
+    let mut entry: Option<(usize, Act3Boss, Value)> = None;
 
     while !game.done
         && game.player.hp > 0
@@ -564,11 +1769,8 @@ fn run_winning_boss_entry(
             && game.screen == Screen::Combat
         {
             if let Some(combat) = game.combat.as_ref() {
-                entry = Some((
-                    actions.len(),
-                    format!("{:?}", combat.encounter),
-                    training_state(&game),
-                ));
+                let boss = Act3Boss::from_encounter(combat.encounter)?;
+                entry = Some((actions.len(), boss, training_state(&game)));
             }
         }
     }
@@ -678,7 +1880,8 @@ fn first_state_difference(expected: &Value, actual: &Value, path: &str) -> Optio
             if expected.len() != actual.len() {
                 return Some(format!(
                     "{path}: expected array length {}, got {}",
-                    expected.len(), actual.len()
+                    expected.len(),
+                    actual.len()
                 ));
             }
             expected
@@ -734,15 +1937,16 @@ fn verify_winning_boss_entries(
         let boss = game
             .combat
             .as_ref()
-            .map(|combat| format!("{:?}", combat.encounter));
-        if boss.as_deref() != Some(checkpoint.boss.as_str()) {
+            .and_then(|combat| Act3Boss::from_encounter(combat.encounter));
+        if boss != Some(checkpoint.boss) {
             return Err(format!(
                 "seed {} resumed at {:?}, expected {}",
                 checkpoint.seed, boss, checkpoint.boss
             ));
         }
         let actual_state = training_state(&game);
-        if let Some(difference) = first_state_difference(&checkpoint.state, &actual_state, "state") {
+        if let Some(difference) = first_state_difference(&checkpoint.state, &actual_state, "state")
+        {
             return Err(format!(
                 "seed {} structured state differs after prefix replay: {difference}",
                 checkpoint.seed,
@@ -1674,6 +2878,63 @@ fn print_batch(
     }
 }
 
+fn print_usage() {
+    println!(
+        r#"Usage:
+  sts-htn [RUN OPTIONS]
+  sts-htn [RUN OPTIONS] --fixture-jsonl PATH
+  sts-htn [RUN OPTIONS] --compare-jsonl PATH
+  sts-htn [RUN OPTIONS] --actions-jsonl PATH
+  sts-htn [RUN OPTIONS] --winning-boss-entry-jsonl PATH
+  sts-htn --replay-actions-jsonl PATH [--compare-jsonl PATH]
+  sts-htn --verify-winning-boss-entry-jsonl PATH
+  sts-htn --export-hrm-boss-jsonl INPUT OUTPUT
+  sts-htn --serve-hrm-rollouts-jsonl CHECKPOINTS
+  sts-htn --eval-hrm-onnx METADATA ONNX CHECKPOINTS OUTPUT_DIR
+  sts-htn --generate-hrm-branches METADATA ONNX CHECKPOINTS OUTPUT
+
+Run options:
+  -c, --character CHARACTER     Character to play (default: DEFECT)
+  -s, --seed FIRST_SEED         First deterministic seed (default: 2)
+  -n, --count N                 Number of seeds (default: 1)
+  -j, --concurrent N            Worker threads (default: 1)
+  -a, --ascension 0|20          Ascension level (default: 0)
+      --a0 / --a20              Ascension shortcuts
+      --max-steps N             Per-run action cap (default: 5000)
+      --random-seeds            Generate a fresh random cohort
+      --seed-source N           Reproducible random-cohort source
+      --diagnostics              Print per-seed policy details
+      --telemetry                Collect orb, card, and event telemetry
+
+Replay and dataset options:
+      --fixture-jsonl PATH       Write one compact final state per seed
+      --compare-jsonl PATH       Require exact equality with a fixture
+      --actions-jsonl PATH       Write accumulated action logs
+      --replay-actions-jsonl P   Replay an action log without the HTN
+      --winning-boss-entry-jsonl P
+                                 Collect resumable Act 3 boss entries
+      --verify-winning-boss-entry-jsonl P
+                                 Verify every saved prefix and winning suffix
+      --target-states N          Boss entries to collect (default: 500)
+
+HRM options:
+      --export-hrm-boss-jsonl INPUT OUTPUT
+                                 Expand boss entries into training puzzles
+      --serve-hrm-rollouts-jsonl CHECKPOINTS
+                                 Legacy JSONL rollout protocol
+      --eval-hrm-onnx META MODEL CHECKPOINTS OUTPUT_DIR
+                                 Native Rust ONNX inference and rollouts
+      --generate-hrm-branches META MODEL CHECKPOINTS OUTPUT
+                                 Score every training-split opening action
+      --hrm-device auto|cuda|cpu
+                                 Inference device (default: auto)
+      --rollout-max-actions N    Per-puzzle action cap (default: 1000)
+
+The normal batch run prints throughput, win rate, mean floor, and death
+breakdowns. Capped seeds should be treated as loop bugs."#
+    );
+}
+
 fn main() {
     let mut character = Character::Defect;
     let mut seed: i64 = 2;
@@ -1689,6 +2950,12 @@ fn main() {
     let mut replay_actions_jsonl: Option<PathBuf> = None;
     let mut winning_boss_entry_jsonl: Option<PathBuf> = None;
     let mut verify_winning_boss_entry_jsonl: Option<PathBuf> = None;
+    let mut export_hrm_boss_jsonl: Option<(PathBuf, PathBuf)> = None;
+    let mut serve_hrm_rollouts_jsonl: Option<PathBuf> = None;
+    let mut eval_hrm_onnx: Option<(PathBuf, PathBuf, PathBuf, PathBuf)> = None;
+    let mut generate_hrm_branches_mode: Option<(PathBuf, PathBuf, PathBuf, PathBuf)> = None;
+    let mut hrm_device = HrmDevice::Auto;
+    let mut rollout_max_actions: usize = 1000;
     let mut target_states: usize = 500;
     let mut randomize = false;
     let mut random_source: Option<i64> = None;
@@ -1724,6 +2991,62 @@ fn main() {
             "--verify-winning-boss-entry-jsonl" => {
                 verify_winning_boss_entry_jsonl = args.next().map(PathBuf::from)
             }
+            "--export-hrm-boss-jsonl" => {
+                let input = args.next().map(PathBuf::from);
+                let output = args.next().map(PathBuf::from);
+                match (input, output) {
+                    (Some(input), Some(output)) => export_hrm_boss_jsonl = Some((input, output)),
+                    _ => {
+                        eprintln!("--export-hrm-boss-jsonl requires INPUT and OUTPUT paths");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            "--serve-hrm-rollouts-jsonl" => {
+                serve_hrm_rollouts_jsonl = args.next().map(PathBuf::from)
+            }
+            "--eval-hrm-onnx" => {
+                let metadata = args.next().map(PathBuf::from);
+                let onnx = args.next().map(PathBuf::from);
+                let checkpoints = args.next().map(PathBuf::from);
+                let output_dir = args.next().map(PathBuf::from);
+                match (metadata, onnx, checkpoints, output_dir) {
+                    (Some(metadata), Some(onnx), Some(checkpoints), Some(output_dir)) => {
+                        eval_hrm_onnx = Some((metadata, onnx, checkpoints, output_dir));
+                    }
+                    _ => {
+                        eprintln!("--eval-hrm-onnx requires METADATA ONNX CHECKPOINTS OUTPUT_DIR");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            "--generate-hrm-branches" => {
+                let metadata = args.next().map(PathBuf::from);
+                let onnx = args.next().map(PathBuf::from);
+                let checkpoints = args.next().map(PathBuf::from);
+                let output = args.next().map(PathBuf::from);
+                match (metadata, onnx, checkpoints, output) {
+                    (Some(metadata), Some(onnx), Some(checkpoints), Some(output)) => {
+                        generate_hrm_branches_mode = Some((metadata, onnx, checkpoints, output));
+                    }
+                    _ => {
+                        eprintln!(
+                            "--generate-hrm-branches requires METADATA ONNX CHECKPOINTS OUTPUT"
+                        );
+                        std::process::exit(2);
+                    }
+                }
+            }
+            "--hrm-device" => {
+                let value = args.next().unwrap_or_default();
+                hrm_device = HrmDevice::from_cli(&value).unwrap_or_else(|| {
+                    eprintln!("--hrm-device must be auto, cuda, or cpu");
+                    std::process::exit(2);
+                });
+            }
+            "--rollout-max-actions" => {
+                rollout_max_actions = args.next().and_then(|s| s.parse().ok()).unwrap_or(1000)
+            }
             "--target-states" => {
                 target_states = args.next().and_then(|s| s.parse().ok()).unwrap_or(500)
             }
@@ -1733,9 +3056,7 @@ fn main() {
                 randomize = true;
             }
             "--help" | "-h" => {
-                println!(
-                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--telemetry] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH | --winning-boss-entry-jsonl PATH] [--replay-actions-jsonl PATH | --verify-winning-boss-entry-jsonl PATH] [--target-states N]\n\nBatch mode prints aggregate decision and HTN-emulation throughput, win rate, mean floor, and death breakdowns. --diagnostics adds the full per-seed policy table. --telemetry opts into orb/card/event telemetry. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl optionally accumulates only each seed's actions in memory and writes them once after the batch. --replay-actions-jsonl bypasses HTN and replays that action log; combine it with --compare-jsonl for an engine-only exact gate. --winning-boss-entry-jsonl retains the first --target-states eventual winners as full Act 3 boss-opening training checkpoints; --count is the candidate seed-pool size. --verify-winning-boss-entry-jsonl replays every prefix, compares every state, then replays every winning suffix. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
-                );
+                print_usage();
                 return;
             }
             other => {
@@ -1758,6 +3079,10 @@ fn main() {
         eprintln!("--target-states must be greater than zero");
         std::process::exit(2);
     }
+    if rollout_max_actions == 0 {
+        eprintln!("--rollout-max-actions must be greater than zero");
+        std::process::exit(2);
+    }
     let write_modes = usize::from(fixture_jsonl.is_some())
         + usize::from(actions_jsonl.is_some())
         + usize::from(winning_boss_entry_jsonl.is_some());
@@ -1767,6 +3092,32 @@ fn main() {
         || (verify_winning_boss_entry_jsonl.is_some() && write_modes > 0)
         || (verify_winning_boss_entry_jsonl.is_some() && replay_actions_jsonl.is_some())
         || (verify_winning_boss_entry_jsonl.is_some() && compare_jsonl.is_some())
+        || (export_hrm_boss_jsonl.is_some()
+            && (write_modes > 0
+                || compare_jsonl.is_some()
+                || replay_actions_jsonl.is_some()
+                || verify_winning_boss_entry_jsonl.is_some()))
+        || (serve_hrm_rollouts_jsonl.is_some()
+            && (write_modes > 0
+                || compare_jsonl.is_some()
+                || replay_actions_jsonl.is_some()
+                || verify_winning_boss_entry_jsonl.is_some()
+                || export_hrm_boss_jsonl.is_some()
+                || eval_hrm_onnx.is_some()
+                || generate_hrm_branches_mode.is_some()))
+        || (eval_hrm_onnx.is_some()
+            && (write_modes > 0
+                || compare_jsonl.is_some()
+                || replay_actions_jsonl.is_some()
+                || verify_winning_boss_entry_jsonl.is_some()
+                || export_hrm_boss_jsonl.is_some()
+                || generate_hrm_branches_mode.is_some()))
+        || (generate_hrm_branches_mode.is_some()
+            && (write_modes > 0
+                || compare_jsonl.is_some()
+                || replay_actions_jsonl.is_some()
+                || verify_winning_boss_entry_jsonl.is_some()
+                || export_hrm_boss_jsonl.is_some()))
     {
         eprintln!("choose only one JSONL collection, comparison, or replay mode");
         std::process::exit(2);
@@ -1775,6 +3126,122 @@ fn main() {
     // Load the profile-backed unlock data once, then clone the in-memory value
     // into each fresh game. No assets or profile files are reloaded per seed.
     let unlocks = Unlocks::fixture();
+    if let Some((metadata_path, onnx_path, checkpoint_path, output_path)) =
+        generate_hrm_branches_mode
+    {
+        let checkpoints = match load_winning_boss_entries(&checkpoint_path) {
+            Ok(checkpoints) if !checkpoints.is_empty() => checkpoints,
+            Ok(_) => {
+                eprintln!("{} contains no checkpoints", checkpoint_path.display());
+                std::process::exit(2);
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        };
+        if let Err(message) = generate_hrm_branches(
+            &checkpoints,
+            character,
+            ascension,
+            &unlocks,
+            &metadata_path,
+            &onnx_path,
+            &output_path,
+            hrm_device,
+            rollout_max_actions,
+        ) {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if let Some((metadata_path, onnx_path, checkpoint_path, output_dir)) = eval_hrm_onnx {
+        let checkpoints = match load_winning_boss_entries(&checkpoint_path) {
+            Ok(checkpoints) if !checkpoints.is_empty() => checkpoints,
+            Ok(_) => {
+                eprintln!("{} contains no checkpoints", checkpoint_path.display());
+                std::process::exit(2);
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        };
+        let report_stem = metadata_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".runtime.json"))
+            .unwrap_or("combat-hrm")
+            .to_string();
+        if let Err(message) = evaluate_hrm_native(
+            &checkpoints,
+            character,
+            ascension,
+            &unlocks,
+            &metadata_path,
+            &onnx_path,
+            &output_dir,
+            &report_stem,
+            hrm_device,
+            rollout_max_actions,
+        ) {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if let Some(checkpoint_path) = serve_hrm_rollouts_jsonl {
+        let checkpoints = match load_winning_boss_entries(&checkpoint_path) {
+            Ok(checkpoints) if !checkpoints.is_empty() => checkpoints,
+            Ok(_) => {
+                eprintln!("{} contains no checkpoints", checkpoint_path.display());
+                std::process::exit(2);
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        };
+        if let Err(message) = serve_hrm_rollouts(
+            &checkpoints,
+            character,
+            ascension,
+            &unlocks,
+            rollout_max_actions,
+        ) {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if let Some((input_path, output_path)) = export_hrm_boss_jsonl {
+        let checkpoints = match load_winning_boss_entries(&input_path) {
+            Ok(checkpoints) if !checkpoints.is_empty() => checkpoints,
+            Ok(_) => {
+                eprintln!("{} contains no checkpoints", input_path.display());
+                std::process::exit(2);
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        };
+        let start = Instant::now();
+        match export_hrm_boss_puzzles(&output_path, &checkpoints, character, ascension, &unlocks) {
+            Ok(count) => eprintln!(
+                "exported {count} exact HRM boss puzzles from {} to {} in {:.3}s",
+                input_path.display(),
+                output_path.display(),
+                start.elapsed().as_secs_f64()
+            ),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Some(checkpoint_path) = verify_winning_boss_entry_jsonl {
         let checkpoints = match load_winning_boss_entries(&checkpoint_path) {
             Ok(checkpoints) if !checkpoints.is_empty() => checkpoints,
