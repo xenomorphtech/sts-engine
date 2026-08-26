@@ -1,5 +1,5 @@
 {
-  "actual_training_seconds": 600.0053612609627,
+  "actual_training_seconds": 600.0012781230034,
   "baseline": {
     "legal_frequency_accuracy": 0.20563454926013947,
     "uniform_legal_expected_accuracy": 0.2513921856880188
@@ -20,14 +20,14 @@
     "token_length_min": 165,
     "truncated_examples": 0,
     "unknown_tokens": {
-      "test": 27607,
-      "val": 26446
+      "test": 2379,
+      "val": 1959
     }
   },
   "device": "cuda",
   "device_name": "NVIDIA GeForce RTX 5060",
   "expanded_dataset": "/home/sdancer/slay_the_spire/sts-engine/artifacts/hrm/defect-a0-act3-boss-hrm-puzzles.jsonl",
-  "final_loss_ema": 0.37538436915111506,
+  "final_loss_ema": 1.2178936825962086,
   "model_defaults": {
     "batch_size": 24,
     "deep_supervision_segments": 2,
@@ -36,7 +36,7 @@
     "h_cycles": 2,
     "h_layers": 1,
     "heads": 4,
-    "hidden_size": 128,
+    "hidden_size": 192,
     "l_cycles": 2,
     "l_layers": 1,
     "learning_rate": 0.0003,
@@ -46,56 +46,56 @@
     "warmup_updates": 100,
     "weight_decay": 0.1
   },
-  "optimizer_updates": 73355,
-  "parameter_count": 4135297,
-  "preprocess_version": 2,
+  "optimizer_updates": 49814,
+  "parameter_count": 2521153,
+  "preprocess_version": 3,
   "requested_training_seconds": 600.0,
   "seed": 20260826,
-  "segment_examples_seen": 1760520,
+  "segment_examples_seen": 1195536,
   "source_fixture": "/home/sdancer/slay_the_spire/sts-engine/fixtures/htn/defect-a0-act3-boss-winning-entry-500.jsonl.xz",
   "test": {
     "accuracy_by_boss": {
-      "AwakenedOne": 0.3860381861575179,
-      "DonuAndDeca": 0.4541446208112875,
-      "TimeEater": 0.39271255060728744
+      "AwakenedOne": 0.42899761336515513,
+      "DonuAndDeca": 0.4982363315696649,
+      "TimeEater": 0.409919028340081
     },
-    "action_cross_entropy": 2.4042096009939957,
-    "decision_accuracy": 0.4081095313322802,
+    "action_cross_entropy": 1.2984912685496734,
+    "decision_accuracy": 0.44470774091627174,
     "examples": 3798,
-    "progress_mae_hp": 16.6127517952801
+    "progress_mae_hp": 16.530445298124075
   },
   "torch_version": "2.11.0+cu128",
   "train_sample": {
     "accuracy_by_boss": {
-      "AwakenedOne": 0.9020833333333333,
-      "DonuAndDeca": 0.9172413793103448,
-      "TimeEater": 0.9133858267716536
+      "AwakenedOne": 0.490625,
+      "DonuAndDeca": 0.5465517241379311,
+      "TimeEater": 0.5019685039370079
     },
-    "action_cross_entropy": 0.2805710646789521,
-    "decision_accuracy": 0.9091796875,
+    "action_cross_entropy": 1.1353049129247665,
+    "decision_accuracy": 0.50927734375,
     "examples": 2048,
-    "progress_mae_hp": 17.357219447148964
+    "progress_mae_hp": 17.755655001383275
   },
   "untrained_validation_sample": {
     "accuracy_by_boss": {
-      "AwakenedOne": 0.2342007434944238,
-      "DonuAndDeca": 0.22093023255813954,
-      "TimeEater": 0.42857142857142855
+      "AwakenedOne": 0.17657992565055763,
+      "DonuAndDeca": 0.1883720930232558,
+      "TimeEater": 0.21428571428571427
     },
-    "action_cross_entropy": 1.9130304343998432,
-    "decision_accuracy": 0.2392578125,
+    "action_cross_entropy": 1.9533356428146362,
+    "decision_accuracy": 0.18359375,
     "examples": 1024,
-    "progress_mae_hp": 43.67594700306654
+    "progress_mae_hp": 67.67330076545477
   },
   "validation": {
     "accuracy_by_boss": {
-      "AwakenedOne": 0.38521634615384615,
-      "DonuAndDeca": 0.4339622641509434,
-      "TimeEater": 0.39869989165763814
+      "AwakenedOne": 0.44591346153846156,
+      "DonuAndDeca": 0.47547169811320755,
+      "TimeEater": 0.4279523293607801
     },
-    "action_cross_entropy": 2.469242322925414,
-    "decision_accuracy": 0.40279681930353717,
+    "action_cross_entropy": 1.2769412267427103,
+    "decision_accuracy": 0.44995887030435977,
     "examples": 3647,
-    "progress_mae_hp": 15.758226592474713
+    "progress_mae_hp": 15.654462479485987
   }
 }

@@ -8,20 +8,26 @@ cargo run --release --bin sts-hrm-train
 ```
 
 The frontend expands and verifies the checked-in 500-puzzle Defect A0 Act 3
-boss fixture, caches the prepared tensors, trains for 300 wall-clock seconds,
+boss fixture, caches the prepared tensors, trains for 600 wall-clock seconds,
 evaluates puzzle-level train/validation/test splits, and exports an FP16 ONNX
 policy plus its Rust runtime manifest. Large generated `.jsonl`, `.pt`, and
 `.onnx` files are ignored by Git. Small metrics and summary JSON files are
 retained as machine-readable records.
 
-The 26 August 2026 default run used an RTX 5060 and produced:
+The promoted 26 August 2026 default run used an RTX 5060 and produced:
 
 - 37,804 decision examples from 500 exact winning trajectories;
 - a deterministic 400/50/50 boss-stratified puzzle split;
-- 35,951 optimizer updates in 300.00 seconds;
-- 40.18% held-out action accuracy versus 20.56% legal-frequency and 25.14%
+- 49,814 optimizer updates in 600.00 seconds;
+- 44.47% held-out action accuracy versus 20.56% legal-frequency and 25.14%
   expected uniform-legal baselines;
-- 16.38 HP held-out progress mean absolute error.
+- 16.53 HP held-out progress mean absolute error.
+
+RNG words are encoded by byte position and high nibble. This reduces the
+training vocabulary from 27,595 to 6,307 tokens and held-out unknowns from
+roughly 26,000 per split to 1,959 validation / 2,379 test without increasing
+sequence length. The saved embedding budget is invested in a 192-wide shared
+model: 2,521,153 parameters rather than sparse seed-specific lookup rows.
 
 Run closed-loop evaluation with:
 
@@ -29,16 +35,17 @@ Run closed-loop evaluation with:
 cargo run --release --bin sts-hrm-eval
 ```
 
-The native Rust/ONNX measured rollout produced 173 wins, 322 deaths, and five
-detected Grid cycles: 34.60% overall wins and 32.00% on the held-out 50-puzzle
+The native Rust/ONNX measured rollout produced 190 wins, 304 deaths, and six
+detected Grid cycles: 38.00% overall wins and 34.00% on the held-out 50-puzzle
 test split. There were no unknown-action fallbacks. The complete 500-puzzle run
-took 21.62 seconds on the RTX 5060, down from 51.03 seconds for the former
-Python-bridged evaluator. Cycles remain visible as caps rather than being
-counted as losses.
+took 29.64 seconds on the RTX 5060. Cycles remain visible as caps rather than
+being counted as losses. The previous ten-minute model won 175/500 overall and
+25/100 validation-plus-test puzzles; the promoted model wins 190/500 overall
+and 35/100 validation-plus-test puzzles.
 
-See `combat-hrm-5m-metrics.json` for offline imitation metrics,
-`combat-hrm-5m-rollout-summary.json` for aggregate closed-loop results, and
-`combat-hrm-5m-rollouts.tsv` or `.jsonl` for every seed. The research design is
+See `combat-hrm-10m-metrics.json` for offline imitation metrics,
+`combat-hrm-10m-rollout-summary.json` for aggregate closed-loop results, and
+`combat-hrm-10m-rollouts.tsv` or `.jsonl` for every seed. The research design is
 in `docs/research/hrm-combat-training-reference.html`.
 
 ## Outcome-aware branch experiment

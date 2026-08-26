@@ -1,80 +1,81 @@
 {
   "by_boss": {
     "AwakenedOne": {
-      "capped": 1,
-      "loss": 119,
-      "win": 50
+      "capped": 3,
+      "loss": 107,
+      "win": 60
     },
     "DonuAndDeca": {
-      "loss": 91,
-      "win": 77
+      "capped": 1,
+      "loss": 87,
+      "win": 80
     },
     "TimeEater": {
-      "capped": 3,
-      "loss": 111,
-      "win": 48
+      "capped": 2,
+      "loss": 110,
+      "win": 50
     }
   },
   "by_split": {
     "test": {
-      "loss": 38,
-      "win": 12
+      "loss": 33,
+      "win": 17
     },
     "train": {
-      "capped": 4,
-      "loss": 246,
-      "win": 150
+      "capped": 6,
+      "loss": 239,
+      "win": 155
     },
     "val": {
-      "loss": 37,
-      "win": 13
+      "loss": 32,
+      "win": 18
     }
   },
   "checkpoint": "/home/sdancer/slay_the_spire/sts-engine/artifacts/hrm/combat-hrm-10m.runtime.json",
   "device": "cuda",
-  "elapsed_seconds": 22.414367939999998,
+  "elapsed_seconds": 29.639151872,
   "fallback_actions": 0,
-  "mean_actions_played": 72.636,
-  "mean_turns_played": 12.004,
-  "median_actions_played": 68.0,
+  "mean_actions_played": 71.654,
+  "mean_turns_played": 11.378,
+  "median_actions_played": 67.5,
   "median_turns_played": 11.0,
   "onnx": "/home/sdancer/slay_the_spire/sts-engine/artifacts/hrm/combat-hrm-10m.onnx",
   "outcomes": {
-    "capped": 4,
-    "loss": 321,
-    "win": 175
+    "capped": 6,
+    "loss": 304,
+    "win": 190
   },
   "puzzles": 500,
   "runtime": "rust-onnxruntime",
   "schema_version": 1,
   "score_by_outcome": {
     "capped": {
-      "count": 4,
+      "count": 6,
       "kind": "monster_hp_delta",
-      "mean": 141.0,
-      "median": 137.0
+      "mean": 205.33333333333334,
+      "median": 80.5
     },
     "loss": {
-      "count": 321,
+      "count": 304,
       "kind": "monster_hp_delta",
-      "mean": 372.0342679127726,
-      "median": 372.0
+      "mean": 360.0888157894737,
+      "median": 357.0
     },
     "win": {
-      "count": 175,
+      "count": 190,
       "kind": "player_hp_delta",
-      "mean": -36.817142857142855,
-      "median": -39.0
+      "mean": -39.626315789473686,
+      "median": -42.0
     }
   },
-  "terminal_mean_actions_played": 72.98185483870968,
-  "terminal_puzzles": 496,
+  "terminal_mean_actions_played": 72.07287449392713,
+  "terminal_puzzles": 494,
   "timing_seconds": {
-    "action_step": 0.989191421,
-    "model_inference": 18.362901659,
-    "state_snapshot": 1.70307031,
-    "token_encoding": 0.82963718,
-    "total": 22.414367939999998
+    "action_step": 0.985757549,
+    "model_inference": 25.705383439,
+    "state_snapshot": 1.654011617,
+    "token_encoding": 0.773551387,
+    "total": 29.639151872
   },
-  "win_rate": 0.35
+  "win_rate": 0.38
 }

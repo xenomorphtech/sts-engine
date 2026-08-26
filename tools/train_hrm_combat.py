@@ -31,9 +31,9 @@ except ImportError as exc:
     ) from exc
 
 
-PREPROCESS_VERSION = 2
+PREPROCESS_VERSION = 3
 MODEL_DEFAULTS = {
-    "hidden_size": 128,
+    "hidden_size": 192,
     "heads": 4,
     "expansion": 4,
     "h_layers": 1,
@@ -147,8 +147,10 @@ def add_power_tokens(tokens: list[str], owner: str, powers: list[dict[str, Any]]
 
 
 def rng_byte_tokens(rng: dict[str, Any]) -> Iterator[str]:
-    # These six streams can alter combat decisions. Byte tokenization exposes
-    # exact oracle state without a unique embedding for each 64-bit value.
+    # These six streams can alter combat decisions. Coarse byte tokenization
+    # preserves each byte's position and high nibble while avoiding a sparse
+    # position/value vocabulary that memorizes individual training seeds and
+    # maps unseen held-out byte values to [UNK].
     for stream in ("ai", "card", "card_random", "misc", "monster", "shuffle"):
         state = rng.get(stream)
         if not isinstance(state, dict):
@@ -158,7 +160,7 @@ def rng_byte_tokens(rng: dict[str, Any]) -> Iterator[str]:
             raw = int(state.get(field, 0)) & ((1 << 64) - 1)
             for byte_index in range(8):
                 byte = (raw >> (byte_index * 8)) & 0xFF
-                yield f"RNG:{stream}:{field}:b{byte_index}={byte}"
+                yield f"RNG:{stream}:{field}:b{byte_index}:hi={byte >> 4}"
 
 
 def state_tokens(puzzle: dict[str, Any], decision: dict[str, Any]) -> list[str]:
@@ -803,7 +805,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     dataset_path = Path(args.dataset)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = output_dir / "prepared-combat-hrm-v2.pt"
+    cache_path = output_dir / "prepared-combat-hrm-v3.pt"
     prepared = prepare_dataset(dataset_path, cache_path, args.seed)
     tensors = prepared["tensors"]
     device = choose_device(args.device)
@@ -1055,7 +1057,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--train-seconds",
         type=float,
-        default=300.0,
+        default=600.0,
     )
     parser.add_argument(
         "--device",

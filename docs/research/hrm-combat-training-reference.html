@@ -665,14 +665,14 @@
         <section id="frontend">
           <p class="eyebrow">Implemented · default experiment</p>
           <h2>One command, not twenty parameters</h2>
-          <p>The dedicated <a href="../../src/bin/hrm_train.rs"><code>sts-hrm-train</code></a> binary owns the standard corpus, exact replay expansion, tensor cache, model configuration, device selection, five-minute budget, evaluation, and artifact names. The normal interface is:</p>
+          <p>The dedicated <a href="../../src/bin/hrm_train.rs"><code>sts-hrm-train</code></a> binary owns the standard corpus, exact replay expansion, tensor cache, model configuration, device selection, ten-minute budget, evaluation, and artifact names. The normal interface is:</p>
           <pre>cargo run --release --bin sts-hrm-train</pre>
-          <p>With no arguments it uses the checked-in 500-puzzle Defect A0 Act 3 boss corpus, replays every winning suffix through the engine, constructs a deterministic boss-stratified 400/50/50 puzzle split, selects CUDA when available, trains for 300 wall-clock seconds, and writes under <code>artifacts/hrm</code>. It uses an existing training environment when possible and otherwise provisions one through <code>uv</code>, then exports an FP16 ONNX graph and runtime manifest for trainer-neutral Rust inference.</p>
+          <p>With no arguments it uses the checked-in 500-puzzle Defect A0 Act 3 boss corpus, replays every winning suffix through the engine, constructs a deterministic boss-stratified 400/50/50 puzzle split, selects CUDA when available, trains for 600 wall-clock seconds, and writes under <code>artifacts/hrm</code>. It uses an existing training environment when possible and otherwise provisions one through <code>uv</code>, then exports an FP16 ONNX graph and runtime manifest for trainer-neutral Rust inference.</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Optional override</th><th>Purpose</th><th>Default</th></tr></thead>
               <tbody>
-                <tr><td><code>--seconds N</code></td><td>Short smoke tests or longer training budgets.</td><td>300</td></tr>
+                <tr><td><code>--seconds N</code></td><td>Short smoke tests or longer training budgets.</td><td>600</td></tr>
                 <tr><td><code>--device auto|cuda|cpu</code></td><td>Force the execution device only when needed.</td><td><code>auto</code></td></tr>
                 <tr><td><code>--output-dir PATH</code></td><td>Relocate generated data, cache, checkpoint, and metrics.</td><td><code>artifacts/hrm</code></td></tr>
                 <tr><td><code>--rebuild-data</code></td><td>Discard the replay-expanded data cache and reconstruct it exactly.</td><td>off</td></tr>
@@ -682,9 +682,9 @@
 
           <h3>Measured default run · 26 August 2026</h3>
           <div class="grid three">
-            <div class="card"><div class="metric">40.18%</div><div class="metric-label">held-out decision accuracy</div></div>
-            <div class="card"><div class="metric">300.00 s</div><div class="metric-label">actual optimization time</div></div>
-            <div class="card"><div class="metric">35,951</div><div class="metric-label">optimizer updates</div></div>
+            <div class="card"><div class="metric">44.47%</div><div class="metric-label">held-out decision accuracy</div></div>
+            <div class="card"><div class="metric">600.00 s</div><div class="metric-label">actual optimization time</div></div>
+            <div class="card"><div class="metric">49,814</div><div class="metric-label">optimizer updates</div></div>
           </div>
           <div class="table-wrap">
             <table>
@@ -692,46 +692,46 @@
               <tbody>
                 <tr><td>Hardware / precision</td><td>NVIDIA GeForce RTX 5060; CUDA; bfloat16 autocast.</td></tr>
                 <tr><td>Corpus after exact replay expansion</td><td>500 puzzles and 37,804 decisions; 30,359 train, 3,647 validation, 3,798 test.</td></tr>
-                <tr><td>State serialization</td><td>165–346 tokens, mean 287.98; zero examples truncated by the 384-token budget. This pilot is explicitly an engine-oracle solver: exact combat RNG streams and ordered piles are retained, while raw seed and run-routing data are removed.</td></tr>
-                <tr><td>Model</td><td>4,135,297 parameters; hidden 128; 4 heads; one H and one L layer; 2 × 2 cycles; 2 fixed deep-supervision segments.</td></tr>
-                <tr><td>Held-out test action accuracy</td><td>40.18% overall: Awakened One 37.65%, Donu/Deca 44.36%, Time Eater 39.68%.</td></tr>
+                <tr><td>State serialization</td><td>165–346 tokens, mean 287.98; zero examples truncated by the 384-token budget. RNG words retain byte position and high nibble, reducing sparse seed-specific vocabulary while preserving an explicitly labeled engine-oracle state. Ordered piles are retained; raw seed and run-routing data are removed.</td></tr>
+                <tr><td>Model</td><td>2,521,153 parameters; hidden 192; 4 heads; one H and one L layer; 2 × 2 cycles; 2 fixed deep-supervision segments.</td></tr>
+                <tr><td>Held-out test action accuracy</td><td>44.47% overall: Awakened One 42.90%, Donu/Deca 49.82%, Time Eater 40.99%.</td></tr>
                 <tr><td>Baselines</td><td>20.56% legal-frequency policy; 25.14% expected uniform-legal accuracy.</td></tr>
-                <tr><td>Held-out progress error</td><td>16.38 player-HP points mean absolute error.</td></tr>
-                <tr><td>Training fit</td><td>71.44% on a 2,048-decision training sample versus 41.73% validation, exposing a material generalization gap.</td></tr>
+                <tr><td>Held-out progress error</td><td>16.53 player-HP points mean absolute error.</td></tr>
+                <tr><td>Training fit</td><td>50.93% on a 2,048-decision training sample versus 45.00% validation, substantially narrowing the earlier seed-memorization gap.</td></tr>
               </tbody>
             </table>
           </div>
           <div class="callout green">
-            <strong>Offline verdict:</strong> the complete training path is functional and learns substantially more than the legal-frequency and uniform-legal baselines within five minutes. Closed-loop rollout below is the outcome-level test; decision agreement alone is not treated as the final result.
+            <strong>Offline verdict:</strong> the complete training path is functional and learns substantially more than the legal-frequency and uniform-legal baselines within ten minutes. Closed-loop rollout below is the outcome-level test; decision agreement alone is not treated as the final result.
           </div>
           <p>Every source suffix is a verified win, so this first supervised run trains the progress head on player-HP delta. Closed-loop failures now record the required monster-HP delta for the next policy-improvement pass; it must not be replaced by a winnability label or a flat loss target.</p>
-          <p>The generated training checkpoint is <code>artifacts/hrm/combat-hrm-5m.pt</code>; deployment uses the derived <code>combat-hrm-5m.onnx</code> and <code>combat-hrm-5m.runtime.json</code>. Exact machine-readable training results are in <a href="../../artifacts/hrm/combat-hrm-5m-metrics.json"><code>combat-hrm-5m-metrics.json</code></a>. The detailed trainer and exporter remain behind the stable CLI in <a href="../../tools/train_hrm_combat.py"><code>tools/train_hrm_combat.py</code></a> and <a href="../../tools/export_hrm_onnx.py"><code>tools/export_hrm_onnx.py</code></a>.</p>
+          <p>The generated training checkpoint is <code>artifacts/hrm/combat-hrm-10m.pt</code>; deployment uses the derived <code>combat-hrm-10m.onnx</code> and <code>combat-hrm-10m.runtime.json</code>. Exact machine-readable training results are in <a href="../../artifacts/hrm/combat-hrm-10m-metrics.json"><code>combat-hrm-10m-metrics.json</code></a>. The detailed trainer and exporter remain behind the stable CLI in <a href="../../tools/train_hrm_combat.py"><code>tools/train_hrm_combat.py</code></a> and <a href="../../tools/export_hrm_onnx.py"><code>tools/export_hrm_onnx.py</code></a>.</p>
 
           <h3>Closed-loop evaluation on all 500 entries</h3>
           <p>The companion <a href="../../src/bin/hrm_eval.rs"><code>sts-hrm-eval</code></a> frontend restores every exact entry checkpoint, tokenizes states, batches ONNX inference, applies each selected semantic action, detects repeated Grid decisions, and generates reports in Rust. State preparation, token encoding, and independent game transitions are parallelized; the run continues until victory, player death, or a detected cycle/safety cap:</p>
           <pre>cargo run --release --bin sts-hrm-eval
-column -ts $'\t' artifacts/hrm/combat-hrm-5m-rollouts.tsv | less -S</pre>
+column -ts $'\t' artifacts/hrm/combat-hrm-10m-rollouts.tsv | less -S</pre>
           <div class="grid three">
-            <div class="card"><div class="metric">34.60%</div><div class="metric-label">wins across all 500 puzzles</div></div>
-            <div class="card"><div class="metric">32.00%</div><div class="metric-label">held-out test wins · 16/50</div></div>
+            <div class="card"><div class="metric">38.00%</div><div class="metric-label">wins across all 500 puzzles</div></div>
+            <div class="card"><div class="metric">34.00%</div><div class="metric-label">held-out test wins · 17/50</div></div>
             <div class="card"><div class="metric">0</div><div class="metric-label">unknown-action fallbacks</div></div>
           </div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Closed-loop result</th><th>Measured value</th></tr></thead>
               <tbody>
-                <tr><td>Terminal outcomes</td><td>173 wins, 322 player deaths, 5 detected cycles.</td></tr>
-                <tr><td>Awakened One</td><td>55 / 170 wins (32.35%); 114 deaths; 1 cap.</td></tr>
-                <tr><td>Donu and Deca</td><td>76 / 168 wins (45.24%); 91 deaths; 1 cap.</td></tr>
-                <tr><td>Time Eater</td><td>42 / 162 wins (25.93%); 117 deaths; 3 caps.</td></tr>
-                <tr><td>Puzzle splits</td><td>Train 137/400 wins; validation 20/50; held-out test 16/50.</td></tr>
-                <tr><td>Trajectory length</td><td>Median 11 combat turns and 67.5 semantic actions; 495 puzzles reached a true terminal state.</td></tr>
-                <tr><td>Safety caps</td><td>All five capped seeds repeated an exact policy decision on a recent Grid state. They stay distinct from both wins and deaths.</td></tr>
-                <tr><td>Runtime</td><td>21.62 seconds for all 500 on the RTX 5060, including exact prefix restoration: 17.74 s model inference, 1.63 s state snapshots, 0.77 s token encoding, and 0.95 s action application. The former Python-bridged path took 51.03 seconds.</td></tr>
+                <tr><td>Terminal outcomes</td><td>190 wins, 304 player deaths, 6 detected cycles.</td></tr>
+                <tr><td>Awakened One</td><td>60 / 170 wins (35.29%); 107 deaths; 3 caps.</td></tr>
+                <tr><td>Donu and Deca</td><td>80 / 168 wins (47.62%); 87 deaths; 1 cap.</td></tr>
+                <tr><td>Time Eater</td><td>50 / 162 wins (30.86%); 110 deaths; 2 caps.</td></tr>
+                <tr><td>Puzzle splits</td><td>Train 155/400 wins; validation 18/50; held-out test 17/50.</td></tr>
+                <tr><td>Trajectory length</td><td>Median 11 combat turns and 67.5 semantic actions; 494 puzzles reached a true terminal state.</td></tr>
+                <tr><td>Safety caps</td><td>All six capped seeds repeated an exact policy decision on a recent Grid state. They stay distinct from both wins and deaths.</td></tr>
+                <tr><td>Runtime</td><td>29.64 seconds for all 500 on the RTX 5060, including exact prefix restoration: 25.71 s model inference, 1.65 s state snapshots, 0.77 s token encoding, and 0.99 s action application.</td></tr>
               </tbody>
             </table>
           </div>
-          <p>Each row records seed, boss, split, outcome, turns/actions, player HP delta, phase-normalized encounter HP removed/remaining, per-monster HP, final screen, last action, and the outcome-conditional score. Read the complete table in <a href="../../artifacts/hrm/combat-hrm-5m-rollouts.tsv"><code>combat-hrm-5m-rollouts.tsv</code></a> and the aggregate in <a href="../../artifacts/hrm/combat-hrm-5m-rollout-summary.json"><code>combat-hrm-5m-rollout-summary.json</code></a>. The native tokenizer/runtime is in <a href="../../src/hrm.rs"><code>src/hrm.rs</code></a>; exact rollout and report orchestration is in <a href="../../src/bin/htn.rs"><code>src/bin/htn.rs</code></a>.</p>
+          <p>Each row records seed, boss, split, outcome, turns/actions, player HP delta, phase-normalized encounter HP removed/remaining, per-monster HP, final screen, last action, and the outcome-conditional score. Read the complete table in <a href="../../artifacts/hrm/combat-hrm-10m-rollouts.tsv"><code>combat-hrm-10m-rollouts.tsv</code></a> and the aggregate in <a href="../../artifacts/hrm/combat-hrm-10m-rollout-summary.json"><code>combat-hrm-10m-rollout-summary.json</code></a>. The native tokenizer/runtime is in <a href="../../src/hrm.rs"><code>src/hrm.rs</code></a>; exact rollout and report orchestration is in <a href="../../src/bin/htn.rs"><code>src/bin/htn.rs</code></a>.</p>
         </section>
 
         <section id="experiments">
@@ -755,7 +755,7 @@ column -ts $'\t' artifacts/hrm/combat-hrm-5m-rollouts.tsv | less -S</pre>
             <table>
               <thead><tr><th>Setting</th><th>Start</th><th>Sweep later</th></tr></thead>
               <tbody>
-                <tr><td>Hidden size</td><td>128</td><td>192 / 256 / 384 / 512</td></tr>
+                <tr><td>Hidden size</td><td>192</td><td>128 / 256 / 384 / 512</td></tr>
                 <tr><td>Attention heads</td><td>4</td><td>4 / 8</td></tr>
                 <tr><td>H / L layers</td><td>1 / 1</td><td>1–4 each</td></tr>
                 <tr><td>H / L cycles</td><td>2 / 2</td><td>1–4 with executed-FLOP matching</td></tr>

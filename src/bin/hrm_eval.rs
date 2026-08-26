@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 const SOURCE_FIXTURE: &str = "fixtures/htn/defect-a0-act3-boss-winning-entry-500.jsonl.xz";
-const DEFAULT_CHECKPOINT: &str = "artifacts/hrm/combat-hrm-5m.pt";
+const DEFAULT_CHECKPOINT: &str = "artifacts/hrm/combat-hrm-10m.pt";
 const EXPORT_SCRIPT: &str = "tools/export_hrm_onnx.py";
 const DEFAULT_OUTPUT_DIR: &str = "artifacts/hrm";
 const PYTORCH_INDEX: &str = "https://download.pytorch.org/whl/cu128";
@@ -27,7 +27,7 @@ fn usage() {
     println!(
         "Usage: sts-hrm-eval [--checkpoint PATH] [--device auto|cuda|cpu] \
 [--output-dir PATH] [--max-actions N] [--branches-output PATH]\n\n\
-Defaults: artifacts/hrm/combat-hrm-5m.pt, checked-in 500-puzzle Defect A0 Act 3 \
+Defaults: artifacts/hrm/combat-hrm-10m.pt, checked-in 500-puzzle Defect A0 Act 3 \
 boss fixture, automatic CUDA selection, 1000 actions per puzzle, and reports \
 under artifacts/hrm.\n\n\
 Inference, exact rollouts, loop detection, and reporting run in Rust. If the \

@@ -564,7 +564,10 @@ fn add_rng_tokens(tokens: &mut Vec<String>, rng: Option<&Value>) {
             let raw = signed_state_bits(state.get(field));
             for byte_index in 0..8 {
                 let byte = (raw >> (byte_index * 8)) & 0xff;
-                tokens.push(format!("RNG:{stream}:{field}:b{byte_index}={byte}"));
+                tokens.push(format!(
+                    "RNG:{stream}:{field}:b{byte_index}:hi={}",
+                    byte >> 4
+                ));
             }
         }
     }
@@ -872,5 +875,23 @@ mod tests {
             card_token_with_defaults("hand", card.as_object().unwrap()),
             "CARD:hand:Zap:u1:tu0:c-1:ct-1:m0:fee"
         );
+    }
+
+    #[test]
+    fn rng_tokens_use_coarse_position_aware_bytes() {
+        let rng = json!({
+            "ai": {
+                "counter": 3,
+                "state0": 0x7f10,
+                "state1": -1
+            }
+        });
+        let mut tokens = Vec::new();
+        add_rng_tokens(&mut tokens, Some(&rng));
+        assert_eq!(tokens[0], "RNG:ai:counter=3");
+        assert_eq!(tokens[1], "RNG:ai:state0:b0:hi=1");
+        assert_eq!(tokens[2], "RNG:ai:state0:b1:hi=7");
+        assert_eq!(tokens[9], "RNG:ai:state1:b0:hi=15");
+        assert_eq!(tokens[16], "RNG:ai:state1:b7:hi=15");
     }
 }

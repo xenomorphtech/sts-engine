@@ -32,7 +32,7 @@ fn usage() {
     println!(
         "Usage: sts-hrm-train [--seconds N] [--device auto|cuda|cpu] \
 [--output-dir PATH] [--rebuild-data]\n\n\
-Defaults: checked-in 500-puzzle Defect A0 Act 3 boss fixture, 300 seconds, \
+Defaults: checked-in 500-puzzle Defect A0 Act 3 boss fixture, 600 seconds, \
 automatic CUDA selection, model defaults from tools/train_hrm_combat.py, and \
 outputs in artifacts/hrm.\n\n\
 With no arguments this performs the complete standard experiment."
@@ -41,7 +41,7 @@ With no arguments this performs the complete standard experiment."
 
 fn parse_options(root: &Path) -> Result<Options, String> {
     let mut options = Options {
-        seconds: 300.0,
+        seconds: 600.0,
         device: "auto".to_string(),
         output_dir: root.join(DEFAULT_OUTPUT_DIR),
         rebuild_data: false,
