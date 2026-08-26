@@ -243,7 +243,7 @@ impl HtnAgent {
         stats: &mut SearchStats,
     ) -> Option<Action> {
         if game.player.hp < (game.player.max_hp as f32 * 0.45) as i32 {
-            if let Some(heal) = find_potion(legal, &[PotionId::Blood, PotionId::FruitJuice]) {
+            if let Some(heal) = find_potion(game, legal, &[PotionId::Blood, PotionId::FruitJuice]) {
                 return Some(heal);
             }
         }
@@ -444,11 +444,34 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn emergency_heal_selects_the_requested_potion_slot() {
+        use crate::creature::PotionInstance;
+
+        let mut game = Game::new(12, Character::Defect, 0, Unlocks::fixture());
+        game.player.potions = vec![
+            PotionInstance { id: PotionId::Duplication, slot: 0 },
+            PotionInstance { id: PotionId::Blood, slot: 1 },
+        ].into();
+        let legal = vec![
+            Action::Potion { action: PotionOp::Use, slot: 0, target_index: None },
+            Action::Potion { action: PotionOp::Use, slot: 1, target_index: None },
+        ];
+
+        assert_eq!(
+            find_potion(&game, &legal, &[PotionId::Blood, PotionId::FruitJuice]),
+            Some(legal[1].clone())
+        );
+        assert_eq!(find_potion(&game, &legal, &[PotionId::FruitJuice]), None);
+    }
 }
 
-fn find_potion(legal: &[Action], want: &[PotionId]) -> Option<Action> {
-    legal.iter().find(|a| match a {
-        Action::Potion { action: PotionOp::Use, .. } => true,
-        _ => false,
-    }).filter(|_| !want.is_empty()).cloned()
+fn find_potion(game: &Game, legal: &[Action], want: &[PotionId]) -> Option<Action> {
+    legal.iter().find(|action| {
+        let Action::Potion { action: PotionOp::Use, slot, .. } = action else {
+            return false;
+        };
+        game.player.potions.get(*slot).is_some_and(|potion| want.contains(&potion.id))
+    }).cloned()
 }

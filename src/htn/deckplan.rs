@@ -468,23 +468,23 @@ impl<'a> DeckPlan<'a> {
             EncounterId::TimeEater => match id {
                 // Prefer cards that compress a turn's output into a few plays
                 // and preserve answers across the twelve-card boundary.
-                CardId::Echo_Form => 10,
-                CardId::Glacier | CardId::Buffer => 8,
-                CardId::Reinforced_Body => 8,
-                CardId::Doom_and_Gloom | CardId::Darkness => 6,
-                CardId::Hologram => 5,
-                CardId::Defragment => 5,
+                CardId::Echo_Form => 55,
+                CardId::Glacier | CardId::Buffer => 45,
+                CardId::Reinforced_Body => 40,
+                CardId::Doom_and_Gloom | CardId::Darkness => 35,
+                CardId::Defragment => 35,
+                CardId::Hologram => 25,
                 _ => 0,
             },
             EncounterId::AwakenedOne => match id {
                 // Non-Power scaling can be established in phase one without
                 // permanently increasing every remaining multi-hit attack.
-                CardId::Doom_and_Gloom | CardId::Darkness => 10,
-                CardId::Glacier => 8,
-                CardId::Reinforced_Body => 8,
-                CardId::Core_Surge | CardId::Genetic_Algorithm => 6,
-                CardId::Buffer => 5,
-                CardId::Creative_AI | CardId::Storm | CardId::Machine_Learning => -5,
+                CardId::Doom_and_Gloom | CardId::Darkness => 50,
+                CardId::Glacier => 45,
+                CardId::Reinforced_Body => 40,
+                CardId::Core_Surge | CardId::Genetic_Algorithm => 35,
+                CardId::Buffer => 25,
+                CardId::Creative_AI | CardId::Storm | CardId::Machine_Learning => -25,
                 _ => 0,
             },
             EncounterId::DonuAndDeca => match id {
@@ -988,5 +988,11 @@ mod tests {
         let time_eater = card_adjustment(&game, &creative_ai);
         game.dungeon.boss = EncounterId::AwakenedOne;
         assert!(card_adjustment(&game, &creative_ai) <= time_eater - 5);
+
+        let glacier = Card::new(CardId::Glacier);
+        game.dungeon.boss = EncounterId::TimeEater;
+        assert!(card_adjustment(&game, &glacier) >= 45);
+        game.dungeon.boss = EncounterId::AwakenedOne;
+        assert!(card_adjustment(&game, &glacier) >= 45);
     }
 }

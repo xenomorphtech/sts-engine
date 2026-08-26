@@ -6,6 +6,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
@@ -15,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sts_engine::creature::OrbKind;
-use sts_engine::game::{CampfireOption, EventOption, Game, Screen};
+use sts_engine::game::{CampfireOption, EventOption, Game, RewardKind, Screen};
 use sts_engine::htn::{HtnAgent, SearchStats};
 use sts_engine::ids::{Act, CardId, Character, EventId, MonsterId, PowerId, RelicId, RoomType};
 use sts_engine::rng::StsRandom;
@@ -75,6 +76,292 @@ struct ActionLog {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     outcome: Option<Outcome>,
     actions: Vec<Action>,
+}
+
+/// A model-training checkpoint at the opening state of the Act 3 boss fight.
+///
+/// `state` is a structured snapshot of every public engine field that can
+/// influence play. `action_prefix` is the authoritative resume format:
+/// replaying it from `Game::new` reconstructs private engine bookkeeping too.
+/// The suffix independently proves the run was a win and can serve as an
+/// optional expert demonstration from the checkpoint.
+#[derive(Debug, Deserialize, Serialize)]
+struct WinningBossEntryCheckpoint {
+    schema_version: u32,
+    seed: i64,
+    ascension: i32,
+    character: String,
+    boss: String,
+    entry_step: usize,
+    final_step: usize,
+    state: Value,
+    action_prefix: Vec<Action>,
+    winning_suffix: Vec<Action>,
+}
+
+fn card_state(card: &sts_engine::card::Card) -> Value {
+    json!({
+        "id": card.sts_id(),
+        "upgraded": card.upgraded,
+        "times_upgraded": card.times_upgraded,
+        "cost": card.cost,
+        "cost_for_turn": card.cost_for_turn,
+        "base_damage": card.base_damage,
+        "base_block": card.base_block,
+        "base_magic": card.base_magic,
+        "misc": card.misc,
+        "free_to_play_once": card.free_to_play_once,
+        "exhaust": card.exhaust,
+        "ethereal": card.ethereal,
+        "retain": card.retain,
+        "innate": card.innate,
+        "in_bottle": card.in_bottle,
+    })
+}
+
+fn card_pile_state(pile: &sts_engine::dungeon::CowVec<sts_engine::card::Card>) -> Vec<Value> {
+    pile.iter().map(card_state).collect()
+}
+
+fn power_state(power: &sts_engine::creature::Power) -> Value {
+    json!({
+        "id": format!("{:?}", power.id),
+        "amount": power.amount,
+        "just_applied": power.just_applied,
+        "skip_first": power.skip_first,
+        "misc": power.misc,
+    })
+}
+
+fn reward_state(reward: &sts_engine::game::Reward) -> Value {
+    let kind = match reward.kind {
+        RewardKind::Gold(amount) => json!({"kind": "gold", "amount": amount}),
+        RewardKind::StolenGold(amount) => json!({"kind": "stolen_gold", "amount": amount}),
+        RewardKind::Potion(id) => json!({"kind": "potion", "id": id.sts_id()}),
+        RewardKind::Relic(id) => json!({"kind": "relic", "id": id.sts_id()}),
+        RewardKind::Card => json!({"kind": "card"}),
+        RewardKind::EmeraldKey => json!({"kind": "emerald_key"}),
+        RewardKind::SapphireKey => json!({"kind": "sapphire_key"}),
+    };
+    json!({"reward": kind, "taken": reward.taken})
+}
+
+fn monster_state(monster: &sts_engine::creature::Monster) -> Value {
+    json!({
+        "id": monster.id.sts_id(),
+        "hp": monster.hp,
+        "max_hp": monster.max_hp,
+        "block": monster.block,
+        "powers": monster.powers.iter().map(power_state).collect::<Vec<_>>(),
+        "intent": format!("{:?}", monster.intent),
+        "intent_damage": monster.intent_damage,
+        "intent_base_damage": monster.intent_base_damage,
+        "intent_hits": monster.intent_hits,
+        "next_move": monster.next_move,
+        "move_history": monster.move_history,
+        "dead": monster.dead,
+        "escaped": monster.escaped,
+        "first_move": monster.first_move,
+        "extra": monster.extra,
+        "stolen_gold": monster.stolen_gold,
+        "split_triggered": monster.split_triggered,
+        "stasis_card": monster.stasis_card.as_ref().map(card_state),
+        "half_dead": monster.half_dead,
+        "ascension": monster.ascension,
+        "pending_reactive": monster.pending_reactive,
+        "pending_curl": monster.pending_curl,
+        "pending_hand_drill": monster.pending_hand_drill,
+        "offset_x": monster.offset_x,
+        "just_spawned": monster.just_spawned,
+    })
+}
+
+fn training_state(game: &Game) -> Value {
+    let combat = game.combat.as_ref().map(|combat| {
+        json!({
+            "encounter": format!("{:?}", combat.encounter),
+            "monsters": combat.monsters.iter().map(monster_state).collect::<Vec<_>>(),
+            "smoked": combat.smoked,
+            "turn": combat.turn,
+            "cards_played_this_turn": combat.cards_played_this_turn,
+            "echo_cards_duplicated_this_turn": combat.echo_cards_duplicated_this_turn,
+            "force_end_turn": combat.force_end_turn,
+            "skills_this_turn": combat.skills_this_turn,
+            "attacks_this_turn": combat.attacks_this_turn,
+            "orange_pellets_mask": combat.orange_pellets_mask,
+            "need_exhaust_select": combat.need_exhaust_select,
+            "need_put_on_deck": combat.need_put_on_deck,
+            "need_discard_to_hand": combat.need_discard_to_hand,
+            "need_draw_to_hand": combat.need_draw_to_hand,
+            "need_discovery": combat.need_discovery,
+            "need_forethought": combat.need_forethought,
+            "need_skill_from_deck": combat.need_skill_from_deck,
+            "skill_from_deck": combat.skill_from_deck.iter().copied().collect::<Vec<_>>(),
+            "pending_exhaust": combat.pending_exhaust.as_ref().map(card_state),
+            "pending_rebound": combat.pending_rebound,
+            "draw_after_exhaust": combat.draw_after_exhaust,
+            "pending_dark_embrace": combat.pending_dark_embrace,
+            "pending_ink_bottle": combat.pending_ink_bottle,
+            "pending_letter_opener": combat.pending_letter_opener,
+            "pending_hex_after_seek": combat.pending_hex_after_seek,
+            "pending_stasis_cards": card_pile_state(&combat.pending_stasis_cards),
+            "ascension": combat.ascension,
+            "orbs_channeled_this_combat": combat.orbs_channeled_this_combat.iter()
+                .map(|kind| format!("{kind:?}"))
+                .collect::<Vec<_>>(),
+            "energy_on_use": combat.energy_on_use,
+            "slavers_collar_active": combat.slavers_collar_active,
+        })
+    });
+    let map = game
+        .dungeon
+        .map
+        .nodes
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|node| {
+                    json!({
+                        "x": node.x,
+                        "y": node.y,
+                        "room": node.room.map(|room| format!("{room:?}")),
+                        "taken": node.taken,
+                        "emerald_key": node.emerald_key,
+                        "edges": node.edges.iter().map(|edge| json!({
+                            "src_x": edge.src_x,
+                            "src_y": edge.src_y,
+                            "dst_x": edge.dst_x,
+                            "dst_y": edge.dst_y,
+                            "taken": edge.taken,
+                        })).collect::<Vec<_>>(),
+                        "parents": node.parents,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let event = game.event.as_ref().map(|event| {
+        json!({
+            "id": event.id.sts_id(),
+            "screen": event.screen,
+            "options": event.options.iter().map(|option| format!("{option:?}")).collect::<Vec<_>>(),
+            "data": event.data,
+        })
+    });
+
+    json!({
+        "game": {
+            "seed": game.seed,
+            "ascension": game.ascension,
+            "character": format!("{:?}", game.character),
+            "screen": format!("{:?}", game.screen),
+            "current_room": format!("{:?}", game.current_room),
+            "current_x": game.current_x,
+            "current_y": game.current_y,
+            "done": game.done,
+            "hand_select": game.hand_select,
+            "potion_blizzard": game.potion_blizzard,
+            "card_blizz": game.card_blizz,
+            // serde_json::Value may reformat a floating Number when it is
+            // written. Keep both a readable f32 value and its lossless bits so
+            // a checkpoint compares identically after a fresh-process load.
+            "event_elite_chance": {
+                "value": format!("{:?}", game.event_elite_chance),
+                "f32_bits": game.event_elite_chance.to_bits(),
+            },
+            "event_monster_chance": {
+                "value": format!("{:?}", game.event_monster_chance),
+                "f32_bits": game.event_monster_chance.to_bits(),
+            },
+            "event_shop_chance": {
+                "value": format!("{:?}", game.event_shop_chance),
+                "f32_bits": game.event_shop_chance.to_bits(),
+            },
+            "event_treasure_chance": {
+                "value": format!("{:?}", game.event_treasure_chance),
+                "f32_bits": game.event_treasure_chance.to_bits(),
+            },
+            "keys": {
+                "ruby": game.has_ruby_key(),
+                "emerald": game.has_emerald_key(),
+                "sapphire": game.has_sapphire_key(),
+                "final_act_available": game.final_act_available(),
+            },
+            "rewards": game.rewards.iter().map(reward_state).collect::<Vec<_>>(),
+            "card_reward": game.card_reward.iter().map(card_state).collect::<Vec<_>>(),
+            "pending_cards": game.pending_cards.iter().map(card_state).collect::<Vec<_>>(),
+            "event": event,
+            "neow_options": game.neow_options.iter().map(|option| format!("{option:?}")).collect::<Vec<_>>(),
+            "neow_screen": game.neow_screen,
+            "neow_rng": game.neow_rng.snapshot(),
+            "boss_relics": game.boss_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "grid": game.grid_summary(),
+            "legal_actions": game.legal_actions(),
+        },
+        "rng": game.rng.snapshot(),
+        "player": {
+            "hp": game.player.hp,
+            "max_hp": game.player.max_hp,
+            "block": game.player.block,
+            "gold": game.player.gold,
+            "energy": game.player.energy,
+            "energy_master": game.player.energy_master,
+            "potion_slots": game.player.potion_slots,
+            "relics": game.player.relics.iter().map(|relic| json!({
+                "id": relic.id.sts_id(),
+                "counter": relic.counter,
+                "used_up": relic.used_up,
+            })).collect::<Vec<_>>(),
+            "potions": game.player.potions.iter().map(|potion| json!({
+                "id": potion.id.sts_id(),
+                "slot": potion.slot,
+            })).collect::<Vec<_>>(),
+            "powers": game.player.powers.iter().map(power_state).collect::<Vec<_>>(),
+            "deck": card_pile_state(&game.player.deck),
+            "draw": card_pile_state(&game.player.draw),
+            "hand": card_pile_state(&game.player.hand),
+            "discard": card_pile_state(&game.player.discard),
+            "exhaust": card_pile_state(&game.player.exhaust),
+            "duplication": game.player.duplication,
+            "pending_static": game.player.pending_static,
+            "pending_evoke_lightning": game.player.pending_evoke_lightning.iter().copied().collect::<Vec<_>>(),
+            "pending_evoke_frost": game.player.pending_evoke_frost.iter().copied().collect::<Vec<_>>(),
+            "pending_evoke_dark": game.player.pending_evoke_dark.iter().copied().collect::<Vec<_>>(),
+            "orbs": game.player.orbs.iter().map(|orb| json!({
+                "kind": format!("{:?}", orb.kind),
+                "evoke": orb.evoke,
+            })).collect::<Vec<_>>(),
+            "max_orbs": game.player.max_orbs,
+            "master_max_orbs": game.player.master_max_orbs,
+        },
+        "dungeon": {
+            "act": game.dungeon.act as i32,
+            "floor": game.dungeon.floor,
+            "boss": format!("{:?}", game.dungeon.boss),
+            "boss_list": game.dungeon.boss_list.iter().map(|id| format!("{id:?}")).collect::<Vec<_>>(),
+            "monster_list": game.dungeon.monster_list.iter().map(|id| format!("{id:?}")).collect::<Vec<_>>(),
+            "elite_list": game.dungeon.elite_list.iter().map(|id| format!("{id:?}")).collect::<Vec<_>>(),
+            "event_list": game.dungeon.event_list.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "shrine_list": game.dungeon.shrine_list.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "special_one_time": game.dungeon.special_one_time.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "common_relics": game.dungeon.common_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "uncommon_relics": game.dungeon.uncommon_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "rare_relics": game.dungeon.rare_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "shop_relics": game.dungeon.shop_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "boss_relics": game.dungeon.boss_relics.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "common_cards": game.dungeon.common_cards.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "uncommon_cards": game.dungeon.uncommon_cards.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "rare_cards": game.dungeon.rare_cards.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "colorless_cards": game.dungeon.colorless_cards.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "src_colorless_cards": game.dungeon.src_colorless_cards.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "curse_cards": game.dungeon.curse_cards.iter().map(|id| id.sts_id()).collect::<Vec<_>>(),
+            "map": map,
+            "path_x": game.dungeon.path_x,
+            "path_y": game.dungeon.path_y,
+            "first_room_chosen": game.dungeon.first_room_chosen,
+        },
+        "combat": combat,
+    })
 }
 
 fn classify_outcome(game: &Game, capped: bool, fallback: Option<Outcome>) -> Outcome {
@@ -219,6 +506,266 @@ fn write_action_log(path: &Path, logs: &[ActionLog]) -> Result<(), String> {
         writeln!(out).map_err(|e| e.to_string())?;
     }
     out.flush().map_err(|e| e.to_string())
+}
+
+fn write_winning_boss_entries(
+    path: &Path,
+    checkpoints: &[WinningBossEntryCheckpoint],
+) -> Result<(), String> {
+    let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    let mut out = BufWriter::new(file);
+    for checkpoint in checkpoints {
+        serde_json::to_writer(&mut out, checkpoint).map_err(|e| e.to_string())?;
+        writeln!(out).map_err(|e| e.to_string())?;
+    }
+    out.flush().map_err(|e| e.to_string())
+}
+
+fn load_winning_boss_entries(path: &Path) -> Result<Vec<WinningBossEntryCheckpoint>, String> {
+    let input =
+        BufReader::new(File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?);
+    input
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line = line.map_err(|e| e.to_string())?;
+            serde_json::from_str(&line)
+                .map_err(|e| format!("{} line {}: {e}", path.display(), i + 1))
+        })
+        .collect()
+}
+
+fn run_winning_boss_entry(
+    seed: i64,
+    character: Character,
+    ascension: i32,
+    max_steps: usize,
+    unlocks: &Unlocks,
+) -> Option<WinningBossEntryCheckpoint> {
+    let mut game = Game::new(seed, character, ascension, unlocks.clone());
+    let mut agent = HtnAgent::new();
+    let mut actions = Vec::new();
+    let mut entry: Option<(usize, String, Value)> = None;
+
+    while !game.done
+        && game.player.hp > 0
+        && game.screen != Screen::Terminal
+        && actions.len() < max_steps
+    {
+        let action = agent.decide(&game);
+        if matches!(action, Action::Quit) {
+            break;
+        }
+        game.step(&action);
+        actions.push(action);
+        if entry.is_none()
+            && game.dungeon.act == Act::Beyond
+            && game.current_room == RoomType::Boss
+            && game.screen == Screen::Combat
+        {
+            if let Some(combat) = game.combat.as_ref() {
+                entry = Some((
+                    actions.len(),
+                    format!("{:?}", combat.encounter),
+                    training_state(&game),
+                ));
+            }
+        }
+    }
+
+    if classify_outcome(&game, actions.len() >= max_steps, None) != Outcome::Win {
+        return None;
+    }
+    let (entry_step, boss, state) = entry?;
+    let winning_suffix = actions.split_off(entry_step);
+    Some(WinningBossEntryCheckpoint {
+        schema_version: 2,
+        seed,
+        ascension,
+        character: format!("{character:?}"),
+        boss,
+        entry_step,
+        final_step: entry_step + winning_suffix.len(),
+        state,
+        action_prefix: actions,
+        winning_suffix,
+    })
+}
+
+fn run_winning_boss_entry_batch(
+    seeds: &[i64],
+    target: usize,
+    concurrent: usize,
+    character: Character,
+    ascension: i32,
+    max_steps: usize,
+    unlocks: &Unlocks,
+) -> Vec<WinningBossEntryCheckpoint> {
+    let next_offset = AtomicUsize::new(0);
+    let completed = AtomicUsize::new(0);
+    let found = AtomicUsize::new(0);
+    let mut checkpoints = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(concurrent.min(seeds.len()));
+        for _ in 0..concurrent.min(seeds.len()) {
+            workers.push(scope.spawn(|| {
+                let mut local = Vec::new();
+                loop {
+                    let offset = next_offset.fetch_add(1, Ordering::Relaxed);
+                    if offset >= seeds.len() {
+                        break;
+                    }
+                    if let Some(checkpoint) = run_winning_boss_entry(
+                        seeds[offset],
+                        character,
+                        ascension,
+                        max_steps,
+                        unlocks,
+                    ) {
+                        found.fetch_add(1, Ordering::Relaxed);
+                        local.push((offset, checkpoint));
+                    }
+                    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done % 50 == 0 || done == seeds.len() {
+                        eprintln!(
+                            "boss-entry collection: {done}/{} seeds, {} eventual wins",
+                            seeds.len(),
+                            found.load(Ordering::Relaxed)
+                        );
+                    }
+                }
+                local
+            }));
+        }
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("HTN checkpoint worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    checkpoints.sort_unstable_by_key(|(offset, _)| *offset);
+    checkpoints
+        .into_iter()
+        .take(target)
+        .map(|(_, checkpoint)| checkpoint)
+        .collect()
+}
+
+fn first_state_difference(expected: &Value, actual: &Value, path: &str) -> Option<String> {
+    match (expected, actual) {
+        (Value::Object(expected), Value::Object(actual)) => {
+            let mut keys = expected.keys().chain(actual.keys()).collect::<Vec<_>>();
+            keys.sort_unstable();
+            keys.dedup();
+            for key in keys {
+                let child = format!("{path}/{key}");
+                match (expected.get(key), actual.get(key)) {
+                    (Some(expected), Some(actual)) => {
+                        if let Some(difference) = first_state_difference(expected, actual, &child) {
+                            return Some(difference);
+                        }
+                    }
+                    (Some(expected), None) => {
+                        return Some(format!("{child}: expected {expected}, field is absent"));
+                    }
+                    (None, Some(actual)) => {
+                        return Some(format!("{child}: field is absent, got {actual}"));
+                    }
+                    (None, None) => unreachable!(),
+                }
+            }
+            None
+        }
+        (Value::Array(expected), Value::Array(actual)) => {
+            if expected.len() != actual.len() {
+                return Some(format!(
+                    "{path}: expected array length {}, got {}",
+                    expected.len(), actual.len()
+                ));
+            }
+            expected
+                .iter()
+                .zip(actual)
+                .enumerate()
+                .find_map(|(index, (expected, actual))| {
+                    first_state_difference(expected, actual, &format!("{path}/{index}"))
+                })
+        }
+        _ if expected == actual => None,
+        _ => Some(format!("{path}: expected {expected}, got {actual}")),
+    }
+}
+
+fn verify_winning_boss_entries(
+    checkpoints: &[WinningBossEntryCheckpoint],
+    character: Character,
+    ascension: i32,
+    unlocks: &Unlocks,
+) -> Result<usize, String> {
+    for (index, checkpoint) in checkpoints.iter().enumerate() {
+        if checkpoint.schema_version != 2 {
+            return Err(format!(
+                "seed {} uses unsupported checkpoint schema {}",
+                checkpoint.seed, checkpoint.schema_version
+            ));
+        }
+        if checkpoint.ascension != ascension
+            || checkpoint.character != format!("{character:?}")
+            || checkpoint.entry_step != checkpoint.action_prefix.len()
+            || checkpoint.final_step
+                != checkpoint.action_prefix.len() + checkpoint.winning_suffix.len()
+        {
+            return Err(format!(
+                "seed {} has inconsistent checkpoint metadata",
+                checkpoint.seed
+            ));
+        }
+        let mut game = Game::new(checkpoint.seed, character, ascension, unlocks.clone());
+        for action in &checkpoint.action_prefix {
+            game.step(action);
+        }
+        if game.dungeon.act != Act::Beyond
+            || game.current_room != RoomType::Boss
+            || game.screen != Screen::Combat
+        {
+            return Err(format!(
+                "seed {} prefix did not resume at the Act 3 boss opening",
+                checkpoint.seed
+            ));
+        }
+        let boss = game
+            .combat
+            .as_ref()
+            .map(|combat| format!("{:?}", combat.encounter));
+        if boss.as_deref() != Some(checkpoint.boss.as_str()) {
+            return Err(format!(
+                "seed {} resumed at {:?}, expected {}",
+                checkpoint.seed, boss, checkpoint.boss
+            ));
+        }
+        let actual_state = training_state(&game);
+        if let Some(difference) = first_state_difference(&checkpoint.state, &actual_state, "state") {
+            return Err(format!(
+                "seed {} structured state differs after prefix replay: {difference}",
+                checkpoint.seed,
+            ));
+        }
+        for action in &checkpoint.winning_suffix {
+            game.step(action);
+        }
+        if classify_outcome(&game, false, None) != Outcome::Win {
+            return Err(format!(
+                "seed {} saved suffix did not reproduce a win",
+                checkpoint.seed
+            ));
+        }
+        if (index + 1) % 50 == 0 || index + 1 == checkpoints.len() {
+            eprintln!(
+                "boss-entry verification: {}/{} exact resumes and wins",
+                index + 1,
+                checkpoints.len()
+            );
+        }
+    }
+    Ok(checkpoints.len())
 }
 
 fn run_final_batch(
@@ -1140,6 +1687,9 @@ fn main() {
     let mut compare_jsonl: Option<PathBuf> = None;
     let mut actions_jsonl: Option<PathBuf> = None;
     let mut replay_actions_jsonl: Option<PathBuf> = None;
+    let mut winning_boss_entry_jsonl: Option<PathBuf> = None;
+    let mut verify_winning_boss_entry_jsonl: Option<PathBuf> = None;
+    let mut target_states: usize = 500;
     let mut randomize = false;
     let mut random_source: Option<i64> = None;
     let mut args = env::args().skip(1);
@@ -1168,6 +1718,15 @@ fn main() {
             "--compare-jsonl" => compare_jsonl = args.next().map(PathBuf::from),
             "--actions-jsonl" => actions_jsonl = args.next().map(PathBuf::from),
             "--replay-actions-jsonl" => replay_actions_jsonl = args.next().map(PathBuf::from),
+            "--winning-boss-entry-jsonl" => {
+                winning_boss_entry_jsonl = args.next().map(PathBuf::from)
+            }
+            "--verify-winning-boss-entry-jsonl" => {
+                verify_winning_boss_entry_jsonl = args.next().map(PathBuf::from)
+            }
+            "--target-states" => {
+                target_states = args.next().and_then(|s| s.parse().ok()).unwrap_or(500)
+            }
             "--random-seeds" => randomize = true,
             "--seed-source" => {
                 random_source = args.next().and_then(|s| s.parse().ok());
@@ -1175,7 +1734,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--telemetry] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH] [--replay-actions-jsonl PATH]\n\nBatch mode prints aggregate decision and HTN-emulation throughput, win rate, mean floor, and death breakdowns. --diagnostics adds the full per-seed policy table. --telemetry opts into orb/card/event telemetry. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl optionally accumulates only each seed's actions in memory and writes them once after the batch. --replay-actions-jsonl bypasses HTN and replays that action log; combine it with --compare-jsonl for an engine-only exact gate. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
+                    "Usage: sts-htn [--character CHARACTER] [--seed FIRST_SEED] [--count N] [--concurrent N] [--random-seeds] [--seed-source N] [--ascension 0|20] [--max-steps N] [--diagnostics] [--telemetry] [--fixture-jsonl PATH | --compare-jsonl PATH | --actions-jsonl PATH | --winning-boss-entry-jsonl PATH] [--replay-actions-jsonl PATH | --verify-winning-boss-entry-jsonl PATH] [--target-states N]\n\nBatch mode prints aggregate decision and HTN-emulation throughput, win rate, mean floor, and death breakdowns. --diagnostics adds the full per-seed policy table. --telemetry opts into orb/card/event telemetry. --fixture-jsonl writes one compact final engine state per seed; --compare-jsonl reruns the cohort and requires exact equality. --actions-jsonl optionally accumulates only each seed's actions in memory and writes them once after the batch. --replay-actions-jsonl bypasses HTN and replays that action log; combine it with --compare-jsonl for an engine-only exact gate. --winning-boss-entry-jsonl retains the first --target-states eventual winners as full Act 3 boss-opening training checkpoints; --count is the candidate seed-pool size. --verify-winning-boss-entry-jsonl replays every prefix, compares every state, then replays every winning suffix. --random-seeds generates a fresh cohort; --seed-source makes that cohort reproducible. Runs cap at 5000 steps by default; any capped seed should be treated as a loop bug."
                 );
                 return;
             }
@@ -1195,18 +1754,53 @@ fn main() {
         eprintln!("--concurrent must be greater than zero");
         std::process::exit(2);
     }
-    let write_modes = usize::from(fixture_jsonl.is_some()) + usize::from(actions_jsonl.is_some());
+    if target_states == 0 {
+        eprintln!("--target-states must be greater than zero");
+        std::process::exit(2);
+    }
+    let write_modes = usize::from(fixture_jsonl.is_some())
+        + usize::from(actions_jsonl.is_some())
+        + usize::from(winning_boss_entry_jsonl.is_some());
     if write_modes > 1
         || (compare_jsonl.is_some() && write_modes > 0)
         || (replay_actions_jsonl.is_some() && write_modes > 0)
+        || (verify_winning_boss_entry_jsonl.is_some() && write_modes > 0)
+        || (verify_winning_boss_entry_jsonl.is_some() && replay_actions_jsonl.is_some())
+        || (verify_winning_boss_entry_jsonl.is_some() && compare_jsonl.is_some())
     {
-        eprintln!("choose only one of --fixture-jsonl, --compare-jsonl, and --actions-jsonl");
+        eprintln!("choose only one JSONL collection, comparison, or replay mode");
         std::process::exit(2);
     }
 
     // Load the profile-backed unlock data once, then clone the in-memory value
     // into each fresh game. No assets or profile files are reloaded per seed.
     let unlocks = Unlocks::fixture();
+    if let Some(checkpoint_path) = verify_winning_boss_entry_jsonl {
+        let checkpoints = match load_winning_boss_entries(&checkpoint_path) {
+            Ok(checkpoints) if !checkpoints.is_empty() => checkpoints,
+            Ok(_) => {
+                eprintln!("{} contains no checkpoints", checkpoint_path.display());
+                std::process::exit(2);
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        };
+        let start = Instant::now();
+        match verify_winning_boss_entries(&checkpoints, character, ascension, &unlocks) {
+            Ok(count) => eprintln!(
+                "verified {count} exact Act 3 boss-entry resumes and winning suffixes from {} in {:.3}s",
+                checkpoint_path.display(),
+                start.elapsed().as_secs_f64()
+            ),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Some(actions_path) = replay_actions_jsonl {
         let logs = match load_action_log(&actions_path) {
             Ok(logs) if !logs.is_empty() => logs,
@@ -1254,6 +1848,45 @@ fn main() {
     } else {
         consecutive_seeds(seed, count)
     };
+    if let Some(path) = winning_boss_entry_jsonl {
+        let start = Instant::now();
+        let checkpoints = run_winning_boss_entry_batch(
+            &seeds,
+            target_states,
+            concurrent,
+            character,
+            ascension,
+            max_steps,
+            &unlocks,
+        );
+        if checkpoints.len() < target_states {
+            eprintln!(
+                "candidate pool produced only {} winning Act 3 boss entries; increase --count above {}",
+                checkpoints.len(),
+                seeds.len()
+            );
+            std::process::exit(1);
+        }
+        if let Err(message) =
+            verify_winning_boss_entries(&checkpoints, character, ascension, &unlocks)
+        {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        match write_winning_boss_entries(&path, &checkpoints) {
+            Ok(()) => eprintln!(
+                "wrote and verified {} winning Act 3 boss-entry checkpoints to {} in {:.3}s",
+                checkpoints.len(),
+                path.display(),
+                start.elapsed().as_secs_f64()
+            ),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Some(path) = actions_jsonl {
         let start = Instant::now();
         let logs = run_action_batch(

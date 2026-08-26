@@ -90,6 +90,7 @@ struct EvaluationContext<'a> {
     before_orb_value: f32,
     before_genetic_training: Option<i32>,
     time_warp_plan: Option<TimeWarpPlan>,
+    time_eater_haste_plan: Option<TimeEaterHastePlan>,
     donu_deca_plan: Option<DonuDecaPlan>,
 }
 
@@ -100,6 +101,15 @@ enum TimeWarpMethod {
     /// End the turn inside the current window and carry its remaining card
     /// budget into the next-hand task.
     BankWindow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TimeEaterHasteMethod {
+    /// Preserve the threshold for one hand so setup and the real next draw
+    /// can be joined to the Haste-crossing decision.
+    HoldThreshold,
+    /// Cross half HP and enter the one-hand pre-heal kill window.
+    CrossHaste,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -118,6 +128,13 @@ struct TimeWarpPlan {
     start_counter: i32,
     cards_remaining: i32,
     method: TimeWarpMethod,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TimeEaterHastePlan {
+    start_hp: i32,
+    threshold: i32,
+    method: TimeEaterHasteMethod,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,29 +157,71 @@ struct DonuDecaPlan {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BossPhase {
+    GuardianModeShift,
+    SlimeBossSplit,
+    ChampAnger,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BossPhaseMethod {
+    Hold,
+    Cross,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BossPhasePlan {
+    phase: BossPhase,
+    start_progress: i32,
+    threshold: i32,
+    method: BossPhaseMethod,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BossDeadline {
+    HexaghostDivider,
+    HexaghostInferno,
+    AutomatonHyperBeam,
+    CollectorMegaDebuff,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BossDeadlinePlan {
+    deadline: BossDeadline,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BossTurnTask {
+    Guardian,
+    Hexaghost,
+    SlimeBoss,
+    BronzeAutomaton,
+    Champ,
+    Collector,
+    TimeEater,
+    AwakenedOne,
+    DonuDeca,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TurnMethod {
+    BossPhase(BossPhasePlan),
+    BossDeadline(BossDeadlinePlan),
     TimeWarp(TimeWarpPlan),
+    TimeEaterHaste(TimeEaterHastePlan),
     Awakened(AwakenedPlan),
     DonuDeca(DonuDecaPlan),
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TurnPlanMemory {
-    time_warp: Option<CommittedTimeWarpPlan>,
-    awakened: Option<CommittedAwakenedPlan>,
-    donu_deca: Option<DonuDecaPlan>,
+    boss_method: Option<CommittedTurnMethod>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct CommittedTimeWarpPlan {
+struct CommittedTurnMethod {
     combat_turn: i32,
-    plan: TimeWarpPlan,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct CommittedAwakenedPlan {
-    combat_turn: i32,
-    plan: AwakenedPlan,
+    method: TurnMethod,
 }
 
 impl TimeWarpPlan {
@@ -227,6 +286,82 @@ impl TimeWarpPlan {
     }
 }
 
+impl TimeEaterHastePlan {
+    fn methods(game: &Game) -> Option<[Self; 2]> {
+        let time_eater = game.combat.as_ref()?.monsters.iter().find(|monster| {
+            monster.id == MonsterId::TimeEater && monster.alive() && !monster.split_triggered
+        })?;
+        let threshold = time_eater.max_hp / 2;
+        (time_eater.hp <= time_eater.max_hp * 2 / 3).then_some([
+            Self {
+                start_hp: time_eater.hp,
+                threshold,
+                method: TimeEaterHasteMethod::HoldThreshold,
+            },
+            Self {
+                start_hp: time_eater.hp,
+                threshold,
+                method: TimeEaterHasteMethod::CrossHaste,
+            },
+        ])
+    }
+
+    fn allows(self, game: &Game) -> bool {
+        if self.method == TimeEaterHasteMethod::CrossHaste {
+            return true;
+        }
+        game.combat.as_ref().is_none_or(|combat| {
+            combat.monsters.iter().all(|monster| {
+                monster.id != MonsterId::TimeEater
+                    || !monster.alive()
+                    || monster.hp >= self.threshold
+            })
+        })
+    }
+
+    fn completed(self, before: &Game, after: &Game) -> bool {
+        if combat_won(after) {
+            return true;
+        }
+        if before.combat.as_ref().map(|combat| combat.turn)
+            == after.combat.as_ref().map(|combat| combat.turn)
+        {
+            return false;
+        }
+        let Some(time_eater) = after.combat.as_ref().and_then(|combat| {
+            combat
+                .monsters
+                .iter()
+                .find(|monster| monster.id == MonsterId::TimeEater && monster.alive())
+        }) else {
+            return false;
+        };
+        match self.method {
+            TimeEaterHasteMethod::HoldThreshold => {
+                !time_eater.split_triggered && time_eater.hp >= self.threshold
+            }
+            TimeEaterHasteMethod::CrossHaste => time_eater.split_triggered,
+        }
+    }
+
+    fn search_guidance(self, game: &Game) -> f32 {
+        if self.method != TimeEaterHasteMethod::CrossHaste {
+            return 0.0;
+        }
+        let hp = game
+            .combat
+            .as_ref()
+            .and_then(|combat| {
+                combat
+                    .monsters
+                    .iter()
+                    .find(|monster| monster.id == MonsterId::TimeEater && monster.alive())
+            })
+            .map_or(0, |monster| monster.hp.max(0));
+        (self.start_hp - hp).clamp(0, (self.start_hp - self.threshold).max(0)) as f32 * 2.0
+    }
+}
+
 impl AwakenedPlan {
     fn methods(game: &Game) -> Option<Vec<Self>> {
         let combat = game.combat.as_ref()?;
@@ -238,12 +373,11 @@ impl AwakenedPlan {
             return None;
         }
         let start_bias = game.player.power_amount(PowerId::Bias);
-        if awakened.hp > awakened.max_hp / 3
-            || combat
-                .monsters
-                .iter()
-                .any(|monster| monster.id == MonsterId::Cultist && monster.alive())
-        {
+        let cultists_alive = combat
+            .monsters
+            .iter()
+            .any(|monster| monster.id == MonsterId::Cultist && monster.alive());
+        if cultists_alive {
             return Some(vec![Self {
                 start_hp: awakened.hp,
                 start_bias,
@@ -256,7 +390,21 @@ impl AwakenedPlan {
             method: AwakenedMethod::CrossRebirth,
         };
         let dark_echo = projected_attack(&game.player, awakened, 40, 1, 0);
-        if game.player.hp > dark_echo || game.player.power_amount(PowerId::Buffer) > 0 {
+        let can_absorb_dark_echo = game.player.hp + persistent_block_bank(game) > dark_echo
+            || game.player.power_amount(PowerId::Buffer) > 0;
+        if awakened.hp > awakened.max_hp / 3 {
+            let build = Self {
+                start_hp: awakened.hp,
+                start_bias,
+                method: AwakenedMethod::BuildPhaseOne,
+            };
+            return if can_absorb_dark_echo {
+                Some(vec![build, cross])
+            } else {
+                Some(vec![build])
+            };
+        }
+        if can_absorb_dark_echo {
             Some(vec![cross])
         } else {
             Some(vec![
@@ -328,6 +476,187 @@ impl AwakenedPlan {
                     (self.start_hp - awakened.hp).max(0) as f32 * 2.0
                 }
             })
+    }
+}
+
+impl BossPhasePlan {
+    fn methods(game: &Game, phase: BossPhase) -> Option<[Self; 2]> {
+        let monster = phase.monster(game)?;
+        let (start_progress, threshold, close_enough) = match phase {
+            BossPhase::GuardianModeShift => {
+                if monster.split_triggered {
+                    return None;
+                }
+                let remaining = monster.power_amount(PowerId::ModeShift);
+                (
+                    remaining,
+                    0,
+                    remaining > 0 && remaining * 3 <= monster.extra * 2,
+                )
+            }
+            BossPhase::SlimeBossSplit | BossPhase::ChampAnger => {
+                if monster.split_triggered || monster.hp <= monster.max_hp / 2 {
+                    return None;
+                }
+                (
+                    monster.hp,
+                    monster.max_hp / 2,
+                    monster.hp * 3 <= monster.max_hp * 2,
+                )
+            }
+        };
+        close_enough.then_some([
+            Self {
+                phase,
+                start_progress,
+                threshold,
+                method: BossPhaseMethod::Hold,
+            },
+            Self {
+                phase,
+                start_progress,
+                threshold,
+                method: BossPhaseMethod::Cross,
+            },
+        ])
+    }
+
+    fn phase_is_open(self, game: &Game) -> bool {
+        let Some(monster) = self.phase.monster(game) else {
+            return false;
+        };
+        match self.phase {
+            BossPhase::GuardianModeShift => !monster.split_triggered,
+            BossPhase::SlimeBossSplit => monster.hp > self.threshold && monster.next_move != 3,
+            BossPhase::ChampAnger => !monster.split_triggered && monster.hp >= self.threshold,
+        }
+    }
+
+    fn phase_was_crossed(self, game: &Game) -> bool {
+        match self.phase {
+            BossPhase::GuardianModeShift | BossPhase::ChampAnger => {
+                self.phase.monster(game).is_some_and(|monster| {
+                    monster.split_triggered
+                        && (self.phase != BossPhase::ChampAnger || monster.hp <= monster.max_hp / 3)
+                })
+            }
+            BossPhase::SlimeBossSplit => {
+                self.phase.monster(game).is_none()
+                    && game.combat.as_ref().is_some_and(|combat| {
+                        combat.monsters.iter().any(|monster| {
+                            monster.alive()
+                                && matches!(
+                                    monster.id,
+                                    MonsterId::AcidSlimeL | MonsterId::SpikeSlimeL
+                                )
+                        })
+                    })
+            }
+        }
+    }
+
+    fn allows(self, game: &Game) -> bool {
+        self.method == BossPhaseMethod::Cross || self.phase_is_open(game)
+    }
+
+    fn completed(self, before: &Game, after: &Game) -> bool {
+        if combat_won(after) {
+            return true;
+        }
+        if before.combat.as_ref().map(|combat| combat.turn)
+            == after.combat.as_ref().map(|combat| combat.turn)
+        {
+            return false;
+        }
+        match self.method {
+            BossPhaseMethod::Hold => self.phase_is_open(after),
+            BossPhaseMethod::Cross => self.phase_was_crossed(after),
+        }
+    }
+
+    fn search_guidance(self, game: &Game) -> f32 {
+        if self.method != BossPhaseMethod::Cross {
+            return 0.0;
+        }
+        if self.phase_was_crossed(game) {
+            return 300.0;
+        }
+        let Some(monster) = self.phase.monster(game) else {
+            return 0.0;
+        };
+        let progress = match self.phase {
+            BossPhase::GuardianModeShift => {
+                self.start_progress - monster.power_amount(PowerId::ModeShift)
+            }
+            BossPhase::SlimeBossSplit | BossPhase::ChampAnger => {
+                self.start_progress - monster.hp.max(self.threshold)
+            }
+        };
+        progress.max(0) as f32 * 2.0
+    }
+}
+
+impl BossPhase {
+    fn monster(self, game: &Game) -> Option<&Monster> {
+        let id = match self {
+            Self::GuardianModeShift => MonsterId::TheGuardian,
+            Self::SlimeBossSplit => MonsterId::SlimeBoss,
+            Self::ChampAnger => MonsterId::Champ,
+        };
+        game.combat
+            .as_ref()?
+            .monsters
+            .iter()
+            .find(|monster| monster.id == id && monster.alive())
+    }
+}
+
+impl BossDeadlinePlan {
+    fn method(game: &Game, deadline: BossDeadline) -> Option<Self> {
+        deadline.is_active(game).then_some(Self { deadline })
+    }
+
+    fn allows(self, _game: &Game) -> bool {
+        true
+    }
+
+    fn completed(self, before: &Game, after: &Game) -> bool {
+        combat_won(after)
+            || before.combat.as_ref().map(|combat| combat.turn)
+                != after.combat.as_ref().map(|combat| combat.turn)
+    }
+
+    fn search_guidance(self, _game: &Game) -> f32 {
+        0.0
+    }
+}
+
+impl BossDeadline {
+    fn is_active(self, game: &Game) -> bool {
+        let Some(combat) = &game.combat else {
+            return false;
+        };
+        combat.monsters.iter().any(|monster| {
+            if !monster.alive() {
+                return false;
+            }
+            match self {
+                Self::HexaghostDivider => {
+                    monster.id == MonsterId::Hexaghost && monster.next_move == 5
+                }
+                Self::HexaghostInferno => {
+                    monster.id == MonsterId::Hexaghost && (monster.extra == 4 || monster.extra == 5)
+                }
+                Self::AutomatonHyperBeam => {
+                    monster.id == MonsterId::BronzeAutomaton && (3..=4).contains(&monster.extra)
+                }
+                Self::CollectorMegaDebuff => {
+                    monster.id == MonsterId::TheCollector
+                        && !monster.split_triggered
+                        && (monster.next_move == 4 || monster.extra == 2)
+                }
+            }
+        })
     }
 }
 
@@ -436,24 +765,167 @@ impl DonuDecaPlan {
     }
 }
 
+impl BossTurnTask {
+    fn for_game(game: &Game) -> Option<Self> {
+        game.combat.as_ref()?.monsters.iter().find_map(|monster| {
+            let task = match monster.id {
+                MonsterId::TheGuardian => Self::Guardian,
+                MonsterId::Hexaghost => Self::Hexaghost,
+                MonsterId::SlimeBoss => Self::SlimeBoss,
+                MonsterId::BronzeAutomaton => Self::BronzeAutomaton,
+                MonsterId::Champ => Self::Champ,
+                MonsterId::TheCollector => Self::Collector,
+                MonsterId::TimeEater => Self::TimeEater,
+                MonsterId::AwakenedOne => Self::AwakenedOne,
+                MonsterId::Donu | MonsterId::Deca => Self::DonuDeca,
+                _ => return None,
+            };
+            Some(task)
+        })
+    }
+
+    fn methods(self, game: &Game) -> Vec<TurnMethod> {
+        match self {
+            Self::Guardian => BossPhasePlan::methods(game, BossPhase::GuardianModeShift)
+                .into_iter()
+                .flatten()
+                .map(TurnMethod::BossPhase)
+                .collect(),
+            Self::Hexaghost => [
+                BossDeadline::HexaghostDivider,
+                BossDeadline::HexaghostInferno,
+            ]
+            .into_iter()
+            .find_map(|deadline| BossDeadlinePlan::method(game, deadline))
+            .map(TurnMethod::BossDeadline)
+            .into_iter()
+            .collect(),
+            Self::SlimeBoss => BossPhasePlan::methods(game, BossPhase::SlimeBossSplit)
+                .into_iter()
+                .flatten()
+                .map(TurnMethod::BossPhase)
+                .collect(),
+            Self::BronzeAutomaton => {
+                BossDeadlinePlan::method(game, BossDeadline::AutomatonHyperBeam)
+                    .map(TurnMethod::BossDeadline)
+                    .into_iter()
+                    .collect()
+            }
+            Self::Champ => BossPhasePlan::methods(game, BossPhase::ChampAnger)
+                .into_iter()
+                .flatten()
+                .map(TurnMethod::BossPhase)
+                .collect(),
+            Self::Collector => BossDeadlinePlan::method(game, BossDeadline::CollectorMegaDebuff)
+                .map(TurnMethod::BossDeadline)
+                .into_iter()
+                .collect(),
+            Self::TimeEater => TimeWarpPlan::methods(game)
+                .map(|methods| methods.into_iter().map(TurnMethod::TimeWarp).collect())
+                .unwrap_or_else(|| {
+                    TimeEaterHastePlan::methods(game)
+                        .into_iter()
+                        .flatten()
+                        .map(TurnMethod::TimeEaterHaste)
+                        .collect()
+                }),
+            Self::AwakenedOne => AwakenedPlan::methods(game)
+                .into_iter()
+                .flatten()
+                .map(TurnMethod::Awakened)
+                .collect(),
+            Self::DonuDeca => DonuDecaPlan::methods(game)
+                .into_iter()
+                .flatten()
+                .map(TurnMethod::DonuDeca)
+                .collect(),
+        }
+    }
+
+    fn monster(self, game: &Game) -> Option<&Monster> {
+        let ids: &[MonsterId] = match self {
+            Self::Guardian => &[MonsterId::TheGuardian],
+            Self::Hexaghost => &[MonsterId::Hexaghost],
+            Self::SlimeBoss => &[MonsterId::SlimeBoss],
+            Self::BronzeAutomaton => &[MonsterId::BronzeAutomaton],
+            Self::Champ => &[MonsterId::Champ],
+            Self::Collector => &[MonsterId::TheCollector],
+            Self::TimeEater => &[MonsterId::TimeEater],
+            Self::AwakenedOne => &[MonsterId::AwakenedOne],
+            Self::DonuDeca => &[MonsterId::Donu, MonsterId::Deca],
+        };
+        game.combat
+            .as_ref()?
+            .monsters
+            .iter()
+            .find(|monster| monster.alive() && ids.contains(&monster.id))
+    }
+
+    fn is_exact_deadline_hand(self, game: &Game) -> bool {
+        let Some(monster) = self.monster(game) else {
+            return false;
+        };
+        match self {
+            Self::Hexaghost => monster.extra == 5 && monster.next_move == 4,
+            Self::BronzeAutomaton => monster.extra == 4,
+            Self::Champ => monster.split_triggered && monster.next_move == 3,
+            _ => false,
+        }
+    }
+
+    fn is_pre_exact_deadline_turn(self, game: &Game) -> bool {
+        let Some(monster) = self.monster(game) else {
+            return false;
+        };
+        match self {
+            Self::Hexaghost => monster.extra == 4 && monster.next_move == 2,
+            Self::BronzeAutomaton => monster.extra == 3,
+            Self::Champ => monster.split_triggered && monster.next_move == 7,
+            _ => false,
+        }
+    }
+}
+
 impl TurnMethod {
     fn time_warp(self) -> Option<TimeWarpPlan> {
         match self {
             Self::TimeWarp(plan) => Some(plan),
-            Self::Awakened(_) | Self::DonuDeca(_) => None,
+            Self::BossPhase(_)
+            | Self::BossDeadline(_)
+            | Self::TimeEaterHaste(_)
+            | Self::Awakened(_)
+            | Self::DonuDeca(_) => None,
+        }
+    }
+
+    fn time_eater_haste(self) -> Option<TimeEaterHastePlan> {
+        match self {
+            Self::TimeEaterHaste(plan) => Some(plan),
+            Self::BossPhase(_)
+            | Self::BossDeadline(_)
+            | Self::TimeWarp(_)
+            | Self::Awakened(_)
+            | Self::DonuDeca(_) => None,
         }
     }
 
     fn donu_deca(self) -> Option<DonuDecaPlan> {
         match self {
             Self::DonuDeca(plan) => Some(plan),
-            Self::TimeWarp(_) | Self::Awakened(_) => None,
+            Self::BossPhase(_)
+            | Self::BossDeadline(_)
+            | Self::TimeWarp(_)
+            | Self::TimeEaterHaste(_)
+            | Self::Awakened(_) => None,
         }
     }
 
     fn allows(self, game: &Game) -> bool {
         match self {
+            Self::BossPhase(plan) => plan.allows(game),
+            Self::BossDeadline(plan) => plan.allows(game),
             Self::TimeWarp(plan) => plan.allows(game),
+            Self::TimeEaterHaste(plan) => plan.allows(game),
             Self::Awakened(plan) => plan.allows(game),
             Self::DonuDeca(plan) => plan.allows(game),
         }
@@ -461,7 +933,10 @@ impl TurnMethod {
 
     fn completed(self, before: &Game, after: &Game) -> bool {
         match self {
+            Self::BossPhase(plan) => plan.completed(before, after),
+            Self::BossDeadline(plan) => plan.completed(before, after),
             Self::TimeWarp(plan) => plan.completed(before, after),
+            Self::TimeEaterHaste(plan) => plan.completed(before, after),
             Self::Awakened(plan) => plan.completed(before, after),
             Self::DonuDeca(plan) => plan.completed(before, after),
         }
@@ -469,140 +944,144 @@ impl TurnMethod {
 
     fn search_guidance(self, game: &Game) -> f32 {
         match self {
+            Self::BossPhase(plan) => plan.search_guidance(game),
+            Self::BossDeadline(plan) => plan.search_guidance(game),
             Self::TimeWarp(plan) => plan.search_guidance(game),
+            Self::TimeEaterHaste(plan) => plan.search_guidance(game),
             Self::Awakened(plan) => plan.search_guidance(game),
             Self::DonuDeca(plan) => plan.search_guidance(game),
         }
     }
-}
 
-fn committed_time_warp_plan(game: &Game, memory: &mut TurnPlanMemory) -> Option<TimeWarpPlan> {
-    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
-        memory.time_warp = None;
-        return None;
-    };
-    let Some(counter) = time_eater_counter(game) else {
-        memory.time_warp = None;
-        return None;
-    };
-    if let Some(committed) = memory.time_warp {
-        if committed.combat_turn == combat_turn
-            && counter >= committed.plan.start_counter
-            && counter < 12
-        {
-            return Some(committed.plan);
-        }
-        // BankWindow is a two-hand method: preserve the slots now, then spend
-        // that same window with the real next hand. Carry the commitment over
-        // exactly one turn so re-decomposition cannot bank forever.
-        if committed.plan.method == TimeWarpMethod::BankWindow
-            && combat_turn == committed.combat_turn + 1
-            && counter >= committed.plan.start_counter
-            && counter < 12
-        {
-            let continuation = TimeWarpPlan {
-                start_counter: counter,
-                cards_remaining: 12 - counter,
-                method: TimeWarpMethod::SpendWindow,
-            };
-            memory.time_warp = Some(CommittedTimeWarpPlan {
-                combat_turn,
-                plan: continuation,
-            });
-            return Some(continuation);
+    fn active(self, game: &Game) -> bool {
+        match self {
+            Self::BossPhase(plan) => match plan.method {
+                BossPhaseMethod::Hold => plan.phase_is_open(game),
+                BossPhaseMethod::Cross => plan.phase_is_open(game) || plan.phase_was_crossed(game),
+            },
+            Self::BossDeadline(plan) => plan.deadline.is_active(game),
+            Self::TimeWarp(plan) => time_eater_counter(game)
+                .is_some_and(|counter| counter >= plan.start_counter && counter < 12),
+            Self::TimeEaterHaste(_) => game.combat.as_ref().is_some_and(|combat| {
+                combat.monsters.iter().any(|monster| {
+                    monster.id == MonsterId::TimeEater
+                        && monster.alive()
+                        && !monster.split_triggered
+                })
+            }),
+            Self::Awakened(_) => game.combat.as_ref().is_some_and(|combat| {
+                combat
+                    .monsters
+                    .iter()
+                    .any(|monster| monster.id == MonsterId::AwakenedOne && monster.alive())
+            }),
+            Self::DonuDeca(plan) => {
+                let both_alive = game.combat.as_ref().is_some_and(|combat| {
+                    combat
+                        .monsters
+                        .iter()
+                        .any(|monster| monster.id == MonsterId::Donu && monster.alive())
+                        && combat
+                            .monsters
+                            .iter()
+                            .any(|monster| monster.id == MonsterId::Deca && monster.alive())
+                });
+                both_alive && plan.target_alive(game)
+            }
         }
     }
-    memory.time_warp = None;
-    None
-}
 
-fn commit_time_warp_plan(game: &Game, memory: &mut TurnPlanMemory, plan: TimeWarpPlan) {
-    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
-        return;
-    };
-    memory.time_warp = Some(CommittedTimeWarpPlan { combat_turn, plan });
-}
-
-fn committed_awakened_plan(game: &Game, memory: &mut TurnPlanMemory) -> Option<AwakenedPlan> {
-    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
-        memory.awakened = None;
-        return None;
-    };
-    let awakened_is_present = game.combat.as_ref().is_some_and(|combat| {
-        combat
-            .monsters
-            .iter()
-            .any(|monster| monster.id == MonsterId::AwakenedOne && monster.alive())
-    });
-    if !awakened_is_present {
-        memory.awakened = None;
-        return None;
-    }
-    if let Some(committed) = memory.awakened {
-        if committed.combat_turn == combat_turn {
-            return Some(committed.plan);
-        }
-        if committed.plan.method == AwakenedMethod::HoldPhase
-            && combat_turn == committed.combat_turn + 1
-        {
-            let Some(awakened) = game.combat.as_ref().and_then(|combat| {
-                combat.monsters.iter().find(|monster| {
+    fn next_turn(self, game: &Game) -> Option<Self> {
+        match self {
+            Self::TimeWarp(plan) if plan.method == TimeWarpMethod::BankWindow => {
+                let counter = time_eater_counter(game)?;
+                (counter >= plan.start_counter && counter < 12).then_some(Self::TimeWarp(
+                    TimeWarpPlan {
+                        start_counter: counter,
+                        cards_remaining: 12 - counter,
+                        method: TimeWarpMethod::SpendWindow,
+                    },
+                ))
+            }
+            Self::TimeEaterHaste(plan) if plan.method == TimeEaterHasteMethod::HoldThreshold => {
+                let time_eater = game.combat.as_ref()?.monsters.iter().find(|monster| {
+                    monster.id == MonsterId::TimeEater
+                        && monster.alive()
+                        && !monster.split_triggered
+                })?;
+                Some(Self::TimeEaterHaste(TimeEaterHastePlan {
+                    start_hp: time_eater.hp,
+                    threshold: time_eater.max_hp / 2,
+                    method: TimeEaterHasteMethod::CrossHaste,
+                }))
+            }
+            Self::Awakened(plan) if plan.method == AwakenedMethod::HoldPhase => {
+                let awakened = game.combat.as_ref()?.monsters.iter().find(|monster| {
                     monster.id == MonsterId::AwakenedOne
                         && monster.alive()
                         && monster.extra == 0
                         && !monster.half_dead
-                })
-            }) else {
-                memory.awakened = None;
-                return None;
-            };
-            let continuation = AwakenedPlan {
-                start_hp: awakened.hp,
-                start_bias: game.player.power_amount(PowerId::Bias),
-                method: AwakenedMethod::CrossRebirth,
-            };
-            memory.awakened = Some(CommittedAwakenedPlan {
-                combat_turn,
-                plan: continuation,
-            });
-            return Some(continuation);
+                })?;
+                Some(Self::Awakened(AwakenedPlan {
+                    start_hp: awakened.hp,
+                    start_bias: game.player.power_amount(PowerId::Bias),
+                    method: AwakenedMethod::CrossRebirth,
+                }))
+            }
+            Self::BossPhase(plan) if plan.method == BossPhaseMethod::Hold => plan
+                .phase_is_open(game)
+                .then_some(Self::BossPhase(BossPhasePlan {
+                    method: BossPhaseMethod::Cross,
+                    start_progress: match plan.phase {
+                        BossPhase::GuardianModeShift => plan
+                            .phase
+                            .monster(game)
+                            .map_or(plan.start_progress, |monster| {
+                                monster.power_amount(PowerId::ModeShift)
+                            }),
+                        BossPhase::SlimeBossSplit | BossPhase::ChampAnger => plan
+                            .phase
+                            .monster(game)
+                            .map_or(plan.start_progress, |monster| monster.hp),
+                    },
+                    ..plan
+                })),
+            Self::DonuDeca(plan) if Self::DonuDeca(plan).active(game) => Some(Self::DonuDeca(plan)),
+            _ => None,
         }
     }
-    memory.awakened = None;
-    None
 }
 
-fn commit_awakened_plan(game: &Game, memory: &mut TurnPlanMemory, plan: AwakenedPlan) {
+fn committed_turn_method(game: &Game, memory: &mut TurnPlanMemory) -> Option<TurnMethod> {
+    let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
+        memory.boss_method = None;
+        return None;
+    };
+    let Some(committed) = memory.boss_method else {
+        return None;
+    };
+    let method = if committed.combat_turn == combat_turn && committed.method.active(game) {
+        Some(committed.method)
+    } else if combat_turn == committed.combat_turn + 1 {
+        committed.method.next_turn(game)
+    } else {
+        None
+    };
+    memory.boss_method = method.map(|method| CommittedTurnMethod {
+        combat_turn,
+        method,
+    });
+    method
+}
+
+fn commit_turn_method(game: &Game, memory: &mut TurnPlanMemory, method: TurnMethod) {
     let Some(combat_turn) = game.combat.as_ref().map(|combat| combat.turn) else {
         return;
     };
-    memory.awakened = Some(CommittedAwakenedPlan { combat_turn, plan });
-}
-
-fn committed_donu_deca_plan(game: &Game, memory: &mut TurnPlanMemory) -> Option<DonuDecaPlan> {
-    let Some(plan) = memory.donu_deca else {
-        return None;
-    };
-    let both_alive = game.combat.as_ref().is_some_and(|combat| {
-        combat
-            .monsters
-            .iter()
-            .any(|monster| monster.id == MonsterId::Donu && monster.alive())
-            && combat
-                .monsters
-                .iter()
-                .any(|monster| monster.id == MonsterId::Deca && monster.alive())
+    memory.boss_method = Some(CommittedTurnMethod {
+        combat_turn,
+        method,
     });
-    if both_alive && plan.target_alive(game) {
-        Some(plan)
-    } else {
-        memory.donu_deca = None;
-        None
-    }
-}
-
-fn commit_donu_deca_plan(memory: &mut TurnPlanMemory, plan: DonuDecaPlan) {
-    memory.donu_deca = Some(plan);
 }
 
 impl<'a> EvaluationContext<'a> {
@@ -630,6 +1109,7 @@ impl<'a> EvaluationContext<'a> {
             before_orb_value,
             before_genetic_training,
             time_warp_plan: turn_method.and_then(TurnMethod::time_warp),
+            time_eater_haste_plan: turn_method.and_then(TurnMethod::time_eater_haste),
             donu_deca_plan: turn_method.and_then(TurnMethod::donu_deca),
         }
     }
@@ -831,35 +1311,11 @@ fn evaluated_forced_end(
 }
 
 fn is_exact_deadline_hand(game: &Game) -> bool {
-    game.combat.as_ref().is_some_and(|combat| {
-        combat.monsters.iter().any(|monster| {
-            if !monster.alive() {
-                return false;
-            }
-            match monster.id {
-                MonsterId::Hexaghost => monster.extra == 5 && monster.next_move == 4,
-                MonsterId::BronzeAutomaton => monster.extra == 4,
-                MonsterId::Champ => monster.split_triggered && monster.next_move == 3,
-                _ => false,
-            }
-        })
-    })
+    BossTurnTask::for_game(game).is_some_and(|task| task.is_exact_deadline_hand(game))
 }
 
 fn is_pre_exact_deadline_turn(game: &Game) -> bool {
-    game.combat.as_ref().is_some_and(|combat| {
-        combat.monsters.iter().any(|monster| {
-            if !monster.alive() {
-                return false;
-            }
-            match monster.id {
-                MonsterId::Hexaghost => monster.extra == 4 && monster.next_move == 2,
-                MonsterId::BronzeAutomaton => monster.extra == 3,
-                MonsterId::Champ => monster.split_triggered && monster.next_move == 7,
-                _ => false,
-            }
-        })
-    })
+    BossTurnTask::for_game(game).is_some_and(|task| task.is_pre_exact_deadline_turn(game))
 }
 
 /// Pick the combat command with one shared search over the rest of the turn.
@@ -910,30 +1366,24 @@ pub(crate) fn plan_turn_with_memory(
     {
         return (lethal, stats);
     }
-    let committed = committed_time_warp_plan(game, memory)
-        .map(TurnMethod::TimeWarp)
-        .or_else(|| committed_awakened_plan(game, memory).map(TurnMethod::Awakened))
-        .or_else(|| committed_donu_deca_plan(game, memory).map(TurnMethod::DonuDeca));
+    let committed = committed_turn_method(game, memory);
     let planned = if let Some(method) = committed {
-        searched_turn(
+        let planned = searched_turn(
             game,
             legal,
             &checkpoint,
             &mut scratch,
             &mut stats,
             Some(method),
-        )
-        .or_else(|| searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats, None))
+        );
+        if planned.is_none() {
+            memory.boss_method = None;
+        }
+        planned.or_else(|| searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats, None))
     } else {
-        let methods: Vec<TurnMethod> = if let Some(methods) = TimeWarpPlan::methods(game) {
-            methods.into_iter().map(TurnMethod::TimeWarp).collect()
-        } else if let Some(methods) = AwakenedPlan::methods(game) {
-            methods.into_iter().map(TurnMethod::Awakened).collect()
-        } else if let Some(methods) = DonuDecaPlan::methods(game) {
-            methods.into_iter().map(TurnMethod::DonuDeca).collect()
-        } else {
-            Vec::new()
-        };
+        let methods = BossTurnTask::for_game(game)
+            .map(|task| task.methods(game))
+            .unwrap_or_default();
         let mut best: Option<(Action, f32, TurnMethod)> = None;
         for method in methods {
             if let Some((action, score)) = searched_turn(
@@ -953,11 +1403,7 @@ pub(crate) fn plan_turn_with_memory(
             }
         }
         best.map(|(action, score, method)| {
-            match method {
-                TurnMethod::TimeWarp(plan) => commit_time_warp_plan(game, memory, plan),
-                TurnMethod::Awakened(plan) => commit_awakened_plan(game, memory, plan),
-                TurnMethod::DonuDeca(plan) => commit_donu_deca_plan(memory, plan),
-            }
+            commit_turn_method(game, memory, method);
             (action, score)
         })
         .or_else(|| searched_turn(game, legal, &checkpoint, &mut scratch, &mut stats, None))
@@ -1833,15 +2279,55 @@ fn cheap_hand_damage_with_card_limit(game: &Game, card_limit: usize) -> i32 {
     best.into_iter().flatten().max().unwrap_or(0)
 }
 
-fn next_hand_card_budget(context: &EvaluationContext<'_>, game: &Game) -> usize {
+fn next_hand_card_budget(_context: &EvaluationContext<'_>, game: &Game) -> usize {
     let hand_size = game.player.hand.len();
-    if context.time_warp_plan.is_none() {
-        return hand_size;
-    }
     time_eater_counter(game)
         .map(|counter| (12 - counter).max(0) as usize)
         .unwrap_or(hand_size)
         .min(hand_size)
+}
+
+fn time_eater_haste_recovery_cost(
+    context: &EvaluationContext<'_>,
+    game: &Game,
+    card_budget: usize,
+    damage_weight: f32,
+) -> f32 {
+    let Some(plan) = context.time_eater_haste_plan else {
+        return 0.0;
+    };
+    if plan.method != TimeEaterHasteMethod::CrossHaste {
+        return 0.0;
+    }
+    let Some((index, time_eater)) = game.combat.as_ref().and_then(|combat| {
+        combat
+            .monsters
+            .iter()
+            .enumerate()
+            .find(|(_, monster)| monster.id == MonsterId::TimeEater && monster.alive())
+    }) else {
+        return 0.0;
+    };
+    if !time_eater.split_triggered || time_eater.next_move != 5 || time_eater.hp >= plan.threshold {
+        return 0.0;
+    }
+    let focus = game.player.power_amount(PowerId::Focus);
+    let lightning_passive = game
+        .player
+        .orbs
+        .iter()
+        .filter(|orb| orb.kind == OrbKind::Lightning)
+        .map(|_| (3 + focus).max(0))
+        .sum::<i32>();
+    let next_hand_damage = cheap_hand_damage_with_card_limit(game, card_budget) + lightning_passive;
+    let target_ehp = time_eater.hp.max(0).saturating_add(time_eater.block.max(0));
+    if next_hand_damage >= target_ehp {
+        return 0.0;
+    }
+    let recovery = (plan.threshold - time_eater.hp).max(0) as f32;
+    recovery
+        * damage_weight
+        * encounter_target_priority(&game.combat.as_ref().unwrap().monsters, index)
 }
 
 fn banked_time_warp_spend_is_pending(context: &EvaluationContext<'_>, game: &Game) -> bool {
@@ -1896,6 +2382,15 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
                 |plan| plan.damage_priority(&before_combat.monsters, &after_combat.monsters, index),
             );
             dealt += hp_damage as f32 * priority;
+            let crossed_awakened_rebirth = monster.id == MonsterId::AwakenedOne
+                && monster.extra == 0
+                && after_combat
+                    .monsters
+                    .get(index)
+                    .is_some_and(|after_monster| after_monster.extra > 0);
+            if crossed_awakened_rebirth {
+                phase_transitions += 1;
+            }
             if monster.id == MonsterId::Lagavulin && monster.extra < 3 && hp_after > 0 {
                 if let Some(monster_after) = after_combat.monsters.get(index) {
                     let woke_early = monster_after.extra >= 3 && hp_damage > 0;
@@ -1915,7 +2410,7 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
                         (monster.block - monster_after.block).max(0) as f32 * priority;
                 }
             }
-            if hp_after <= 0 {
+            if hp_after <= 0 && !crossed_awakened_rebirth {
                 if after_combat
                     .monsters
                     .get(index)
@@ -2024,6 +2519,7 @@ fn score_state_with_context(context: &EvaluationContext<'_>, after: &Game) -> f3
             * damage_weight
             * p.next_hand_damage_mult;
         value += next_hand_orb_value(after, damage_weight, card_budget);
+        value -= time_eater_haste_recovery_cost(context, after, card_budget, damage_weight);
     }
 
     let persistent_horizon = remaining_fight_length(after);
@@ -3632,9 +4128,10 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
         .unwrap_or(0);
     let unblocked = (incoming - game.player.block).max(0);
     let find = |want: &[PotionId]| {
-        legal
-            .iter()
-            .find(|action| {
+        want.iter().find_map(|wanted| {
+            legal
+                .iter()
+                .find(|action| {
                 let Action::Potion {
                     action: crate::action::PotionOp::Use,
                     slot,
@@ -3643,12 +4140,13 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
                 else {
                     return false;
                 };
-                game.player
-                    .potions
-                    .get(*slot)
-                    .is_some_and(|potion| want.contains(&potion.id))
-            })
-            .cloned()
+                    game.player
+                        .potions
+                        .get(*slot)
+                        .is_some_and(|potion| potion.id == *wanted)
+                })
+                .cloned()
+        })
     };
 
     if let Some(brew) = find(&[PotionId::EntropicBrew]) {
@@ -3658,8 +4156,12 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
             .iter()
             .filter(|p| p.id == PotionId::Slot)
             .count();
-        let min_empty = params().entropic_min_empty.max(1.0).round() as usize;
-        if empty >= min_empty {
+        let min_generated =
+            (params().entropic_min_empty.max(1.0).round() as usize).min(game.player.potions.len());
+        // The Brew's own slot becomes empty before replacement potions are
+        // generated. Brew + one visible empty slot therefore yields two
+        // potions, rather than the one implied by counting only current slots.
+        if empty.saturating_add(1) >= min_generated {
             return Some(brew);
         }
     }
@@ -3674,6 +4176,7 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
         }
         if let Some(setup) = find(&[
             PotionId::Focus,
+            PotionId::Ancient,
             PotionId::Cultist,
             PotionId::Strength,
             PotionId::Dexterity,
@@ -3703,8 +4206,21 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
         PotionId::HeartOfIron,
         PotionId::Weak,
         PotionId::Dexterity,
+        PotionId::Speed,
     ];
     const HEAL: &[PotionId] = &[PotionId::Blood, PotionId::FruitJuice, PotionId::Regen];
+    const TACTICAL: &[PotionId] = &[
+        PotionId::LiquidMemories,
+        PotionId::GamblersBrew,
+        PotionId::Duplication,
+        PotionId::Swift,
+        PotionId::Skill,
+        PotionId::Colorless,
+        PotionId::DistilledChaos,
+        PotionId::BlessingOfTheForge,
+        PotionId::EssenceOfDarkness,
+        PotionId::SneckoOil,
+    ];
     const OFFENSE: &[PotionId] = &[
         PotionId::Fire,
         PotionId::Explosive,
@@ -3735,6 +4251,8 @@ fn potion_policy(game: &Game, legal: &[Action]) -> Option<Action> {
     if unblocked >= hp || hp <= (max_hp as f32 / params().potion_desperate_hp_div) as i32 {
         return find(DEFENSE)
             .or_else(|| find(HEAL))
+            .or_else(|| (total_enemy_hp <= 30).then(|| find(OFFENSE)).flatten())
+            .or_else(|| find(TACTICAL))
             .or_else(|| find(OFFENSE));
     }
     if hp <= (max_hp as f32 / params().potion_defense_hp_div) as i32 && unblocked > 0 {
@@ -5054,6 +5572,114 @@ mod tests {
     }
 
     #[test]
+    fn entropic_brew_counts_the_slot_freed_by_drinking_it() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Hexaghost,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            1,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        game.player.potions[0].id = PotionId::EntropicBrew;
+        game.player.potions[1].id = PotionId::Slot;
+        let legal = game.legal_actions();
+        assert!(
+            legal.iter().any(|action| matches!(
+                action,
+                Action::Potion {
+                    action: crate::action::PotionOp::Use,
+                    slot: 0,
+                    ..
+                }
+            )),
+            "legal={legal:?}, potions={:?}",
+            game.player.potions
+        );
+
+        assert_eq!(
+            potion_policy(&game, &legal),
+            Some(Action::Potion {
+                action: crate::action::PotionOp::Use,
+                slot: 0,
+                target_index: None,
+            })
+        );
+    }
+
+    #[test]
+    fn lethal_incoming_uses_speed_as_a_defensive_potion() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Hexaghost,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            1,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        game.player.hp = 10;
+        game.player.potions[0].id = PotionId::Fire;
+        game.player.potions[1].id = PotionId::Speed;
+        let monster = &mut game.combat.as_mut().unwrap().monsters[0];
+        monster.intent_damage = 15;
+        monster.intent_hits = 1;
+
+        assert_eq!(
+            potion_policy(&game, &game.legal_actions()),
+            Some(Action::Potion {
+                action: crate::action::PotionOp::Use,
+                slot: 1,
+                target_index: None,
+            })
+        );
+    }
+
+    #[test]
+    fn lethal_incoming_uses_a_tactical_potion_when_direct_survival_is_unavailable() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Hexaghost,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            1,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        game.player.hp = 10;
+        game.player.potions[0].id = PotionId::LiquidMemories;
+        let monster = &mut game.combat.as_mut().unwrap().monsters[0];
+        monster.intent_damage = 15;
+        monster.intent_hits = 1;
+        monster.hp = 100;
+
+        assert!(matches!(
+            potion_policy(&game, &game.legal_actions()),
+            Some(Action::Potion {
+                action: crate::action::PotionOp::Use,
+                slot: 0,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn boss_opening_spends_long_duration_potions() {
         use crate::combat::Combat;
         use crate::ids::EncounterId;
@@ -5077,6 +5703,63 @@ mod tests {
             Some(Action::Potion {
                 action: crate::action::PotionOp::Use,
                 slot: 0,
+                target_index: None,
+            })
+        );
+    }
+
+    #[test]
+    fn boss_opening_spends_ancient_potion() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Collector,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        game.player.potions[0].id = PotionId::Ancient;
+
+        assert!(matches!(
+            potion_policy(&game, &game.legal_actions()),
+            Some(Action::Potion {
+                action: crate::action::PotionOp::Use,
+                slot: 0,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn potion_policy_honors_tactical_priority_over_slot_order() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+        game.current_room = RoomType::Boss;
+        game.combat = Some(Combat::start(
+            EncounterId::Champ,
+            &mut game.player,
+            &mut game.rng,
+            31,
+            2,
+            20,
+        ));
+        game.screen = Screen::Combat;
+        game.player.potions[0].id = PotionId::Strength;
+        game.player.potions[1].id = PotionId::Focus;
+
+        assert_eq!(
+            potion_policy(&game, &game.legal_actions()),
+            Some(Action::Potion {
+                action: crate::action::PotionOp::Use,
+                slot: 1,
                 target_index: None,
             })
         );
@@ -5397,6 +6080,256 @@ mod tests {
     }
 
     #[test]
+    fn act_one_and_two_bosses_decompose_through_the_root_task() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        fn boss_game(encounter: EncounterId, seed: i64) -> Game {
+            let mut game = Game::new(2, Character::Defect, 20, Unlocks::fixture());
+            game.combat = Some(Combat::start(
+                encounter,
+                &mut game.player,
+                &mut game.rng,
+                50,
+                seed,
+                20,
+            ));
+            game.screen = Screen::Combat;
+            game
+        }
+
+        let mut guardian = boss_game(EncounterId::TheGuardian, 1);
+        let guardian_monster = &mut guardian.combat.as_mut().unwrap().monsters[0];
+        guardian_monster
+            .powers
+            .iter_mut()
+            .find(|power| power.id == PowerId::ModeShift)
+            .unwrap()
+            .amount = 15;
+        let guardian_methods = BossTurnTask::for_game(&guardian)
+            .unwrap()
+            .methods(&guardian);
+        assert_eq!(guardian_methods.len(), 2);
+        assert!(guardian_methods.iter().all(|method| matches!(
+            method,
+            TurnMethod::BossPhase(BossPhasePlan {
+                phase: BossPhase::GuardianModeShift,
+                ..
+            })
+        )));
+
+        let mut slime = boss_game(EncounterId::SlimeBoss, 1);
+        let slime_boss = &mut slime.combat.as_mut().unwrap().monsters[0];
+        slime_boss.hp = slime_boss.max_hp * 2 / 3;
+        assert_eq!(
+            BossTurnTask::for_game(&slime)
+                .unwrap()
+                .methods(&slime)
+                .len(),
+            2
+        );
+
+        let hexaghost = boss_game(EncounterId::Hexaghost, 1);
+        assert!(matches!(
+            BossTurnTask::for_game(&hexaghost)
+                .unwrap()
+                .methods(&hexaghost)
+                .as_slice(),
+            [TurnMethod::BossDeadline(BossDeadlinePlan {
+                deadline: BossDeadline::HexaghostDivider
+            })]
+        ));
+
+        let mut automaton = boss_game(EncounterId::Automaton, 2);
+        automaton.combat.as_mut().unwrap().monsters[0].extra = 3;
+        assert!(matches!(
+            BossTurnTask::for_game(&automaton)
+                .unwrap()
+                .methods(&automaton)
+                .as_slice(),
+            [TurnMethod::BossDeadline(BossDeadlinePlan {
+                deadline: BossDeadline::AutomatonHyperBeam
+            })]
+        ));
+
+        let mut champ = boss_game(EncounterId::Champ, 2);
+        let champ_monster = &mut champ.combat.as_mut().unwrap().monsters[0];
+        champ_monster.hp = champ_monster.max_hp * 2 / 3;
+        assert_eq!(
+            BossTurnTask::for_game(&champ)
+                .unwrap()
+                .methods(&champ)
+                .len(),
+            2
+        );
+
+        let mut collector = boss_game(EncounterId::Collector, 2);
+        let collector_monster = collector
+            .combat
+            .as_mut()
+            .unwrap()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == MonsterId::TheCollector)
+            .unwrap();
+        collector_monster.extra = 2;
+        assert!(matches!(
+            BossTurnTask::for_game(&collector)
+                .unwrap()
+                .methods(&collector)
+                .as_slice(),
+            [TurnMethod::BossDeadline(BossDeadlinePlan {
+                deadline: BossDeadline::CollectorMegaDebuff
+            })]
+        ));
+    }
+
+    #[test]
+    fn held_boss_phase_commits_to_crossing_with_the_next_hand() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::SlimeBoss,
+            &mut game.player,
+            &mut game.rng,
+            16,
+            1,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        let slime = &mut game.combat.as_mut().unwrap().monsters[0];
+        slime.hp = slime.max_hp * 2 / 3;
+        let [hold, _] = BossPhasePlan::methods(&game, BossPhase::SlimeBossSplit).unwrap();
+
+        let mut memory = TurnPlanMemory::default();
+        commit_turn_method(&game, &mut memory, TurnMethod::BossPhase(hold));
+        game.combat.as_mut().unwrap().turn += 1;
+        assert!(matches!(
+            committed_turn_method(&game, &mut memory),
+            Some(TurnMethod::BossPhase(BossPhasePlan {
+                phase: BossPhase::SlimeBossSplit,
+                method: BossPhaseMethod::Cross,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn time_eater_haste_decomposes_hold_and_cross_methods() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        let time_eater = &mut game.combat.as_mut().unwrap().monsters[0];
+        time_eater.hp = 280;
+        time_eater.extra = 4;
+
+        let [hold, cross] = TimeEaterHastePlan::methods(&game).unwrap();
+        assert_eq!(hold.method, TimeEaterHasteMethod::HoldThreshold);
+        assert_eq!(cross.method, TimeEaterHasteMethod::CrossHaste);
+
+        let mut held = game.clone();
+        held.combat.as_mut().unwrap().turn += 1;
+        assert!(hold.completed(&game, &held));
+        assert!(!cross.completed(&game, &held));
+
+        let mut crossed = held.clone();
+        let time_eater = &mut crossed.combat.as_mut().unwrap().monsters[0];
+        time_eater.hp = hold.threshold - 20;
+        time_eater.split_triggered = true;
+        time_eater.next_move = 5;
+        assert!(!hold.allows(&crossed));
+        assert!(cross.completed(&game, &crossed));
+
+        let mut memory = TurnPlanMemory::default();
+        commit_turn_method(&game, &mut memory, TurnMethod::TimeEaterHaste(hold));
+        let continuation = committed_turn_method(&held, &mut memory).unwrap();
+        assert!(matches!(
+            continuation,
+            TurnMethod::TimeEaterHaste(TimeEaterHastePlan {
+                method: TimeEaterHasteMethod::CrossHaste,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn time_eater_counter_caps_next_hand_without_a_window_method() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        *game.player.hand = vec![
+            Card::new(CardId::Strike_B),
+            Card::new(CardId::Defend_B),
+            Card::new(CardId::Zap),
+        ];
+        game.combat.as_mut().unwrap().monsters[0].extra = 10;
+
+        let context = EvaluationContext::new(&game);
+        assert_eq!(next_hand_card_budget(&context, &game), 2);
+    }
+
+    #[test]
+    fn time_eater_haste_prices_unfinished_pre_heal_damage() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::TimeEater,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        *game.player.hand = vec![Card::new(CardId::Strike_B)];
+        let time_eater = &mut game.combat.as_mut().unwrap().monsters[0];
+        time_eater.hp = 180;
+        time_eater.split_triggered = true;
+        time_eater.next_move = 5;
+        let plan = TimeEaterHastePlan {
+            start_hp: 250,
+            threshold: time_eater.max_hp / 2,
+            method: TimeEaterHasteMethod::CrossHaste,
+        };
+        let context =
+            EvaluationContext::with_turn_method(&game, Some(TurnMethod::TimeEaterHaste(plan)));
+
+        assert!(time_eater_haste_recovery_cost(&context, &game, 1, 1.0) > 0.0);
+        let mut lethal = game.clone();
+        lethal.combat.as_mut().unwrap().monsters[0].hp = 5;
+        let lethal_context =
+            EvaluationContext::with_turn_method(&lethal, Some(TurnMethod::TimeEaterHaste(plan)));
+        assert_eq!(
+            time_eater_haste_recovery_cost(&lethal_context, &lethal, 1, 1.0),
+            0.0
+        );
+    }
+
+    #[test]
     fn time_warp_methods_only_return_completed_lines() {
         use crate::combat::Combat;
         use crate::ids::EncounterId;
@@ -5470,19 +6403,25 @@ mod tests {
 
         let mut memory = TurnPlanMemory::default();
         let spend = TimeWarpPlan::methods(&game).unwrap()[1];
-        commit_time_warp_plan(&game, &mut memory, spend);
-        assert_eq!(
-            committed_time_warp_plan(&game, &mut memory).unwrap().method,
-            TimeWarpMethod::SpendWindow
-        );
+        commit_turn_method(&game, &mut memory, TurnMethod::TimeWarp(spend));
+        assert!(matches!(
+            committed_turn_method(&game, &mut memory),
+            Some(TurnMethod::TimeWarp(TimeWarpPlan {
+                method: TimeWarpMethod::SpendWindow,
+                ..
+            }))
+        ));
 
         game.player.block = 14;
         *game.player.hand = vec![Card::new(CardId::Strike_B)];
         game.combat.as_mut().unwrap().monsters[0].extra = 11;
-        assert_eq!(
-            committed_time_warp_plan(&game, &mut memory).unwrap().method,
-            TimeWarpMethod::SpendWindow
-        );
+        assert!(matches!(
+            committed_turn_method(&game, &mut memory),
+            Some(TurnMethod::TimeWarp(TimeWarpPlan {
+                method: TimeWarpMethod::SpendWindow,
+                ..
+            }))
+        ));
     }
 
     #[test]
@@ -5504,11 +6443,14 @@ mod tests {
 
         let bank = TimeWarpPlan::methods(&game).unwrap()[0];
         let mut memory = TurnPlanMemory::default();
-        commit_time_warp_plan(&game, &mut memory, bank);
+        commit_turn_method(&game, &mut memory, TurnMethod::TimeWarp(bank));
 
         game.combat.as_mut().unwrap().turn += 1;
         game.combat.as_mut().unwrap().monsters[0].extra = 11;
-        let continuation = committed_time_warp_plan(&game, &mut memory).unwrap();
+        let TurnMethod::TimeWarp(continuation) = committed_turn_method(&game, &mut memory).unwrap()
+        else {
+            panic!("banked Time Warp should continue as a spend method");
+        };
         assert_eq!(continuation.method, TimeWarpMethod::SpendWindow);
         assert_eq!(continuation.start_counter, 11);
         assert_eq!(continuation.cards_remaining, 1);
@@ -5574,9 +6516,14 @@ mod tests {
         assert!(cross.completed(&game, &reborn));
 
         let mut memory = TurnPlanMemory::default();
-        commit_awakened_plan(&game, &mut memory, hold);
-        let continuation = committed_awakened_plan(&held, &mut memory).unwrap();
-        assert_eq!(continuation.method, AwakenedMethod::CrossRebirth);
+        commit_turn_method(&game, &mut memory, TurnMethod::Awakened(hold));
+        assert!(matches!(
+            committed_turn_method(&held, &mut memory),
+            Some(TurnMethod::Awakened(AwakenedPlan {
+                method: AwakenedMethod::CrossRebirth,
+                ..
+            }))
+        ));
     }
 
     #[test]
@@ -5607,6 +6554,38 @@ mod tests {
     }
 
     #[test]
+    fn awakened_phase_one_offers_a_reachable_rebirth_after_cultists_die() {
+        use crate::combat::Combat;
+        use crate::ids::EncounterId;
+
+        let mut game = Game::new(2, Character::Defect, 0, Unlocks::fixture());
+        game.combat = Some(Combat::start(
+            EncounterId::AwakenedOne,
+            &mut game.player,
+            &mut game.rng,
+            50,
+            3,
+            0,
+        ));
+        game.screen = Screen::Combat;
+        game.player.hp = 80;
+        let combat = game.combat.as_mut().unwrap();
+        for cultist in combat
+            .monsters
+            .iter_mut()
+            .filter(|monster| monster.id == MonsterId::Cultist)
+        {
+            cultist.hp = 0;
+            cultist.dead = true;
+        }
+
+        let methods = AwakenedPlan::methods(&game).unwrap();
+        assert_eq!(methods.len(), 2);
+        assert_eq!(methods[0].method, AwakenedMethod::BuildPhaseOne);
+        assert_eq!(methods[1].method, AwakenedMethod::CrossRebirth);
+    }
+
+    #[test]
     fn donu_and_deca_commit_donu_as_the_first_kill_task() {
         use crate::combat::Combat;
         use crate::ids::EncounterId;
@@ -5628,9 +6607,12 @@ mod tests {
         assert_eq!(plan.target, DonuDecaTarget::Donu);
 
         let mut memory = TurnPlanMemory::default();
-        commit_donu_deca_plan(&mut memory, plan);
+        commit_turn_method(&game, &mut memory, TurnMethod::DonuDeca(plan));
         game.combat.as_mut().unwrap().turn += 1;
-        assert_eq!(committed_donu_deca_plan(&game, &mut memory), Some(plan));
+        assert_eq!(
+            committed_turn_method(&game, &mut memory),
+            Some(TurnMethod::DonuDeca(plan))
+        );
 
         let donu = game
             .combat
@@ -5642,7 +6624,7 @@ mod tests {
             .unwrap();
         donu.hp = 0;
         donu.dead = true;
-        assert_eq!(committed_donu_deca_plan(&game, &mut memory), None);
+        assert_eq!(committed_turn_method(&game, &mut memory), None);
     }
 
     #[test]
