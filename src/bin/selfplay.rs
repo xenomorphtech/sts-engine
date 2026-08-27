@@ -16,6 +16,7 @@ use sts_engine::{Character, RunMeasurements, RunOutcome, TrainEnv, TrainingObser
 struct Options {
     count: usize,
     seed_source: u64,
+    ascension: i32,
     max_steps: usize,
     output: Option<PathBuf>,
     transitions: Option<PathBuf>,
@@ -65,9 +66,9 @@ impl SplitMix64 {
 
 fn usage() {
     println!(
-        "Usage: sts-selfplay [--count N] [--seed-source N] [--max-steps N]\n\
+        "Usage: sts-selfplay [--count N] [--seed-source N] [--ascension 0..20] [--max-steps N]\n\
                     [--output-jsonl PATH] [--transitions-jsonl PATH]\n\n\
-Runs a teacher-free random-policy baseline on Defect A0, starting at the first Neow choice.\n\
+Runs a teacher-free random-policy baseline on Defect, starting at the first Neow choice.\n\
 Defaults: 1000 episodes, seed source 1, and a 5000-step cap.\n\
 --serve-jsonl exposes batched reset/step requests for neural self-play; it emits no HTN choice."
     );
@@ -77,6 +78,7 @@ fn parse_options() -> Result<Options, String> {
     let mut options = Options {
         count: 1_000,
         seed_source: 1,
+        ascension: 0,
         max_steps: TrainEnv::DEFAULT_MAX_STEPS,
         output: None,
         transitions: None,
@@ -101,6 +103,16 @@ fn parse_options() -> Result<Options, String> {
                     .ok_or_else(|| "--seed-source requires a value".to_string())?
                     .parse()
                     .map_err(|_| "--seed-source must be an unsigned integer".to_string())?;
+            }
+            "--ascension" => {
+                options.ascension = args
+                    .next()
+                    .ok_or_else(|| "--ascension requires a value".to_string())?
+                    .parse()
+                    .map_err(|_| "--ascension must be an integer from 0 through 20".to_string())?;
+                if !(0..=20).contains(&options.ascension) {
+                    return Err("--ascension must be between 0 and 20".to_string());
+                }
             }
             "--max-steps" => {
                 options.max_steps = args
@@ -141,6 +153,7 @@ enum ServeRequest {
     Reset { seeds: Vec<i64> },
     Step { actions: Vec<Option<usize>> },
     Fork { branches: Vec<ForkRequest> },
+    BranchFork { branches: Vec<ForkRequest> },
     BranchStep { actions: Vec<Option<usize>> },
 }
 
@@ -174,7 +187,7 @@ fn serve_row(index: usize, env: &TrainEnv, reward: f32, terminal_score: Option<i
     }
 }
 
-fn serve_jsonl(max_steps: usize) -> Result<(), String> {
+fn serve_jsonl(ascension: i32, max_steps: usize) -> Result<(), String> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut writer = BufWriter::new(stdout.lock());
@@ -191,7 +204,9 @@ fn serve_jsonl(max_steps: usize) -> Result<(), String> {
             ServeRequest::Reset { seeds } => {
                 envs = seeds
                     .into_iter()
-                    .map(|seed| TrainEnv::new_with_config(seed, Character::Defect, 0, max_steps))
+                    .map(|seed| {
+                        TrainEnv::new_with_config(seed, Character::Defect, ascension, max_steps)
+                    })
                     .collect();
                 envs.iter()
                     .enumerate()
@@ -250,6 +265,41 @@ fn serve_jsonl(max_steps: usize) -> Result<(), String> {
                     })
                     .collect::<Vec<_>>()
             }
+            ServeRequest::BranchFork { branches } => {
+                let parents = std::mem::take(&mut branch_envs);
+                let mut rewards = Vec::with_capacity(branches.len());
+                branch_envs = branches
+                    .into_iter()
+                    .map(|branch| {
+                        let mut fork = parents
+                            .get(branch.environment)
+                            .ok_or_else(|| {
+                                format!(
+                                    "branch fork environment {} is out of range",
+                                    branch.environment
+                                )
+                            })?
+                            .clone();
+                        if fork.outcome().done() {
+                            return Err(format!(
+                                "cannot fork terminal branch environment {}",
+                                branch.environment
+                            ));
+                        }
+                        let info = fork.step(branch.action);
+                        rewards.push((info.reward, info.terminal_score));
+                        Ok(fork)
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                branch_envs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, env)| {
+                        let (reward, terminal_score) = rewards[index];
+                        serve_row(index, env, reward, terminal_score)
+                    })
+                    .collect::<Vec<_>>()
+            }
             ServeRequest::BranchStep { actions } => {
                 if actions.len() != branch_envs.len() {
                     return Err(format!(
@@ -280,8 +330,13 @@ fn serve_jsonl(max_steps: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn episode(seed: i64, max_steps: usize, record_transitions: bool) -> EpisodeTrace {
-    let mut env = TrainEnv::new_with_config(seed, Character::Defect, 0, max_steps);
+fn episode(
+    seed: i64,
+    ascension: i32,
+    max_steps: usize,
+    record_transitions: bool,
+) -> EpisodeTrace {
+    let mut env = TrainEnv::new_with_config(seed, Character::Defect, ascension, max_steps);
     let mut random = SplitMix64(seed as u64 ^ 0xD3FEC7A0);
     let mut max_floor = env.game.dungeon.floor;
     let mut transitions = Vec::new();
@@ -356,14 +411,21 @@ fn write_jsonl<T: Serialize>(path: &PathBuf, rows: impl Iterator<Item = T>) -> R
 fn run() -> Result<(), String> {
     let options = parse_options()?;
     if options.serve_jsonl {
-        return serve_jsonl(options.max_steps);
+        return serve_jsonl(options.ascension, options.max_steps);
     }
     let mut seed_rng = SplitMix64(options.seed_source);
     let seeds: Vec<i64> = (0..options.count).map(|_| seed_rng.next() as i64).collect();
     let started = Instant::now();
     let traces: Vec<_> = seeds
         .par_iter()
-        .map(|seed| episode(*seed, options.max_steps, options.transitions.is_some()))
+        .map(|seed| {
+            episode(
+                *seed,
+                options.ascension,
+                options.max_steps,
+                options.transitions.is_some(),
+            )
+        })
         .collect();
     let elapsed = started.elapsed().as_secs_f64();
     let results: Vec<_> = traces.iter().map(|trace| &trace.result).collect();
@@ -398,7 +460,8 @@ fn run() -> Result<(), String> {
         .sum::<f64>()
         / results.len() as f64;
     println!(
-        "teacher_free_random defect_a0 episodes={} wins={} deaths={} capped={} win_rate={:.4} mean_floor={:.3} mean_steps={:.1} elapsed_seconds={:.3} episodes_per_second={:.1}",
+        "teacher_free_random defect_a{} episodes={} wins={} deaths={} capped={} win_rate={:.4} mean_floor={:.3} mean_steps={:.1} elapsed_seconds={:.3} episodes_per_second={:.1}",
+        options.ascension,
         results.len(),
         wins,
         deaths,

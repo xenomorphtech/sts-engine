@@ -175,3 +175,70 @@ The main remaining constraint is search cost. The winning 100-seed cohort made
 minutes. Distilling the deep-search choices into the small gated residual did
 not preserve the closed-loop gain, so exact heterogeneous-horizon search
 remains part of the promoted policy rather than merely a data generator.
+
+## Defect A20 continuation
+
+Teacher-free self-play now accepts `--ascension 0..20`. Ascension is preserved
+by reset, exported in every measurement row, encoded as a semantic state token,
+and appended to the numeric measurement schema so old checkpoints retain their
+original numeric prefix. `tools/eval_selfplay_hrm.py --ascension 20` passes the
+level to the Rust server and records it in the evaluation summary.
+
+The A0 generation-17 checkpoint transferred poorly without adaptation. On the
+fixed 100-seed cohort from seed source `20262001`, the direct A20 policy reached
+a mean floor of 9.06. Every run died in Act 1: 60 died by floor 8 and 17 reached
+the floor-16 boss.
+
+Depth-64 planning over card and relic menus was the first positive A20 signal.
+It improved a 20-seed paired cohort from 8.75 to 10.35, while combat-only
+single-policy rollouts improved only to 9.15 at depth 16 and regressed to 8.45
+at depth 64. This falsified the assumption that a longer continuation of the
+same weak combat policy is useful planning.
+
+The Rust JSONL protocol therefore gained nested `branch_fork` requests, and the
+evaluator gained an opt-in combat beam. Each retained exact engine state forks
+several of the model's top legal actions at the next decision; pruning is
+performed per live environment, and values are backed up from the deepest
+available leaves while preserving earlier exact combat wins. Width one keeps
+the previous evaluator behavior.
+
+The first promoted A20 configuration combines:
+
+- depth-64 single-continuation search for inventory-identity menus;
+- an exact combat beam of width 8, expansion 4, and depth 12;
+- combat search only when visible enemy maximum HP is at least 140, concentrating
+  the extra branching on bosses rather than perturbing routine fights.
+
+Reproduce the 100-seed gate with:
+
+```sh
+uv run --with torch --with numpy python tools/eval_selfplay_hrm.py \
+  --checkpoint artifacts/selfplay/defect-a0-generation17-parameterized-seed-elite-cem-180s.pt \
+  --ascension 20 \
+  --count 100 \
+  --seed-source 20262001 \
+  --counterfactual-search-weight 0.1 \
+  --counterfactual-outside-weight 0.1 \
+  --lookahead-depth 12 \
+  --lookahead-min-enemy-hp 140 \
+  --lookahead-beam-width 8 \
+  --lookahead-beam-expansion 4 \
+  --lookahead-include-identity-choices \
+  --lookahead-identity-depth 64 \
+  --output artifacts/selfplay/defect-a20-generation8-bossbeam8x4d12-menu64-heldout100.jsonl
+```
+
+This raises mean floor from 9.06 to 10.16 on identical seeds: paired gain
+`+1.10`, 95% confidence interval `[0.370, 1.830]`, with 41 improved, 46
+unchanged, and 13 regressed seeds. Four runs enter Act 2 (floors 20, 20, 21,
+and 21), versus none in the direct baseline. The evaluator simulated 476,075
+branch steps in 175.9 seconds. No run won, so this is an A20 mean-floor
+breakthrough rather than completion of the first-win milestone.
+
+Two compression attempts were rejected. Retraining the entire critic on 1,081
+exact menu groups achieved 39.5% held-out top-1 menu accuracy but reduced
+closed-loop mean floor to 6.59; even a 0.01 critic weight reached only 8.58.
+Training only the zero-initialized menu residual preserved the baseline exactly
+at scale zero, but its best tested scale reached only 9.35. These results point
+to compounding off-policy error: logged menu accuracy is not yet a substitute
+for online exact planning.

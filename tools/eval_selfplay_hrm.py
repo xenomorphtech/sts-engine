@@ -437,6 +437,189 @@ def branch_score(
     )
 
 
+def improve_with_exact_combat_beam(
+    process: subprocess.Popen[str],
+    model: SelfPlayHrm,
+    rows: list[dict[str, Any]],
+    base_choices: list[int | None],
+    histories: list[list[int]],
+    tried_actions: list[dict[tuple[int, ...], set[int]]],
+    device: torch.device,
+    args: argparse.Namespace,
+    target_names: tuple[str, ...],
+    seeds: list[int],
+    branch_records: list[dict[str, Any]],
+) -> tuple[list[int | None], int, int]:
+    """Repeatedly branch exact combat states instead of rolling out one policy.
+
+    Width is shared by all root actions for one live environment. A root that
+    leaves the beam retains its exact frontier value, while combat wins and
+    deaths become terminal leaves. This makes width one equivalent to the
+    legacy single-continuation experiment and keeps the new path opt-in.
+    """
+    if args.lookahead_depth <= 0 or args.lookahead_beam_width <= 1:
+        return base_choices, 0, 0
+    rank_rngs = [SplitMix64(args.exploration_seed ^ index) for index in range(len(rows))]
+    root_ranked = rank_actions(
+        model,
+        rows,
+        device,
+        args.policy,
+        rank_rngs,
+        0.0,
+        target_names,
+        histories,
+        args.combat_search_weight,
+        args.counterfactual_search_weight,
+        args.outside_search_weight,
+        args.counterfactual_outside_weight,
+    )
+    roots: list[tuple[int, int, float]] = []
+    for environment, candidates in root_ranked.items():
+        measurements = rows[environment]["measurements"]
+        if (
+            measurements["enemy_max_hp"] < args.lookahead_min_enemy_hp
+            or measurements["floor"] < args.lookahead_min_floor
+        ):
+            continue
+        state_key = observation_key(rows[environment]["observation"])
+        tried = tried_actions[environment].get(state_key, set())
+        untried = [candidate for candidate in candidates if candidate[1] not in tried]
+        for prior, action in untried[: args.lookahead_candidates]:
+            roots.append((environment, action, prior))
+    if not roots:
+        return base_choices, 0, 0
+
+    current_rows = request(
+        process,
+        {
+            "op": "fork",
+            "branches": [
+                {"environment": environment, "action": action}
+                for environment, action, _ in roots
+            ],
+        },
+    )
+    current_meta: list[dict[str, Any]] = []
+    for environment, action, prior in roots:
+        history = list(histories[environment])
+        history.append(decision_signature(rows[environment]["observation"], action))
+        current_meta.append(
+            {
+                "environment": environment,
+                "root_action": action,
+                "root_prior": prior,
+                "history": history,
+            }
+        )
+    simulated_steps = len(current_rows)
+    leaf_values: dict[tuple[int, int], list[tuple[int, float]]] = {}
+
+    for depth in range(1, args.lookahead_depth + 1):
+        branch_rngs = [
+            SplitMix64(args.exploration_seed ^ (depth << 32) ^ index)
+            for index in range(len(current_rows))
+        ]
+        branch_histories = [meta["history"] for meta in current_meta]
+        ranked = rank_actions(
+            model,
+            current_rows,
+            device,
+            args.policy,
+            branch_rngs,
+            0.0,
+            target_names,
+            branch_histories,
+            args.combat_search_weight,
+            args.counterfactual_search_weight,
+            args.outside_search_weight,
+            args.counterfactual_outside_weight,
+        )
+        scores: list[float] = []
+        active_by_environment: dict[int, list[int]] = {}
+        for index, (leaf, meta) in enumerate(zip(current_rows, current_meta)):
+            candidates = ranked.get(
+                index, [(float(meta["root_prior"]), int(meta["root_action"]))]
+            )
+            learned_leaf = candidates[0][0]
+            environment = int(meta["environment"])
+            score = branch_score(
+                rows[environment]["measurements"], leaf, learned_leaf
+            )
+            scores.append(score)
+            key = (environment, int(meta["root_action"]))
+            combat_finished = (
+                leaf["outcome"] != "running"
+                or leaf["measurements"]["enemy_max_hp"] == 0
+            )
+            if combat_finished or depth == args.lookahead_depth or index not in ranked:
+                leaf_values.setdefault(key, []).append((depth, score))
+            else:
+                active_by_environment.setdefault(environment, []).append(index)
+
+        selected: list[int] = []
+        for indices in active_by_environment.values():
+            indices.sort(key=lambda index: scores[index], reverse=True)
+            selected.extend(indices[: args.lookahead_beam_width])
+            for index in indices[args.lookahead_beam_width :]:
+                meta = current_meta[index]
+                key = (int(meta["environment"]), int(meta["root_action"]))
+                leaf_values.setdefault(key, []).append((depth, scores[index]))
+        if depth == args.lookahead_depth or not selected:
+            break
+
+        expansions: list[dict[str, int]] = []
+        next_meta: list[dict[str, Any]] = []
+        for parent in selected:
+            meta = current_meta[parent]
+            observation = current_rows[parent]["observation"]
+            for _, action in ranked[parent][: args.lookahead_beam_expansion]:
+                expansions.append({"environment": parent, "action": action})
+                history = list(meta["history"])
+                history.append(decision_signature(observation, action))
+                next_meta.append({**meta, "history": history})
+        if not expansions:
+            break
+        current_rows = request(
+            process, {"op": "branch_fork", "branches": expansions}
+        )
+        current_meta = next_meta
+        simulated_steps += len(current_rows)
+
+    root_values: dict[tuple[int, int], float] = {}
+    for key, values in leaf_values.items():
+        winning = [score for _, score in values if score >= 1_000.0]
+        if winning:
+            root_values[key] = max(winning)
+            continue
+        deepest = max(depth for depth, _ in values)
+        root_values[key] = max(
+            score for depth, score in values if depth == deepest
+        )
+    if args.branches_output is not None:
+        for (environment, action), score in root_values.items():
+            branch_records.append(
+                {
+                    "schema_version": 1,
+                    "seed": seeds[environment],
+                    "step": rows[environment]["steps"],
+                    "observation": rows[environment]["observation"],
+                    "before": rows[environment]["measurements"],
+                    "history": histories[environment][-MAX_HISTORY_STEPS:],
+                    "action_index": action,
+                    "branch_score": score,
+                }
+            )
+    best: dict[int, tuple[float, int]] = {}
+    for (environment, action), score in root_values.items():
+        if environment not in best or score > best[environment][0]:
+            best[environment] = (score, action)
+    improved = list(base_choices)
+    for environment, (_, action) in best.items():
+        improved[environment] = action
+    return improved, simulated_steps, len(best)
+
+
 def improve_with_exact_lookahead(
     process: subprocess.Popen[str],
     model: SelfPlayHrm,
@@ -480,6 +663,8 @@ def improve_with_exact_lookahead(
             >= 1
         )
         if measurements["floor"] < args.lookahead_min_floor:
+            continue
+        if args.lookahead_beam_width > 1 and measurements["enemy_max_hp"] > 0:
             continue
         if args.lookahead_noncombat_only:
             if measurements["enemy_max_hp"] > 0:
@@ -759,7 +944,14 @@ def evaluate(args: argparse.Namespace) -> None:
     if not binary.is_file():
         raise FileNotFoundError(f"build sts-selfplay first; missing {binary}")
     process = subprocess.Popen(
-        [str(binary), "--serve-jsonl", "--max-steps", str(args.max_steps)],
+        [
+            str(binary),
+            "--serve-jsonl",
+            "--ascension",
+            str(args.ascension),
+            "--max-steps",
+            str(args.max_steps),
+        ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -871,6 +1063,21 @@ def evaluate(args: argparse.Namespace) -> None:
                 args.counterfactual_outside_weight,
                 False,
             )
+            actions, simulated, improved = improve_with_exact_combat_beam(
+                process,
+                model,
+                before_rows,
+                actions,
+                histories,
+                tried_actions,
+                device,
+                args,
+                target_names,
+                seeds,
+                branch_records,
+            )
+            branch_steps += simulated
+            lookahead_decisions += improved
             actions, simulated, improved = improve_with_exact_lookahead(
                 process,
                 model,
@@ -963,6 +1170,7 @@ def evaluate(args: argparse.Namespace) -> None:
         "checkpoint": str(args.checkpoint),
         "policy": args.policy,
         "teacher": None,
+        "ascension": args.ascension,
         "temperature": args.temperature,
         "exploration_seed": args.exploration_seed,
         "seed_source": args.seed_source,
@@ -988,6 +1196,8 @@ def evaluate(args: argparse.Namespace) -> None:
         "lookahead_depth": args.lookahead_depth,
         "lookahead_candidates": args.lookahead_candidates,
         "lookahead_rollouts": args.lookahead_rollouts,
+        "lookahead_beam_width": args.lookahead_beam_width,
+        "lookahead_beam_expansion": args.lookahead_beam_expansion,
         "lookahead_temperature": args.lookahead_temperature,
         "lookahead_optimism": args.lookahead_optimism,
         "lookahead_min_enemy_hp": args.lookahead_min_enemy_hp,
@@ -1051,6 +1261,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--policy", choices=("floor", "local", "hybrid"), default="hybrid")
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
+    parser.add_argument("--ascension", type=int, choices=range(21), default=0)
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--seed-source", type=int, default=20260827)
     parser.add_argument(
@@ -1150,6 +1361,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lookahead-candidates", type=int, default=4)
     parser.add_argument("--lookahead-rollouts", type=int, default=1)
     parser.add_argument(
+        "--lookahead-beam-width",
+        type=int,
+        default=1,
+        help="active exact combat paths retained per live environment",
+    )
+    parser.add_argument(
+        "--lookahead-beam-expansion",
+        type=int,
+        default=2,
+        help="top model actions forked from each retained combat path",
+    )
+    parser.add_argument(
         "--lookahead-temperature",
         type=float,
         default=0.03,
@@ -1211,6 +1434,8 @@ def parse_args() -> argparse.Namespace:
         or args.seed_copies <= 0
         or args.temperature < 0
         or args.lookahead_depth < 0
+        or args.lookahead_beam_width <= 0
+        or args.lookahead_beam_expansion <= 0
         or (
             args.lookahead_identity_depth is not None
             and args.lookahead_identity_depth <= 0

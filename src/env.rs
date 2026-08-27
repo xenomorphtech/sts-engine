@@ -28,6 +28,7 @@ impl RunOutcome {
 #[serde(default)]
 pub struct RunMeasurements {
     pub act: i32,
+    pub ascension: i32,
     pub floor: i32,
     pub hp: i32,
     pub max_hp: i32,
@@ -181,6 +182,7 @@ impl RunMeasurements {
 
         let mut measurements = Self {
             act: game.dungeon.act as i32,
+            ascension: game.ascension,
             floor: game.dungeon.floor,
             hp: game.player.hp,
             max_hp: game.player.max_hp,
@@ -509,6 +511,7 @@ fn state_features(game: &Game) -> Vec<u16> {
     push_feature(&mut features, format!("ROOM:{:?}", game.current_room));
     push_feature(&mut features, format!("ACT:{:?}", game.dungeon.act));
     push_feature(&mut features, format!("BOSS:{:?}", game.dungeon.boss));
+    push_scalar(&mut features, "ASCENSION", measurements.ascension);
     push_scalar(&mut features, "FLOOR", measurements.floor);
     push_scalar(&mut features, "HP", measurements.hp);
     push_scalar(&mut features, "MAX_HP", measurements.max_hp);
@@ -1130,6 +1133,7 @@ mod tests {
         env.reset(2);
         assert_eq!(env.game.character, Character::Defect);
         assert_eq!(env.game.ascension, 7);
+        assert_eq!(env.measurements().ascension, 7);
         assert_eq!(env.max_steps(), 123);
         assert_eq!(env.steps(), 0);
     }

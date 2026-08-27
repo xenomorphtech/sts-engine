@@ -78,6 +78,8 @@ MEASUREMENT_SPECS = (
     ("deck_card_access", 20.0),
     ("deck_energy_cards", 20.0),
     ("deck_focus_cards", 10.0),
+    # Append-only: old checkpoints retain their original numeric prefix.
+    ("ascension", 20.0),
 )
 ACTION_PARAMETER_SPECS = (
     ("known", 1.0),
