@@ -373,3 +373,22 @@ carried 0.42 more HP on same-floor pairs, reached floor 24 rather than 23, and
 used 839,063 rather than 882,744 branch steps. Searching two roots or six to
 eight roots regressed. A20 therefore defaults to three lookahead candidates;
 lower ascensions retain the previous default of four.
+
+Noncombat choices need a longer causal horizon than combat actions. Planning
+only card and relic identity menus at depth 64 had regressed, but applying the
+same horizon to every route, reward, rest, shop, and event choice lets the
+planner observe the downstream fight and HP carried into the next floor. With
+the depth-12, width-8 combat beam unchanged, this raised mean floor from 11.30
+to 14.80 on 30 paired selection seeds (`+3.50`, 95% CI `+1.04` to `+5.96`).
+On 50 untouched seeds it raised mean floor from 10.64 to 12.78 (`+2.14`, 95%
+CI `+0.11` to `+4.17`), improving 29 seeds and regressing 13. Among the eight
+equal-floor pairs it entered the floor with 7.88 more HP on average. Across
+both cohorts the population gain was 212 floors over 80 seeds, or `+2.65`
+mean floor. Branch work increased from 861,298 to 1,266,701 steps on the
+confirmation cohort, a worthwhile cost for the measured progress gain.
+
+Active A20 lookahead now enables this noncombat horizon at depth 64 by default.
+Lower ascensions retain their previous behavior, and
+`--no-lookahead-noncombat` provides an explicit ablation. The combat beam still
+uses `--lookahead-depth`; only the noncombat root continuation uses the longer
+horizon. No A20 run has won yet.

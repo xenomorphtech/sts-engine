@@ -32,6 +32,33 @@ from train_selfplay_hrm import (
 INFERENCE_BATCH_SIZE = 512
 
 
+def apply_lookahead_defaults(args: argparse.Namespace) -> None:
+    """Select empirically validated planning defaults without hiding overrides."""
+    if args.lookahead_candidates is None:
+        args.lookahead_candidates = 3 if args.ascension == 20 else 4
+    if args.lookahead_combat_hp_weight is None:
+        args.lookahead_combat_hp_weight = 100.0 if args.ascension == 20 else 20.0
+    if args.lookahead_noncombat_only is None:
+        identity_specialization = (
+            args.lookahead_identity_choices_only
+            or args.lookahead_include_identity_choices
+        )
+        args.lookahead_noncombat_only = (
+            args.lookahead_noncombat_depth is not None
+            or (
+                args.ascension == 20
+                and args.lookahead_depth > 0
+                and not identity_specialization
+            )
+        )
+    if (
+        args.lookahead_noncombat_only
+        and args.lookahead_noncombat_depth is None
+        and args.ascension == 20
+    ):
+        args.lookahead_noncombat_depth = 64
+
+
 class SplitMix64:
     def __init__(self, state: int):
         self.state = state & ((1 << 64) - 1)
@@ -715,6 +742,9 @@ def improve_with_exact_lookahead(
             and not args.lookahead_identity_choices_only
             and args.lookahead_identity_depth is not None
             else args.lookahead_depth
+            if not args.lookahead_noncombat_only
+            or args.lookahead_noncombat_depth is None
+            else args.lookahead_noncombat_depth
         )
         state_key = observation_key(observation)
         tried = tried_actions[environment].get(state_key, set())
@@ -1288,6 +1318,7 @@ def evaluate(args: argparse.Namespace) -> None:
         "lookahead_identity_depth": args.lookahead_identity_depth,
         "lookahead_boss_depth": args.lookahead_boss_depth,
         "lookahead_noncombat_only": args.lookahead_noncombat_only,
+        "lookahead_noncombat_depth": args.lookahead_noncombat_depth,
         "combat_search_weight": args.combat_search_weight,
         "search_value_min_floor": model.search_value_min_floor,
         "counterfactual_search_weight": args.counterfactual_search_weight,
@@ -1580,16 +1611,34 @@ def parse_args() -> argparse.Namespace:
             "defaults to lookahead-depth"
         ),
     )
-    parser.add_argument(
+    noncombat_group = parser.add_mutually_exclusive_group()
+    noncombat_group.add_argument(
+        "--lookahead-noncombat",
         "--lookahead-noncombat-only",
+        dest="lookahead_noncombat_only",
         action="store_true",
-        help="plan route, event, rest, shop, and reward choices but not combat actions",
+        help=(
+            "plan route, event, rest, shop, and reward choices in addition to "
+            "the combat beam; enabled by default for active A20 lookahead"
+        ),
+    )
+    noncombat_group.add_argument(
+        "--no-lookahead-noncombat",
+        dest="lookahead_noncombat_only",
+        action="store_false",
+        help="disable exact planning at noncombat choices",
+    )
+    parser.set_defaults(lookahead_noncombat_only=None)
+    parser.add_argument(
+        "--lookahead-noncombat-depth",
+        type=int,
+        help=(
+            "separate exact rollout depth for noncombat choices; defaults to "
+            "64 on A20 and lookahead-depth otherwise"
+        ),
     )
     args = parser.parse_args()
-    if args.lookahead_candidates is None:
-        args.lookahead_candidates = 3 if args.ascension == 20 else 4
-    if args.lookahead_combat_hp_weight is None:
-        args.lookahead_combat_hp_weight = 100.0 if args.ascension == 20 else 20.0
+    apply_lookahead_defaults(args)
     if (
         args.count <= 0
         or args.max_steps <= 0
@@ -1605,6 +1654,10 @@ def parse_args() -> argparse.Namespace:
         or (
             args.lookahead_boss_depth is not None
             and args.lookahead_boss_depth <= 0
+        )
+        or (
+            args.lookahead_noncombat_depth is not None
+            and args.lookahead_noncombat_depth <= 0
         )
         or args.lookahead_candidates <= 0
         or args.lookahead_rollouts <= 0

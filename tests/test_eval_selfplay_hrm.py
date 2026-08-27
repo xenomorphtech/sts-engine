@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 import sys
 
@@ -7,6 +8,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from eval_selfplay_hrm import (  # noqa: E402
+    apply_lookahead_defaults,
     branch_score,
     decision_signature,
     observation_key,
@@ -29,6 +31,75 @@ def test_action_attention_handles_padded_candidates() -> None:
     )
     assert torch.isfinite(output).all()
     assert torch.equal(output, torch.zeros_like(output))
+
+
+def test_a20_lookahead_defaults_join_noncombat_choices_to_next_room() -> None:
+    args = argparse.Namespace(
+        ascension=20,
+        lookahead_depth=12,
+        lookahead_candidates=None,
+        lookahead_combat_hp_weight=None,
+        lookahead_noncombat_only=None,
+        lookahead_noncombat_depth=None,
+        lookahead_identity_choices_only=False,
+        lookahead_include_identity_choices=False,
+    )
+
+    apply_lookahead_defaults(args)
+
+    assert args.lookahead_candidates == 3
+    assert args.lookahead_combat_hp_weight == 100.0
+    assert args.lookahead_noncombat_only is True
+    assert args.lookahead_noncombat_depth == 64
+
+
+def test_noncombat_lookahead_default_preserves_lower_ascensions_and_opt_out() -> None:
+    lower = argparse.Namespace(
+        ascension=0,
+        lookahead_depth=12,
+        lookahead_candidates=None,
+        lookahead_combat_hp_weight=None,
+        lookahead_noncombat_only=None,
+        lookahead_noncombat_depth=None,
+        lookahead_identity_choices_only=False,
+        lookahead_include_identity_choices=False,
+    )
+    disabled = argparse.Namespace(
+        ascension=20,
+        lookahead_depth=12,
+        lookahead_candidates=None,
+        lookahead_combat_hp_weight=None,
+        lookahead_noncombat_only=False,
+        lookahead_noncombat_depth=None,
+        lookahead_identity_choices_only=False,
+        lookahead_include_identity_choices=False,
+    )
+
+    apply_lookahead_defaults(lower)
+    apply_lookahead_defaults(disabled)
+
+    assert lower.lookahead_noncombat_only is False
+    assert lower.lookahead_noncombat_depth is None
+    assert disabled.lookahead_noncombat_only is False
+    assert disabled.lookahead_noncombat_depth is None
+
+
+def test_a20_noncombat_default_does_not_override_identity_ablation() -> None:
+    args = argparse.Namespace(
+        ascension=20,
+        lookahead_depth=12,
+        lookahead_candidates=None,
+        lookahead_combat_hp_weight=None,
+        lookahead_noncombat_only=None,
+        lookahead_noncombat_depth=None,
+        lookahead_identity_choices_only=True,
+        lookahead_include_identity_choices=False,
+    )
+
+    apply_lookahead_defaults(args)
+
+    assert args.lookahead_noncombat_only is False
+    assert args.lookahead_noncombat_depth is None
 
 
 def test_combat_branch_hp_weight_prefers_healthier_leaf() -> None:
