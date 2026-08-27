@@ -140,6 +140,14 @@ fn parse_options() -> Result<Options, String> {
 enum ServeRequest {
     Reset { seeds: Vec<i64> },
     Step { actions: Vec<Option<usize>> },
+    Fork { branches: Vec<ForkRequest> },
+    BranchStep { actions: Vec<Option<usize>> },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct ForkRequest {
+    environment: usize,
+    action: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -171,6 +179,7 @@ fn serve_jsonl(max_steps: usize) -> Result<(), String> {
     let stdout = std::io::stdout();
     let mut writer = BufWriter::new(stdout.lock());
     let mut envs: Vec<TrainEnv> = Vec::new();
+    let mut branch_envs: Vec<TrainEnv> = Vec::new();
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.map_err(|error| error.to_string())?;
         if line.trim().is_empty() {
@@ -198,6 +207,59 @@ fn serve_jsonl(max_steps: usize) -> Result<(), String> {
                     ));
                 }
                 envs.iter_mut()
+                    .zip(actions)
+                    .enumerate()
+                    .map(|(index, (env, action))| {
+                        if let Some(action) = action.filter(|_| !env.outcome().done()) {
+                            let info = env.step(action);
+                            serve_row(index, env, info.reward, info.terminal_score)
+                        } else {
+                            serve_row(index, env, 0.0, None)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }
+            ServeRequest::Fork { branches } => {
+                let mut rewards = Vec::with_capacity(branches.len());
+                branch_envs = branches
+                    .into_iter()
+                    .map(|branch| {
+                        let mut fork = envs
+                            .get(branch.environment)
+                            .ok_or_else(|| {
+                                format!("fork environment {} is out of range", branch.environment)
+                            })?
+                            .clone();
+                        if fork.outcome().done() {
+                            return Err(format!(
+                                "cannot fork terminal environment {}",
+                                branch.environment
+                            ));
+                        }
+                        let info = fork.step(branch.action);
+                        rewards.push((info.reward, info.terminal_score));
+                        Ok(fork)
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                branch_envs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, env)| {
+                        let (reward, terminal_score) = rewards[index];
+                        serve_row(index, env, reward, terminal_score)
+                    })
+                    .collect::<Vec<_>>()
+            }
+            ServeRequest::BranchStep { actions } => {
+                if actions.len() != branch_envs.len() {
+                    return Err(format!(
+                        "branch step action count {} does not match branch count {}",
+                        actions.len(),
+                        branch_envs.len()
+                    ));
+                }
+                branch_envs
+                    .iter_mut()
                     .zip(actions)
                     .enumerate()
                     .map(|(index, (env, action))| {
