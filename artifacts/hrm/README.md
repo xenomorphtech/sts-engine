@@ -65,3 +65,113 @@ policy for every continuation; this off-policy mismatch overwhelms the opening
 improvement. The next experiment should collect branches throughout current
 policy trajectories and refresh them between policy updates, or learn a
 separate action-value/ranking head instead of directly replacing policy logits.
+
+## Teacher-free full-run choice critic and exact lookahead
+
+The full-run Defect A0 work changes the selection objective from boss-only
+imitation accuracy to paired mean final floor. Boss reaches and wins remain
+diagnostics, but do not override a positive or negative paired floor delta.
+`tools/compare_selfplay_mean_floor.py` enforces identical seed cohorts and
+reports the mean delta, its 95% confidence interval, and the improved,
+unchanged, and regressed seed counts.
+
+### Choice representation
+
+Every action is scored in the context of the complete visible run state:
+
+- current and maximum HP are independent numeric state channels, alongside
+  floor, gold, energy, deck statistics, combat state, and enemy state;
+- every owned card copy contributes both a base-card identity and an exact
+  identity containing upgrade and mutable card fields; relics and occupied
+  potions contribute identities in the same namespace;
+- card and relic candidates use that same identity namespace. Candidate-to-
+  inventory attention, elementwise interaction features, and explicit match
+  counts let the critic associate a proposed choice with all owned cards and
+  relics rather than learn a global value for the choice;
+- Skip receives an explicit no-choice identity whenever it competes with an
+  inventory choice, so it is evaluated against the same deck and relic state;
+- deterministic non-combat choices expose typed numeric effects: HP, maximum
+  HP, gold, deck size, upgraded-card count, relic count, and potion count
+  deltas. Derived channels include HP loss as a fraction of current HP,
+  maximum-HP change as a fraction of maximum HP, gold change as a fraction of
+  current gold, and a lethal-HP-cost flag;
+- the Rust engine obtains these effects by cloning the current state and
+  applying only supported deterministic menu actions. Unsupported or combat
+  actions set `known=false` instead of pretending that an unknown effect is a
+  real zero.
+
+The isolated `CounterfactualChoiceCritic` owns its embeddings and state memory,
+and trains on complete legal-action menus with a seed-level train/validation
+split. The parameterized run contained 131,137 training menus and 13,354 held
+out by seed. Numeric action features can enter through an additive projection,
+a zero-initialized gated menu residual, or both. A zero residual scale exactly
+reproduces the underlying checkpoint, and older checkpoints load with zero
+action-numeric channels.
+
+### Training and checkpoint selection
+
+`tools/train_selfplay_branch_rank.py` can create the isolated critic, add the
+numeric action channels, fit exact branch-return menus, rank repeated rollouts
+of the same seed by achieved floor, or imitate each seed's best teacher-free
+rollout. The main trainer can also mix branch datasets and initialize from an
+existing checkpoint.
+
+Compare two closed-loop cohorts with:
+
+```sh
+python3 tools/compare_selfplay_mean_floor.py \
+  artifacts/selfplay/defect-a0-generation15-seed-elite-cem-w0p6-heldout1000.jsonl \
+  artifacts/selfplay/defect-a0-generation17-parameterized-w0p1-heldout1000.jsonl
+```
+
+On this fixed 1,000-seed cohort, adding the parameterized critic raised mean
+floor from 15.182 to 15.718: a paired gain of 0.536 floors with 95% confidence
+interval `[0.156, 0.916]`. It improved 350 seeds, left 363 unchanged, and
+regressed 287. Later replay and residual-adapter checkpoints scored 15.679,
+15.713, and 15.682 on the same gate and were rejected.
+
+### Exact model-based policy improvement
+
+`tools/eval_selfplay_hrm.py` can clone the Rust engine at a legal-action menu,
+roll out several candidate actions, and use the learned policy/value model for
+the continuation. Search horizons can differ by decision class: inventory
+menus need enough depth to reveal deck-building consequences, while expensive
+combat search is restricted to high-HP encounters. This remains teacher-free:
+neither root choices nor continuations use the HTN policy.
+
+The promoted combined configuration uses depth 64 for card/relic inventory
+menus and depth 16 for combats whose visible maximum enemy HP is at least 100:
+
+```sh
+python3 tools/eval_selfplay_hrm.py \
+  --checkpoint artifacts/selfplay/defect-a0-generation17-parameterized-seed-elite-cem-180s.pt \
+  --count 100 \
+  --seed-source 20261012 \
+  --counterfactual-search-weight 0.1 \
+  --counterfactual-outside-weight 0.1 \
+  --lookahead-depth 16 \
+  --lookahead-min-enemy-hp 100 \
+  --lookahead-include-identity-choices \
+  --lookahead-identity-depth 64 \
+  --output artifacts/selfplay/defect-a0-generation27-combined-seed20261012.jsonl
+```
+
+On the paired development cohort, menu depth 64 scored 16.86 versus 15.75,
+high-HP combat depth 16 scored 17.13 versus 14.83, and the combined policy
+scored 20.39 versus the direct policy's 16.33. A separate depth-128 boss search
+did not improve mean floor and worsened the inspected Donu/Deca suffix, so it
+was rejected.
+
+Across four fresh 100-seed cohorts (seed sources 20261011 through 20261014),
+the combined policy averaged 19.005 floors. Twenty-four runs reached floor 33
+or later: 19 reached 33, one reached 40, one reached 41, two reached 48, and one
+won on floor 50. The winning seed was `-3542596578145849789`; it completed the
+Act 3 boss after 962 decisions with 37/66 HP. This is evidence that the
+teacher-free critic plus exact search can solve a complete run, not evidence of
+a high win rate: the fresh-cohort result is 1/400 (0.25%).
+
+The main remaining constraint is search cost. The winning 100-seed cohort made
+10,917 lookahead decisions and simulated 1,041,572 branch steps in about 20.7
+minutes. Distilling the deep-search choices into the small gated residual did
+not preserve the closed-loop gain, so exact heterogeneous-horizon search
+remains part of the promoted policy rather than merely a data generator.

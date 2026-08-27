@@ -30,6 +30,8 @@ except ImportError as exc:
 FEATURE_BUCKETS = 32_768
 MAX_STATE_FEATURES = 256
 MAX_ACTION_FEATURES = 16
+MAX_INVENTORY_IDENTITIES = 192
+MAX_CANDIDATE_IDENTITIES = 16
 MAX_HISTORY_STEPS = 64
 MEASUREMENT_SPECS = (
     ("act", 3.0),
@@ -67,6 +69,44 @@ MEASUREMENT_SPECS = (
     ("enemy_power_amount", 500.0),
     ("incoming_attack", 200.0),
     ("legal_actions", 100.0),
+    ("deck_total_cost", 100.0),
+    ("deck_attack_cards", 50.0),
+    ("deck_skill_cards", 50.0),
+    ("deck_power_cards", 20.0),
+    ("deck_exhaust_cards", 20.0),
+    ("deck_orb_cards", 30.0),
+    ("deck_card_access", 20.0),
+    ("deck_energy_cards", 20.0),
+    ("deck_focus_cards", 10.0),
+)
+ACTION_PARAMETER_SPECS = (
+    ("known", 1.0),
+    ("hp_delta", 100.0),
+    ("max_hp_delta", 100.0),
+    ("gold_delta", 500.0),
+    ("deck_size_delta", 10.0),
+    ("upgraded_cards_delta", 10.0),
+    ("relic_delta", 5.0),
+    ("potion_delta", 5.0),
+    ("hp_delta_current_fraction", 1.0),
+    ("max_hp_delta_fraction", 1.0),
+    ("gold_delta_current_fraction", 1.0),
+    ("lethal_hp_loss", 1.0),
+)
+DECK_AUXILIARY_TARGET_SPECS = (
+    ("deck_cost_delta_128", "deck_total_cost", 100.0),
+    ("deck_attack_delta_128", "deck_attack_cards", 50.0),
+    ("deck_skill_delta_128", "deck_skill_cards", 50.0),
+    ("deck_power_delta_128", "deck_power_cards", 20.0),
+    ("deck_exhaust_delta_128", "deck_exhaust_cards", 20.0),
+    ("deck_orb_delta_128", "deck_orb_cards", 30.0),
+    ("deck_access_delta_128", "deck_card_access", 20.0),
+    ("deck_energy_delta_128", "deck_energy_cards", 20.0),
+    ("deck_focus_delta_128", "deck_focus_cards", 10.0),
+)
+MAX_RECORDED_FLOOR = 50
+FLOOR_SURVIVAL_NAMES = tuple(
+    f"reach_floor_{floor}" for floor in range(1, MAX_RECORDED_FLOOR + 1)
 )
 TARGET_NAMES = (
     "act3_win",
@@ -87,6 +127,8 @@ TARGET_NAMES = (
     "gold_delta_32",
     "relic_delta_128",
     "upgrade_delta_128",
+    *(target for target, _, _ in DECK_AUXILIARY_TARGET_SPECS),
+    *FLOOR_SURVIVAL_NAMES,
 )
 TARGET_SCALES = (
     1.0,
@@ -107,6 +149,8 @@ TARGET_SCALES = (
     500.0,
     10.0,
     10.0,
+    *(scale for _, _, scale in DECK_AUXILIARY_TARGET_SPECS),
+    *(1.0 for _ in FLOOR_SURVIVAL_NAMES),
 )
 DEFAULTS = {
     "hidden_size": 128,
@@ -167,11 +211,68 @@ def symlog_scaled(value: float, scale: float) -> float:
     return math.copysign(math.log1p(abs(value)), value) / math.log1p(scale)
 
 
-def measurement_vector(measurements: dict[str, Any]) -> list[float]:
+def measurement_vector(
+    measurements: dict[str, Any], limit: int | None = None
+) -> list[float]:
+    specs = MEASUREMENT_SPECS if limit is None else MEASUREMENT_SPECS[:limit]
     return [
-        symlog_scaled(float(measurements[name]), scale)
-        for name, scale in MEASUREMENT_SPECS
+        # New measurements remain distinguishable from a real zero when old
+        # teacher-free generations predate that field.
+        symlog_scaled(float(measurements.get(name, -1.0)), scale)
+        for name, scale in specs
     ]
+
+
+def action_parameter_vector(
+    action: dict[str, Any],
+    measurements: dict[str, Any],
+    limit: int | None = None,
+) -> list[float]:
+    """Factor deterministic choice effects into reusable numeric channels."""
+    parameters = action.get("parameters") or {}
+    known = bool(parameters.get("known", False))
+    values = {
+        "known": float(known),
+        "hp_delta": float(parameters.get("hp_delta", 0.0)),
+        "max_hp_delta": float(parameters.get("max_hp_delta", 0.0)),
+        "gold_delta": float(parameters.get("gold_delta", 0.0)),
+        "deck_size_delta": float(parameters.get("deck_size_delta", 0.0)),
+        "upgraded_cards_delta": float(
+            parameters.get("upgraded_cards_delta", 0.0)
+        ),
+        "relic_delta": float(parameters.get("relic_delta", 0.0)),
+        "potion_delta": float(parameters.get("potion_delta", 0.0)),
+    }
+    if known:
+        hp = max(float(measurements.get("hp", 0.0)), 1.0)
+        max_hp = max(float(measurements.get("max_hp", 0.0)), 1.0)
+        gold = max(float(measurements.get("gold", 0.0)), 1.0)
+        values["hp_delta_current_fraction"] = max(
+            -2.0, min(2.0, values["hp_delta"] / hp)
+        )
+        values["max_hp_delta_fraction"] = max(
+            -2.0, min(2.0, values["max_hp_delta"] / max_hp)
+        )
+        values["gold_delta_current_fraction"] = max(
+            -2.0, min(2.0, values["gold_delta"] / gold)
+        )
+        values["lethal_hp_loss"] = float(
+            values["hp_delta"] < 0.0
+            and float(measurements.get("hp", 0.0)) + values["hp_delta"] <= 0.0
+        )
+    else:
+        values.update(
+            hp_delta_current_fraction=0.0,
+            max_hp_delta_fraction=0.0,
+            gold_delta_current_fraction=0.0,
+            lethal_hp_loss=0.0,
+        )
+    specs = (
+        ACTION_PARAMETER_SPECS
+        if limit is None
+        else ACTION_PARAMETER_SPECS[:limit]
+    )
+    return [symlog_scaled(values[name], scale) for name, scale in specs]
 
 
 def decision_signature(observation: dict[str, Any], action_index: int) -> int:
@@ -182,6 +283,37 @@ def decision_signature(observation: dict[str, Any], action_index: int) -> int:
         value ^= int(feature)
         value = (value * 0x100000001B3) & ((1 << 64) - 1)
     return value % FEATURE_BUCKETS + 1
+
+
+def feature_token_id(token: str) -> int:
+    """Match the engine's stable FNV-1a feature hashing."""
+    value = 0xCBF29CE484222325
+    for byte in token.encode():
+        value ^= byte
+        value = (value * 0x100000001B3) & ((1 << 64) - 1)
+    return value % FEATURE_BUCKETS + 1
+
+
+CHOICE_NONE_ID = feature_token_id("IDENTITY:CHOICE_NONE")
+
+
+def candidate_identity_features(
+    observation: dict[str, Any], selected: dict[str, Any], in_combat: bool
+) -> list[int]:
+    """Give every action in an inventory-choice menu a critic identity.
+
+    Older traces predate the engine-side marker on Skip/leave actions. Adding
+    the stable marker while preprocessing keeps those alternatives explicitly
+    conditioned on the current deck and relics.
+    """
+    if in_combat:
+        return []
+    identities = list(selected.get("candidate_identities", []))
+    if not identities and any(
+        action.get("candidate_identities") for action in observation["actions"]
+    ):
+        identities.append(CHOICE_NONE_ID)
+    return identities
 
 
 def split_for_seed(seed: int) -> str:
@@ -249,6 +381,13 @@ def target_rows(episode: dict[str, Any]) -> tuple[list[list[float]], list[list[b
             float(h32["gold"] - before["gold"]),
             float(h128["relics"] - before["relics"]),
             float(h128["upgraded_cards"] - before["upgraded_cards"]),
+            *(
+                float(h128[measurement] - before[measurement])
+                if measurement in before and measurement in h128
+                else 0.0
+                for _, measurement, _ in DECK_AUXILIARY_TARGET_SPECS
+            ),
+            *(float(max_floor >= floor) for floor in range(1, MAX_RECORDED_FLOOR + 1)),
         ]
         targets.append(
             [symlog_scaled(value, scale) for value, scale in zip(raw, TARGET_SCALES)]
@@ -273,6 +412,11 @@ def target_rows(episode: dict[str, Any]) -> tuple[list[list[float]], list[list[b
                 True,
                 True,
                 True,
+                *(
+                    measurement in before and measurement in h128
+                    for _, measurement, _ in DECK_AUXILIARY_TARGET_SPECS
+                ),
+                *(True for _ in FLOOR_SURVIVAL_NAMES),
             ]
         )
     return targets, masks
@@ -316,11 +460,14 @@ def prepare(
         "feature_buckets": FEATURE_BUCKETS,
         "max_state_features": MAX_STATE_FEATURES,
         "max_action_features": MAX_ACTION_FEATURES,
+        "max_inventory_identities": MAX_INVENTORY_IDENTITIES,
+        "max_candidate_identities": MAX_CANDIDATE_IDENTITIES,
         "max_history_steps": MAX_HISTORY_STEPS,
         "measurement_specs": MEASUREMENT_SPECS,
+        "action_parameter_specs": ACTION_PARAMETER_SPECS,
         "targets": TARGET_NAMES,
         "branch_only": branch_only,
-        "preprocess_version": 4,
+        "preprocess_version": 8,
     }
     if cache.exists():
         prepared = torch.load(cache, map_location="cpu", weights_only=False)
@@ -346,7 +493,16 @@ def prepare(
         tensors[split] = {
             "state": torch.zeros((count, MAX_STATE_FEATURES), dtype=torch.int32),
             "action": torch.zeros((count, MAX_ACTION_FEATURES), dtype=torch.int32),
+            "inventory": torch.zeros(
+                (count, MAX_INVENTORY_IDENTITIES), dtype=torch.int32
+            ),
+            "candidate": torch.zeros(
+                (count, MAX_CANDIDATE_IDENTITIES), dtype=torch.int32
+            ),
             "numeric": torch.zeros((count, len(MEASUREMENT_SPECS)), dtype=torch.float32),
+            "action_numeric": torch.zeros(
+                (count, len(ACTION_PARAMETER_SPECS)), dtype=torch.float32
+            ),
             "history": torch.zeros((count, MAX_HISTORY_STEPS), dtype=torch.int32),
             "target": torch.zeros((count, len(TARGET_NAMES)), dtype=torch.float32),
             "mask": torch.zeros((count, len(TARGET_NAMES)), dtype=torch.bool),
@@ -356,6 +512,8 @@ def prepare(
     offsets = {"train": 0, "validation": 0}
     state_truncated = 0
     action_truncated = 0
+    inventory_truncated = 0
+    candidate_truncated = 0
     if not branch_only:
         for episode in iter_episodes(paths):
             split = split_for_seed(int(episode["result"]["seed"]))
@@ -370,16 +528,35 @@ def prepare(
                 state = observation["state_features"]
                 selected = observation["actions"][transition["action_index"]]
                 action = selected["features"]
+                inventory = observation.get("inventory_identities", [])
+                candidate = candidate_identity_features(
+                    observation,
+                    selected,
+                    transition["before"]["enemy_max_hp"] > 0,
+                )
                 if selected["index"] != transition["action_index"]:
                     raise ValueError("legal action index mismatch in trace")
                 state_truncated += len(state) > MAX_STATE_FEATURES
                 action_truncated += len(action) > MAX_ACTION_FEATURES
+                inventory_truncated += len(inventory) > MAX_INVENTORY_IDENTITIES
+                candidate_truncated += len(candidate) > MAX_CANDIDATE_IDENTITIES
                 state = state[:MAX_STATE_FEATURES]
                 action = action[:MAX_ACTION_FEATURES]
+                inventory = inventory[:MAX_INVENTORY_IDENTITIES]
+                candidate = candidate[:MAX_CANDIDATE_IDENTITIES]
                 target_tensors["state"][offset, : len(state)] = torch.tensor(state)
                 target_tensors["action"][offset, : len(action)] = torch.tensor(action)
+                target_tensors["inventory"][offset, : len(inventory)] = torch.tensor(
+                    inventory
+                )
+                target_tensors["candidate"][offset, : len(candidate)] = torch.tensor(
+                    candidate
+                )
                 target_tensors["numeric"][offset] = torch.tensor(
                     measurement_vector(transition["before"])
+                )
+                target_tensors["action_numeric"][offset] = torch.tensor(
+                    action_parameter_vector(selected, transition["before"])
                 )
                 recent_history = history[-MAX_HISTORY_STEPS:]
                 if recent_history:
@@ -401,12 +578,25 @@ def prepare(
         state = observation["state_features"][:MAX_STATE_FEATURES]
         selected = observation["actions"][row["action_index"]]
         action = selected["features"][:MAX_ACTION_FEATURES]
+        inventory = observation.get("inventory_identities", [])
+        candidate = candidate_identity_features(
+            observation,
+            selected,
+            row["before"]["enemy_max_hp"] > 0,
+        )
+        inventory = inventory[:MAX_INVENTORY_IDENTITIES]
+        candidate = candidate[:MAX_CANDIDATE_IDENTITIES]
         if selected["index"] != row["action_index"]:
             raise ValueError("legal action index mismatch in branch record")
         target_tensors["state"][offset, : len(state)] = torch.tensor(state)
         target_tensors["action"][offset, : len(action)] = torch.tensor(action)
+        target_tensors["inventory"][offset, : len(inventory)] = torch.tensor(inventory)
+        target_tensors["candidate"][offset, : len(candidate)] = torch.tensor(candidate)
         target_tensors["numeric"][offset] = torch.tensor(
             measurement_vector(row["before"])
+        )
+        target_tensors["action_numeric"][offset] = torch.tensor(
+            action_parameter_vector(selected, row["before"])
         )
         history = row.get("history", [])[-MAX_HISTORY_STEPS:]
         if history:
@@ -425,6 +615,8 @@ def prepare(
         "counts": counts,
         "state_truncated": state_truncated,
         "action_truncated": action_truncated,
+        "inventory_truncated": inventory_truncated,
+        "candidate_truncated": candidate_truncated,
     }
     cache.parent.mkdir(parents=True, exist_ok=True)
     torch.save(prepared, cache)
@@ -432,7 +624,9 @@ def prepare(
         f"prepared {sum(counts.values())} decisions from {sum(episodes.values())} "
         f"teacher-free episodes in {time.monotonic() - started:.1f}s; "
         f"split={counts}; state_truncated={state_truncated}; "
-        f"action_truncated={action_truncated}; branches={branch_counts}"
+        f"action_truncated={action_truncated}; "
+        f"inventory_truncated={inventory_truncated}; "
+        f"candidate_truncated={candidate_truncated}; branches={branch_counts}"
     )
     return prepared
 
@@ -459,7 +653,10 @@ class SelectiveSsmMemory(nn.Module):
         super().__init__()
         self.norm = nn.RMSNorm(hidden_size)
         self.select = nn.Linear(hidden_size, hidden_size * 3, bias=False)
-        self.log_decay = nn.Parameter(torch.zeros(hidden_size))
+        # Span short and long recurrent time scales at initialization. A
+        # uniform zero decay forgets almost every early token in a 256-token
+        # state before learning has a chance to specialize the channels.
+        self.log_decay = nn.Parameter(torch.linspace(-4.0, 0.0, hidden_size))
         self.output = nn.Linear(hidden_size, hidden_size, bias=False)
 
     def forward(self, embedded: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -472,12 +669,363 @@ class SelectiveSsmMemory(nn.Module):
         decay = torch.where(visible, decay, torch.ones_like(decay))
         update = torch.where(visible, update, torch.zeros_like(update))
 
-        # Vectorized scan for h_t = a_t h_(t-1) + b_t. Sixty-four
-        # decisions remain numerically safe in FP32 and avoid a Python loop.
-        prefix = torch.cumprod(decay, dim=1).clamp_min(1e-20)
-        state = prefix * torch.cumsum(update / prefix, dim=1)
-        memory = state[:, -1] * torch.sigmoid(gate[:, -1])
+        # Scan h_t = a_t h_(t-1) + b_t in bounded blocks. A single cumprod
+        # across 256 state tokens underflows during early training; 32-token
+        # blocks retain parallelism without dividing by vanishing prefixes.
+        state = torch.zeros_like(update[:, 0])
+        for start in range(0, embedded.shape[1], 32):
+            block_decay = decay[:, start : start + 32]
+            block_update = update[:, start : start + 32]
+            prefix = torch.cumprod(block_decay, dim=1).clamp_min(1e-20)
+            block_state = prefix * (
+                state.unsqueeze(1) + torch.cumsum(block_update / prefix, dim=1)
+            )
+            state = block_state[:, -1]
+        positions = torch.arange(mask.shape[1], device=mask.device).unsqueeze(0)
+        last_visible = positions.masked_fill(~mask, 0).max(dim=1).values
+        last_gate = gate.gather(
+            1,
+            last_visible[:, None, None].expand(-1, 1, gate.shape[-1]),
+        ).squeeze(1)
+        memory = state * torch.sigmoid(last_gate)
         return self.output(memory.to(embedded.dtype))
+
+
+class HierarchicalStateSsmMemory(nn.Module):
+    """Compress local token groups before the selective state-space scan."""
+
+    def __init__(self, hidden_size: int, group_size: int = 8):
+        super().__init__()
+        self.group_size = group_size
+        self.memory = SelectiveSsmMemory(hidden_size)
+
+    def forward(self, embedded: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        remainder = embedded.shape[1] % self.group_size
+        if remainder:
+            padding = self.group_size - remainder
+            embedded = F.pad(embedded, (0, 0, 0, padding))
+            mask = F.pad(mask, (0, padding))
+        batch, tokens, hidden = embedded.shape
+        grouped_mask = mask.view(batch, tokens // self.group_size, self.group_size)
+        grouped = embedded.view(
+            batch, tokens // self.group_size, self.group_size, hidden
+        )
+        grouped = (grouped * grouped_mask.unsqueeze(-1)).sum(2) / grouped_mask.sum(
+            2
+        ).unsqueeze(-1).clamp_min(1)
+        return self.memory(grouped, grouped_mask.any(2))
+
+
+class ActionConditionedStateAttention(nn.Module):
+    """One-query cross-attention from the candidate action into visible state tokens."""
+
+    def __init__(self, hidden_size: int, heads: int = 4):
+        super().__init__()
+        if hidden_size % heads:
+            raise ValueError("attention hidden size must be divisible by its head count")
+        self.heads = heads
+        self.head_size = hidden_size // heads
+        self.state_norm = nn.RMSNorm(hidden_size)
+        self.action_norm = nn.RMSNorm(hidden_size)
+        self.query = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.key = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.value = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.output = nn.Linear(hidden_size, hidden_size, bias=False)
+
+    def forward(
+        self,
+        state_embedded: torch.Tensor,
+        state_mask: torch.Tensor,
+        action: torch.Tensor,
+    ) -> torch.Tensor:
+        batch, tokens, hidden = state_embedded.shape
+        query = self.query(self.action_norm(action)).view(
+            batch, self.heads, self.head_size
+        )
+        normalized = self.state_norm(state_embedded)
+        key = self.key(normalized).view(
+            batch, tokens, self.heads, self.head_size
+        )
+        value = self.value(normalized).view(
+            batch, tokens, self.heads, self.head_size
+        )
+        scores = torch.einsum("bhd,bthd->bht", query, key) / math.sqrt(
+            self.head_size
+        )
+        scores = scores.masked_fill(~state_mask.unsqueeze(1), -torch.inf)
+        weights = F.softmax(scores.float(), dim=-1).to(value.dtype)
+        attended = torch.einsum("bht,bthd->bhd", weights, value)
+        return self.output(attended.reshape(batch, hidden))
+
+
+class CandidateInventoryMemory(nn.Module):
+    """A permutation-invariant join between a candidate and owned identities.
+
+    Candidate and inventory IDs share one embedding namespace. Tied cosine
+    attention therefore starts with an exact-identity anchor while remaining
+    free to learn associations between different cards and relics. Explicit
+    overlap statistics preserve copy-count information that softmax attention
+    would otherwise discard.
+    """
+
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.norm = nn.RMSNorm(hidden_size)
+        self.match_projection = nn.Sequential(
+            nn.Linear(2, hidden_size),
+            nn.SiLU(),
+        )
+        self.output = nn.Sequential(
+            nn.RMSNorm(hidden_size * 5),
+            nn.Linear(hidden_size * 5, hidden_size, bias=False),
+        )
+
+    def forward(
+        self,
+        inventory_ids: torch.Tensor,
+        candidate_ids: torch.Tensor,
+        embedding: nn.Embedding,
+    ) -> torch.Tensor:
+        batch = inventory_ids.shape[0]
+        active = candidate_ids.ne(0).any(1)
+        if not bool(active.any()):
+            return embedding.weight.new_zeros((batch, embedding.embedding_dim))
+        active_indices = active.nonzero(as_tuple=False).squeeze(1)
+        inventory_ids = inventory_ids.index_select(0, active_indices)
+        candidate_ids = candidate_ids.index_select(0, active_indices)
+        inventory_mask = inventory_ids.ne(0)
+        candidate_mask = candidate_ids.ne(0)
+        inventory = embedding(inventory_ids)
+        candidate = embedding(candidate_ids)
+        normalized_inventory = F.normalize(self.norm(inventory).float(), dim=-1)
+        normalized_candidate = F.normalize(self.norm(candidate).float(), dim=-1)
+        scores = 8.0 * torch.einsum(
+            "bch,bih->bci", normalized_candidate, normalized_inventory
+        )
+        visible_pairs = candidate_mask.unsqueeze(2) & inventory_mask.unsqueeze(1)
+        weights = F.softmax(scores.masked_fill(~visible_pairs, -1e4), dim=-1)
+        weights = weights * visible_pairs
+        weights = weights / weights.sum(-1, keepdim=True).clamp_min(1e-6)
+        attended_per_candidate = torch.einsum(
+            "bci,bih->bch", weights.to(inventory.dtype), inventory
+        )
+        candidate_count = candidate_mask.sum(1, keepdim=True).clamp_min(1)
+        candidate_summary = (
+            candidate * candidate_mask.unsqueeze(-1)
+        ).sum(1) / candidate_count
+        attended_summary = (
+            attended_per_candidate * candidate_mask.unsqueeze(-1)
+        ).sum(1) / candidate_count
+        inventory_count = inventory_mask.sum(1, keepdim=True).clamp_min(1)
+        inventory_summary = (
+            inventory * inventory_mask.unsqueeze(-1)
+        ).sum(1) / inventory_count
+
+        exact = visible_pairs & candidate_ids.unsqueeze(2).eq(
+            inventory_ids.unsqueeze(1)
+        )
+        exact_count = exact.sum((1, 2)).float().unsqueeze(1)
+        match_statistics = torch.cat(
+            (
+                torch.log1p(exact_count) / math.log(51.0),
+                exact_count / inventory_count.float(),
+            ),
+            dim=1,
+        )
+        match = self.match_projection(match_statistics).to(candidate.dtype)
+        relation = self.output(
+            torch.cat(
+                (
+                    candidate_summary,
+                    attended_summary,
+                    candidate_summary * attended_summary,
+                    inventory_summary,
+                    match,
+                ),
+                dim=-1,
+            )
+        )
+        return relation.new_zeros((batch, relation.shape[-1])).index_copy(
+            0, active_indices, relation
+        )
+
+
+class CounterfactualChoiceCritic(nn.Module):
+    """An isolated value model for exact action-branch outcomes.
+
+    The policy trunk never receives gradients from the sparse branch labels.
+    This critic owns its embeddings and state memory, sees the complete owned
+    inventory for every action (including Skip), and adds a tied candidate-to-
+    inventory attention join when the action offers a card or relic.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        numeric_size: int,
+        action_numeric_size: int = 0,
+        action_numeric_mode: str = "additive",
+    ):
+        super().__init__()
+        if action_numeric_mode not in (
+            "additive",
+            "gated_residual",
+            "additive_gated_residual",
+        ):
+            raise ValueError(f"unsupported action numeric mode {action_numeric_mode!r}")
+        self.action_numeric_mode = action_numeric_mode
+        self.menu_residual_scale = 1.0
+        self.embedding = nn.Embedding(
+            FEATURE_BUCKETS + 1, hidden_size, padding_idx=0
+        )
+        self.state_projection = nn.Sequential(
+            nn.RMSNorm(hidden_size),
+            nn.Linear(hidden_size, hidden_size, bias=False),
+        )
+        self.action_projection = nn.Sequential(
+            nn.RMSNorm(hidden_size),
+            nn.Linear(hidden_size, hidden_size, bias=False),
+        )
+        self.numeric_projection = nn.Sequential(
+            nn.RMSNorm(numeric_size),
+            nn.Linear(numeric_size, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size, bias=False),
+        )
+        self.action_numeric_projection = (
+            nn.Sequential(
+                nn.RMSNorm(action_numeric_size),
+                nn.Linear(action_numeric_size, hidden_size),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=False),
+            )
+            if action_numeric_size
+            and action_numeric_mode in ("additive", "additive_gated_residual")
+            else None
+        )
+        self.state_memory = SelectiveSsmMemory(hidden_size)
+        self.identity_norm = nn.RMSNorm(hidden_size)
+        self.match_projection = nn.Sequential(
+            nn.Linear(2, hidden_size),
+            nn.SiLU(),
+        )
+        self.output = nn.Sequential(
+            nn.RMSNorm(hidden_size * 8),
+            nn.Linear(hidden_size * 8, hidden_size * 2),
+            nn.SiLU(),
+            nn.Linear(hidden_size * 2, 1),
+        )
+        self.menu_residual = (
+            nn.Sequential(
+                nn.RMSNorm(hidden_size * 8 + action_numeric_size),
+                nn.Linear(hidden_size * 8 + action_numeric_size, hidden_size * 2),
+                nn.SiLU(),
+                nn.Linear(hidden_size * 2, 1),
+            )
+            if action_numeric_size
+            and action_numeric_mode in (
+                "gated_residual",
+                "additive_gated_residual",
+            )
+            else None
+        )
+        if self.menu_residual is not None:
+            nn.init.zeros_(self.menu_residual[-1].weight)
+            nn.init.zeros_(self.menu_residual[-1].bias)
+
+    @staticmethod
+    def pool(embedded: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        return (embedded * mask.unsqueeze(-1)).sum(1) / mask.sum(
+            1, keepdim=True
+        ).clamp_min(1)
+
+    def forward(
+        self,
+        state_ids: torch.Tensor,
+        action_ids: torch.Tensor,
+        numeric: torch.Tensor,
+        inventory_ids: torch.Tensor,
+        candidate_ids: torch.Tensor,
+        action_numeric: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        state_mask = state_ids.ne(0)
+        action_mask = action_ids.ne(0)
+        inventory_mask = inventory_ids.ne(0)
+        candidate_mask = candidate_ids.ne(0)
+        state_embedded = self.embedding(state_ids)
+        action_embedded = self.embedding(action_ids)
+        inventory = self.embedding(inventory_ids)
+        candidate = self.embedding(candidate_ids)
+
+        state = self.state_projection(self.pool(state_embedded, state_mask))
+        state = state + self.numeric_projection(numeric)
+        action = self.action_projection(self.pool(action_embedded, action_mask))
+        if self.action_numeric_projection is not None:
+            if action_numeric is None:
+                raise ValueError(
+                    "action parameters are required by this choice critic"
+                )
+            action = action + self.action_numeric_projection(action_numeric)
+        state_memory = self.state_memory(state_embedded, state_mask)
+        inventory_summary = self.pool(inventory, inventory_mask)
+        candidate_summary = self.pool(candidate, candidate_mask)
+
+        normalized_inventory = F.normalize(
+            self.identity_norm(inventory).float(), dim=-1
+        )
+        normalized_candidate = F.normalize(
+            self.identity_norm(candidate).float(), dim=-1
+        )
+        visible_pairs = candidate_mask.unsqueeze(2) & inventory_mask.unsqueeze(1)
+        scores = 8.0 * torch.einsum(
+            "bch,bih->bci", normalized_candidate, normalized_inventory
+        )
+        weights = F.softmax(scores.masked_fill(~visible_pairs, -1e4), dim=-1)
+        weights = weights * visible_pairs
+        weights = weights / weights.sum(-1, keepdim=True).clamp_min(1e-6)
+        attended_per_candidate = torch.einsum(
+            "bci,bih->bch", weights.to(inventory.dtype), inventory
+        )
+        attended = self.pool(attended_per_candidate, candidate_mask)
+
+        exact = visible_pairs & candidate_ids.unsqueeze(2).eq(
+            inventory_ids.unsqueeze(1)
+        )
+        exact_count = exact.sum((1, 2)).float().unsqueeze(1)
+        inventory_count = inventory_mask.sum(1, keepdim=True).clamp_min(1)
+        match = self.match_projection(
+            torch.cat(
+                (
+                    torch.log1p(exact_count) / math.log(51.0),
+                    exact_count / inventory_count.float(),
+                ),
+                dim=1,
+            )
+        ).to(state.dtype)
+        context = torch.cat(
+            (
+                state,
+                action,
+                state_memory,
+                inventory_summary,
+                candidate_summary,
+                attended,
+                candidate_summary * attended,
+                match,
+            ),
+            dim=-1,
+        )
+        value = self.output(context)
+        if self.menu_residual is not None:
+            if action_numeric is None:
+                raise ValueError(
+                    "action parameters are required by this menu residual"
+                )
+            known = action_numeric[:, :1].clamp(0.0, 1.0)
+            value = value + self.menu_residual_scale * known * self.menu_residual(
+                torch.cat((context, action_numeric), dim=-1)
+            )
+        return value.squeeze(1)
 
 
 class SelfPlayHrm(nn.Module):
@@ -492,6 +1040,12 @@ class SelfPlayHrm(nn.Module):
         self.segments = int(config["segments"])
         self.architecture = str(config.get("architecture", "hrm"))
         self.numeric_size = int(config.get("numeric_measurements", 0))
+        self.action_numeric_size = int(
+            config.get("action_numeric_measurements", 0)
+        )
+        self.action_numeric_mode = str(
+            config.get("action_numeric_mode", "additive")
+        )
         self.embedding = nn.Embedding(FEATURE_BUCKETS + 1, hidden, padding_idx=0)
         self.state_projection = nn.Sequential(
             nn.RMSNorm(hidden),
@@ -512,12 +1066,68 @@ class SelfPlayHrm(nn.Module):
             else None
         )
         self.history_memory = (
-            SelectiveSsmMemory(hidden) if self.architecture == "hrm_ssm" else None
+            SelectiveSsmMemory(hidden)
+            if self.architecture in ("hrm_ssm", "hrm_dual_ssm")
+            else None
         )
+        self.state_memory = (
+            SelectiveSsmMemory(hidden)
+            if self.architecture
+            in (
+                "hrm_state_ssm",
+                "hrm_dual_ssm",
+                "hrm_relational_ssm",
+                "hrm_choice_critic_ssm",
+            )
+            else HierarchicalStateSsmMemory(hidden)
+            if self.architecture == "hrm_hierarchical_ssm"
+            else None
+        )
+        self.state_attention = (
+            ActionConditionedStateAttention(hidden)
+            if self.architecture == "hrm_attention"
+            else None
+        )
+        self.inventory_memory = (
+            CandidateInventoryMemory(hidden)
+            if self.architecture in ("hrm_relational", "hrm_relational_ssm")
+            else None
+        )
+        target_names = tuple(config.get("target_names", TARGET_NAMES))
+        actor_target_names = tuple(config.get("actor_target_names", target_names))
+        self.choice_value_index = (
+            target_names.index("choice_value")
+            if "choice_value" in target_names
+            else None
+        )
+        self.choice_critic = (
+            CounterfactualChoiceCritic(
+                hidden,
+                self.numeric_size,
+                self.action_numeric_size,
+                self.action_numeric_mode,
+            )
+            if self.architecture == "hrm_choice_critic_ssm"
+            and self.choice_value_index is not None
+            and self.numeric_size
+            else None
+        )
+        if self.choice_critic is not None:
+            self.choice_critic.menu_residual_scale = float(
+                config.get("menu_residual_scale", 1.0)
+            )
         self.low = GatedBlock(hidden, expansion)
         self.high = GatedBlock(hidden, expansion)
-        output_count = len(config.get("target_names", TARGET_NAMES))
-        output_width = hidden * (4 if self.history_memory is not None else 3)
+        output_count = len(actor_target_names)
+        extra_widths = sum(
+            module is not None
+            for module in (
+                self.history_memory,
+                self.state_memory,
+                self.state_attention,
+            )
+        )
+        output_width = hidden * (3 + extra_widths)
         self.output = nn.Sequential(
             nn.RMSNorm(output_width),
             nn.Linear(output_width, hidden * 2),
@@ -536,19 +1146,49 @@ class SelfPlayHrm(nn.Module):
         action_ids: torch.Tensor,
         numeric: torch.Tensor | None = None,
         history_ids: torch.Tensor | None = None,
+        inventory_ids: torch.Tensor | None = None,
+        candidate_identity_ids: torch.Tensor | None = None,
+        action_numeric: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        state = self.state_projection(self.pool(state_ids))
+        state_embedded = self.embedding(state_ids)
+        state_mask = state_ids.ne(0)
+        state = self.state_projection(
+            (state_embedded * state_mask.unsqueeze(-1)).sum(1)
+            / state_mask.sum(1).unsqueeze(-1).clamp_min(1)
+        )
         action = self.action_projection(self.pool(action_ids))
         if self.numeric_projection is not None:
             if numeric is None:
                 raise ValueError("numeric measurements are required by this checkpoint")
             state = state + self.numeric_projection(numeric)
-        memory = torch.zeros_like(state)
+        context_parts: list[torch.Tensor] = []
+        problem = state + action
         if self.history_memory is not None:
             if history_ids is None:
                 raise ValueError("history IDs are required by the HRM-SSM checkpoint")
-            memory = self.history_memory(self.embedding(history_ids), history_ids.ne(0))
-        problem = state + action + memory
+            history_memory = self.history_memory(
+                self.embedding(history_ids), history_ids.ne(0)
+            )
+            problem = problem + history_memory
+            context_parts.append(history_memory)
+        if self.state_memory is not None:
+            state_memory = self.state_memory(state_embedded, state_mask)
+            problem = problem + state_memory
+            context_parts.append(state_memory)
+        if self.state_attention is not None:
+            state_attention = self.state_attention(state_embedded, state_mask, action)
+            problem = problem + state_attention
+            context_parts.append(state_attention)
+        if self.inventory_memory is not None:
+            if inventory_ids is None or candidate_identity_ids is None:
+                raise ValueError(
+                    "inventory and candidate identity IDs are required by the "
+                    "relational checkpoint"
+                )
+            inventory_memory = self.inventory_memory(
+                inventory_ids, candidate_identity_ids, self.embedding
+            )
+            problem = problem + inventory_memory
         high = torch.zeros_like(problem)
         low = torch.zeros_like(problem)
         for segment in range(self.segments):
@@ -560,13 +1200,62 @@ class SelfPlayHrm(nn.Module):
                 # Preserve HRM's bounded-memory, one-step gradient approximation.
                 high = high.detach()
                 low = low.detach()
-        parts = (high, state, action, memory) if self.history_memory is not None else (high, state, action)
-        return self.output(torch.cat(parts, dim=-1))
+        prediction = self.output(
+            torch.cat((high, state, action, *context_parts), dim=-1)
+        )
+        if self.choice_critic is not None:
+            if (
+                numeric is None
+                or inventory_ids is None
+                or candidate_identity_ids is None
+            ):
+                raise ValueError(
+                    "numeric, inventory, and candidate identity inputs are required "
+                    "by the choice-critic checkpoint"
+                )
+            choice_value = self.choice_critic(
+                state_ids,
+                action_ids,
+                numeric,
+                inventory_ids,
+                candidate_identity_ids,
+                action_numeric,
+            ).unsqueeze(1)
+            index = self.choice_value_index
+            assert index is not None
+            if index != prediction.shape[1]:
+                raise ValueError("choice_value must follow every actor target")
+            prediction = torch.cat(
+                (prediction, choice_value),
+                dim=1,
+            )
+        return prediction
 
 
-def masked_loss(prediction: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    component = F.smooth_l1_loss(prediction, target, reduction="none")
-    return (component * mask).sum() / mask.sum().clamp_min(1)
+def masked_loss(
+    prediction: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
+    """Mix regression heads with an ordinal final-floor survival objective."""
+    survival_start = len(TARGET_NAMES) - len(FLOOR_SURVIVAL_NAMES)
+    regression = F.smooth_l1_loss(
+        prediction[:, :survival_start],
+        target[:, :survival_start],
+        reduction="none",
+    )
+    survival = F.binary_cross_entropy_with_logits(
+        prediction[:, survival_start:],
+        target[:, survival_start:],
+        reduction="none",
+    )
+    component = torch.cat((regression, survival), dim=1)
+    data_loss = (component * mask).sum() / mask.sum().clamp_min(1)
+
+    # Survival curves must be non-increasing: reaching floor k+1 implies
+    # reaching floor k. The soft constraint shares statistical strength across
+    # sparse late floors without assigning them a separate policy objective.
+    probabilities = prediction[:, survival_start:].sigmoid()
+    monotonic = F.relu(probabilities[:, 1:] - probabilities[:, :-1])
+    return data_loss + 0.05 * monotonic.mean()
 
 
 @torch.inference_mode()
@@ -575,14 +1264,44 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> dict
     squared = torch.zeros(len(TARGET_NAMES), device=device)
     absolute = torch.zeros(len(TARGET_NAMES), device=device)
     counts = torch.zeros(len(TARGET_NAMES), device=device)
-    for state, action, numeric, history, target, mask in loader:
+    for (
+        state,
+        action,
+        inventory,
+        candidate,
+        numeric,
+        action_numeric,
+        history,
+        target,
+        mask,
+    ) in loader:
         state = state.to(device=device, dtype=torch.long, non_blocking=True)
         action = action.to(device=device, dtype=torch.long, non_blocking=True)
+        inventory = inventory.to(device=device, dtype=torch.long, non_blocking=True)
+        candidate = candidate.to(device=device, dtype=torch.long, non_blocking=True)
         numeric = numeric.to(device=device, non_blocking=True)
+        action_numeric = action_numeric.to(device=device, non_blocking=True)
         history = history.to(device=device, dtype=torch.long, non_blocking=True)
         target = target.to(device=device, non_blocking=True)
         mask = mask.to(device=device, non_blocking=True)
-        error = model(state, action, numeric, history) - target
+        prediction = model(
+            state,
+            action,
+            numeric,
+            history,
+            inventory,
+            candidate,
+            action_numeric,
+        )
+        survival_start = len(TARGET_NAMES) - len(FLOOR_SURVIVAL_NAMES)
+        prediction = torch.cat(
+            (
+                prediction[:, :survival_start],
+                prediction[:, survival_start:].sigmoid(),
+            ),
+            dim=1,
+        )
+        error = prediction - target
         squared += (error.square() * mask).sum(0)
         absolute += (error.abs() * mask).sum(0)
         counts += mask.sum(0)
@@ -613,7 +1332,10 @@ def train(args: argparse.Namespace) -> None:
     train_set = TensorDataset(
         train_tensors["state"],
         train_tensors["action"],
+        train_tensors["inventory"],
+        train_tensors["candidate"],
         train_tensors["numeric"],
+        train_tensors["action_numeric"],
         train_tensors["history"],
         train_tensors["target"],
         train_tensors["mask"],
@@ -621,7 +1343,10 @@ def train(args: argparse.Namespace) -> None:
     validation_set = TensorDataset(
         validation_tensors["state"],
         validation_tensors["action"],
+        validation_tensors["inventory"],
+        validation_tensors["candidate"],
         validation_tensors["numeric"],
+        validation_tensors["action_numeric"],
         validation_tensors["history"],
         validation_tensors["target"],
         validation_tensors["mask"],
@@ -668,6 +1393,7 @@ def train(args: argparse.Namespace) -> None:
             "batch_size": args.batch_size,
             "target_names": TARGET_NAMES,
             "numeric_measurements": len(MEASUREMENT_SPECS),
+            "action_numeric_measurements": len(ACTION_PARAMETER_SPECS),
             "architecture": args.architecture,
         }
     model = SelfPlayHrm(config).to(device)
@@ -676,7 +1402,12 @@ def train(args: argparse.Namespace) -> None:
     if args.search_head_only:
         for parameter in model.parameters():
             parameter.requires_grad_(False)
-        for parameter in model.output[-1].parameters():
+        search_module = (
+            model.choice_critic
+            if model.choice_critic is not None
+            else model.output[-1]
+        )
+        for parameter in search_module.parameters():
             parameter.requires_grad_(True)
     trainable_parameters = [
         parameter for parameter in model.parameters() if parameter.requires_grad
@@ -709,12 +1440,29 @@ def train(args: argparse.Namespace) -> None:
     model.train()
     while time.monotonic() - started < args.seconds:
         epochs += 1
-        for state, action, numeric, history, target, mask in train_loader:
+        for (
+            state,
+            action,
+            inventory,
+            candidate,
+            numeric,
+            action_numeric,
+            history,
+            target,
+            mask,
+        ) in train_loader:
             if time.monotonic() - started >= args.seconds:
                 break
             state = state.to(device=device, dtype=torch.long, non_blocking=True)
             action = action.to(device=device, dtype=torch.long, non_blocking=True)
+            inventory = inventory.to(
+                device=device, dtype=torch.long, non_blocking=True
+            )
+            candidate = candidate.to(
+                device=device, dtype=torch.long, non_blocking=True
+            )
             numeric = numeric.to(device=device, non_blocking=True)
+            action_numeric = action_numeric.to(device=device, non_blocking=True)
             history = history.to(device=device, dtype=torch.long, non_blocking=True)
             target = target.to(device=device, non_blocking=True)
             mask = mask.to(device=device, non_blocking=True)
@@ -724,7 +1472,15 @@ def train(args: argparse.Namespace) -> None:
                 dtype=amp_dtype,
                 enabled=device.type == "cuda",
             ):
-                prediction = model(state, action, numeric, history)
+                prediction = model(
+                    state,
+                    action,
+                    numeric,
+                    history,
+                    inventory,
+                    candidate,
+                    action_numeric,
+                )
                 loss = masked_loss(prediction, target, mask)
             if not torch.isfinite(loss):
                 raise RuntimeError(
@@ -757,8 +1513,11 @@ def train(args: argparse.Namespace) -> None:
         "feature_buckets": FEATURE_BUCKETS,
         "max_state_features": MAX_STATE_FEATURES,
         "max_action_features": MAX_ACTION_FEATURES,
+        "max_inventory_identities": MAX_INVENTORY_IDENTITIES,
+        "max_candidate_identities": MAX_CANDIDATE_IDENTITIES,
         "max_history_steps": MAX_HISTORY_STEPS,
         "measurement_specs": MEASUREMENT_SPECS,
+        "action_parameter_specs": ACTION_PARAMETER_SPECS,
         "target_names": TARGET_NAMES,
         "target_scales": TARGET_SCALES,
         "dataset_signature": prepared["signature"],
@@ -767,6 +1526,7 @@ def train(args: argparse.Namespace) -> None:
             str(args.init_checkpoint) if args.init_checkpoint is not None else None
         ),
         "search_head_only": args.search_head_only,
+        "search_value_supported": bool(args.branch_dataset),
         "updates": updates,
         "epochs": epochs,
     }
@@ -792,7 +1552,11 @@ def train(args: argparse.Namespace) -> None:
                 ),
                 "search_head_only": args.search_head_only,
                 "architecture": args.architecture,
-                "replay_priority": "self_discovered_floor_frontier_v1",
+                "replay_priority": (
+                    "uniform_expected_final_floor_v1"
+                    if args.frontier_priority_scale == 0.0
+                    else "self_discovered_floor_frontier_v1"
+                ),
                 "train_priority_mean": float(train_tensors["weight"].mean()),
                 "frontier_priority_scale": args.frontier_priority_scale,
                 "validation": metrics,
@@ -835,12 +1599,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
     parser.add_argument("--hidden-size", type=int, default=DEFAULTS["hidden_size"])
     parser.add_argument(
-        "--architecture", choices=("hrm", "hrm_ssm"), default="hrm_ssm"
+        "--architecture",
+        choices=(
+            "hrm",
+            "hrm_ssm",
+            "hrm_state_ssm",
+            "hrm_hierarchical_ssm",
+            "hrm_dual_ssm",
+            "hrm_attention",
+            "hrm_relational",
+            "hrm_relational_ssm",
+        ),
+        default="hrm_state_ssm",
     )
     parser.add_argument("--batch-size", type=int, default=DEFAULTS["batch_size"])
     parser.add_argument("--learning-rate", type=float, default=DEFAULTS["learning_rate"])
     parser.add_argument("--weight-decay", type=float, default=DEFAULTS["weight_decay"])
-    parser.add_argument("--frontier-priority-scale", type=float, default=1.0)
+    parser.add_argument(
+        "--frontier-priority-scale",
+        type=float,
+        default=0.0,
+        help=(
+            "optional high-floor replay oversampling; zero keeps the training "
+            "distribution aligned with mean final floor"
+        ),
+    )
     parser.add_argument("--init-checkpoint", type=Path)
     parser.add_argument(
         "--search-head-only",

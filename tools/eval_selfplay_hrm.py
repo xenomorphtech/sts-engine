@@ -15,13 +15,21 @@ from typing import Any, TextIO
 import torch
 
 from train_selfplay_hrm import (
+    FLOOR_SURVIVAL_NAMES,
     MAX_ACTION_FEATURES,
+    MAX_CANDIDATE_IDENTITIES,
     MAX_HISTORY_STEPS,
+    MAX_INVENTORY_IDENTITIES,
     MAX_STATE_FEATURES,
     SelfPlayHrm,
+    action_parameter_vector,
+    candidate_identity_features,
     decision_signature,
     measurement_vector,
 )
+
+
+INFERENCE_BATCH_SIZE = 512
 
 
 class SplitMix64:
@@ -48,13 +56,19 @@ def signed_i64(value: int) -> int:
     return value if value < 1 << 63 else value - (1 << 64)
 
 
-def load_seeds(path: Path) -> list[int]:
+def load_seeds(path: Path, min_floor: int = 0) -> list[int]:
     seeds: list[int] = []
     with path.open("r", encoding="utf-8") as source:
         for line_number, line in enumerate(source, 1):
             if not line.strip():
                 continue
             value = json.loads(line)
+            if (
+                isinstance(value, dict)
+                and "max_floor" in value
+                and int(value["max_floor"]) < min_floor
+            ):
+                continue
             seed = value.get("seed") if isinstance(value, dict) else value
             if not isinstance(seed, int):
                 raise ValueError(f"{path}:{line_number}: seed must be an integer")
@@ -73,6 +87,23 @@ def request(process: subprocess.Popen[str], body: dict[str, Any]) -> list[dict[s
         error = process.stderr.read() if process.stderr is not None else ""
         raise RuntimeError(f"self-play engine closed the protocol: {error}")
     return json.loads(line)
+
+
+def contains_expected(actual: Any, expected: Any) -> bool:
+    """Compare an older trace against a schema-compatible richer observation."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in ("inventory_identities", "candidate_identities")
+            or (key in actual and contains_expected(actual[key], value))
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(contains_expected(a, e) for a, e in zip(actual, expected))
+        )
+    return actual == expected
 
 
 def pad_features(rows: list[list[int]], width: int, device: torch.device) -> torch.Tensor:
@@ -96,8 +127,13 @@ def utilities(
     prediction: torch.Tensor,
     combat: torch.Tensor,
     search_supported: torch.Tensor,
+    choice_supported: torch.Tensor,
     policy: str,
     target_names: tuple[str, ...],
+    combat_search_weight: float,
+    counterfactual_search_weight: float,
+    outside_search_weight: float,
+    counterfactual_outside_weight: float,
 ) -> torch.Tensor:
     head = {name: prediction[:, index] for index, name in enumerate(target_names)}
     zero = torch.zeros_like(prediction[:, 0])
@@ -105,8 +141,14 @@ def utilities(
     def value(name: str) -> torch.Tensor:
         return head.get(name, zero)
 
+    survival_logits = [head[name] for name in FLOOR_SURVIVAL_NAMES if name in head]
+    expected_floor = (
+        torch.stack(survival_logits, dim=1).sigmoid().sum(dim=1)
+        if survival_logits
+        else value("max_floor")
+    )
     if policy == "floor":
-        return value("max_floor") + 0.15 * value("terminal_margin")
+        return expected_floor
     milestone = (
         0.15 * value("reach_act1_boss")
         + 0.30 * value("reach_act2")
@@ -117,26 +159,34 @@ def utilities(
     )
     combat_local = (
         2.0 * value("combat_margin")
-        + 0.50 * value("max_floor")
+        + 0.50 * expected_floor
         + 0.20 * value("terminal_margin")
         + 0.25 * value("hp_delta_1")
         - 0.25 * value("enemy_hp_delta_1")
         + 0.10 * value("hp_delta_8")
         - 0.10 * value("enemy_hp_delta_8")
-        + 1.50 * value("search_value") * search_supported
+        + combat_search_weight * value("search_value") * search_supported
+        + counterfactual_search_weight * value("choice_value")
         + milestone
     )
+    outside_choice_value = (
+        value("choice_value") * choice_supported
+        if "choice_value" in head
+        else value("search_value") * search_supported
+    )
     if policy == "local":
-        outside = value("max_floor") + 0.10 * value("terminal_margin") + milestone
+        outside = expected_floor + 0.10 * value("terminal_margin") + milestone
     else:
         outside = (
-            value("max_floor")
+            expected_floor
             + 0.25 * value("terminal_margin")
             + 0.10 * value("floor_delta_32")
             + 0.05 * value("gold_delta_32")
             + 0.05 * value("relic_delta_128")
             + 0.05 * value("upgrade_delta_128")
             + milestone
+            + outside_search_weight * outside_choice_value
+            + counterfactual_outside_weight * value("choice_value")
         )
     return torch.where(combat, combat_local, outside)
 
@@ -145,10 +195,15 @@ def observation_key(observation: dict[str, Any]) -> tuple[int, ...]:
     """Identify the complete visible decision, including its legal-action menu."""
     key = list(observation["state_features"])
     key.append(0)
+    key.extend(observation.get("inventory_identities", []))
+    key.append(0)
     for action in observation["actions"]:
         features = action["features"]
         key.append(len(features))
         key.extend(features)
+        identities = action.get("candidate_identities", [])
+        key.append(len(identities))
+        key.extend(identities)
     return tuple(key)
 
 
@@ -162,14 +217,22 @@ def rank_actions(
     temperature: float,
     target_names: tuple[str, ...],
     histories: list[list[int]],
+    combat_search_weight: float,
+    counterfactual_search_weight: float,
+    outside_search_weight: float,
+    counterfactual_outside_weight: float,
 ) -> dict[int, list[tuple[float, int]]]:
     state_rows: list[list[int]] = []
     action_rows: list[list[int]] = []
+    inventory_rows: list[list[int]] = []
+    candidate_rows: list[list[int]] = []
     numeric_rows: list[list[float]] = []
+    action_numeric_rows: list[list[float]] = []
     history_rows: list[list[int]] = []
     owners: list[tuple[int, int]] = []
     combat_flags: list[bool] = []
     search_flags: list[bool] = []
+    choice_flags: list[bool] = []
     for environment, row in enumerate(rows):
         observation = row.get("observation")
         if observation is None:
@@ -177,33 +240,86 @@ def rank_actions(
         for action_index, action in enumerate(observation["actions"]):
             state_rows.append(observation["state_features"])
             action_rows.append(action["features"])
-            numeric_rows.append(measurement_vector(row["measurements"]))
+            inventory_rows.append(observation.get("inventory_identities", []))
+            candidate_ids = candidate_identity_features(
+                observation,
+                action,
+                row["measurements"]["enemy_max_hp"] > 0,
+            )
+            candidate_rows.append(candidate_ids)
+            numeric_rows.append(
+                measurement_vector(row["measurements"], model.numeric_size)
+            )
+            action_numeric_rows.append(
+                action_parameter_vector(
+                    action,
+                    row["measurements"],
+                    model.action_numeric_size,
+                )
+            )
             history_rows.append(histories[environment])
             owners.append((environment, action_index))
             combat_flags.append(row["measurements"]["enemy_max_hp"] > 0)
-            search_flags.append(row["measurements"]["floor"] >= 16)
+            search_flags.append(
+                row["measurements"]["floor"] >= 16
+                and bool(getattr(model, "search_value_supported", True))
+            )
+            choice_flags.append(bool(candidate_ids))
     if not owners:
         return {}
     state = pad_features(state_rows, MAX_STATE_FEATURES, device)
     action = pad_features(action_rows, MAX_ACTION_FEATURES, device)
+    inventory = pad_features(
+        inventory_rows, MAX_INVENTORY_IDENTITIES, device
+    )
+    candidate = pad_features(
+        candidate_rows, MAX_CANDIDATE_IDENTITIES, device
+    )
     numeric = torch.tensor(numeric_rows, dtype=torch.float32, device=device)
+    action_numeric = torch.tensor(
+        action_numeric_rows, dtype=torch.float32, device=device
+    )
     history = pad_history(history_rows, device)
     combat = torch.tensor(combat_flags, device=device, dtype=torch.bool)
     search_supported = torch.tensor(search_flags, device=device, dtype=torch.float32)
+    choice_supported = torch.tensor(choice_flags, device=device, dtype=torch.float32)
     amp_dtype = (
         torch.bfloat16
         if device.type == "cuda" and torch.cuda.is_bf16_supported()
         else torch.float16
     )
-    with torch.autocast(
-        device_type=device.type,
-        dtype=amp_dtype,
-        enabled=device.type == "cuda",
-    ):
-        prediction = model(state, action, numeric, history)
-        utility = utilities(
-            prediction.float(), combat, search_supported, policy, target_names
-        )
+    utility_parts: list[torch.Tensor] = []
+    for start in range(0, len(owners), INFERENCE_BATCH_SIZE):
+        end = min(start + INFERENCE_BATCH_SIZE, len(owners))
+        with torch.autocast(
+            device_type=device.type,
+            dtype=amp_dtype,
+            enabled=device.type == "cuda",
+        ):
+            prediction = model(
+                state[start:end],
+                action[start:end],
+                numeric[start:end],
+                history[start:end],
+                inventory[start:end],
+                candidate[start:end],
+                action_numeric[start:end],
+            )
+            utility_parts.append(
+                utilities(
+                    prediction.float(),
+                    combat[start:end],
+                    search_supported[start:end],
+                    choice_supported[start:end],
+                    policy,
+                    target_names,
+                    combat_search_weight,
+                    counterfactual_search_weight,
+                    outside_search_weight,
+                    counterfactual_outside_weight,
+                )
+            )
+    utility = torch.cat(utility_parts)
     ranked: dict[int, list[tuple[float, int]]] = {}
     for (environment, action_index), score in zip(owners, utility.cpu().tolist()):
         if temperature > 0.0:
@@ -224,6 +340,10 @@ def choose_actions(
     temperature: float,
     target_names: tuple[str, ...],
     histories: list[list[int]],
+    combat_search_weight: float,
+    counterfactual_search_weight: float,
+    outside_search_weight: float,
+    counterfactual_outside_weight: float,
     record_tried: bool = True,
 ) -> list[int | None]:
     ranked = rank_actions(
@@ -235,6 +355,10 @@ def choose_actions(
         temperature,
         target_names,
         histories,
+        combat_search_weight,
+        counterfactual_search_weight,
+        outside_search_weight,
+        counterfactual_outside_weight,
     )
     choices: list[int | None] = [None] * len(rows)
     for environment, candidates in ranked.items():
@@ -338,31 +462,67 @@ def improve_with_exact_lookahead(
         0.0,
         target_names,
         histories,
+        args.combat_search_weight,
+        args.counterfactual_search_weight,
+        args.outside_search_weight,
+        args.counterfactual_outside_weight,
     )
-    branch_roots: list[tuple[int, int, float, int]] = []
+    branch_roots: list[tuple[int, int, float, int, int]] = []
     for environment, candidates in ranked.items():
         measurements = rows[environment]["measurements"]
-        if (
-            measurements["floor"] < args.lookahead_min_floor
-            or measurements["enemy_max_hp"] < args.lookahead_min_enemy_hp
+        observation = rows[environment]["observation"]
+        identity_choice = (
+            measurements["enemy_max_hp"] == 0
+            and sum(
+                bool(action.get("candidate_identities"))
+                for action in observation["actions"]
+            )
+            >= 1
+        )
+        if measurements["floor"] < args.lookahead_min_floor:
+            continue
+        if args.lookahead_noncombat_only:
+            if measurements["enemy_max_hp"] > 0:
+                continue
+        elif args.lookahead_identity_choices_only:
+            if not identity_choice:
+                continue
+        elif (
+            measurements["enemy_max_hp"] < args.lookahead_min_enemy_hp
+            and not (
+                args.lookahead_include_identity_choices and identity_choice
+            )
         ):
             continue
-        state_key = observation_key(rows[environment]["observation"])
+        root_depth = (
+            args.lookahead_boss_depth
+            if measurements["enemy_max_hp"] > 0
+            and measurements["floor"] >= 50
+            and args.lookahead_boss_depth is not None
+            else args.lookahead_identity_depth
+            if identity_choice
+            and not args.lookahead_identity_choices_only
+            and args.lookahead_identity_depth is not None
+            else args.lookahead_depth
+        )
+        state_key = observation_key(observation)
         tried = tried_actions[environment].get(state_key, set())
         untried = [candidate for candidate in candidates if candidate[1] not in tried]
         for prior, action in untried[: args.lookahead_candidates]:
             for rollout in range(args.lookahead_rollouts):
-                branch_roots.append((environment, action, prior, rollout))
+                branch_roots.append(
+                    (environment, action, prior, rollout, root_depth)
+                )
     if not branch_roots:
         return base_choices, 0, 0
 
     branches = [
         {"environment": environment, "action": action}
-        for environment, action, _, _ in branch_roots
+        for environment, action, _, _, _ in branch_roots
     ]
     branch_rows = request(process, {"op": "fork", "branches": branches})
     branch_histories: list[list[int]] = []
-    for environment, action, _, _ in branch_roots:
+    for environment, action, _, _, _ in branch_roots:
         history = list(histories[environment])
         history.append(decision_signature(rows[environment]["observation"], action))
         branch_histories.append(history)
@@ -377,10 +537,10 @@ def improve_with_exact_lookahead(
             ^ rows[environment]["steps"]
             ^ (rollout * 0x9E3779B97F4A7C15)
         )
-        for environment, action, _, rollout in branch_roots
+        for environment, action, _, rollout, _ in branch_roots
     ]
     simulated_steps = len(branch_rows)
-    for _ in range(1, args.lookahead_depth):
+    for branch_step in range(1, max(root[-1] for root in branch_roots)):
         branch_actions = choose_actions(
             model,
             branch_rows,
@@ -391,7 +551,17 @@ def improve_with_exact_lookahead(
             args.lookahead_temperature,
             target_names,
             branch_histories,
+            args.combat_search_weight,
+            args.counterfactual_search_weight,
+            args.outside_search_weight,
+            args.counterfactual_outside_weight,
         )
+        branch_actions = [
+            action if branch_step < root_depth else None
+            for action, (_, _, _, _, root_depth) in zip(
+                branch_actions, branch_roots
+            )
+        ]
         if not any(action is not None for action in branch_actions):
             break
         before = branch_rows
@@ -415,18 +585,24 @@ def improve_with_exact_lookahead(
         0.0,
         target_names,
         branch_histories,
+        args.combat_search_weight,
+        args.counterfactual_search_weight,
+        args.outside_search_weight,
+        args.counterfactual_outside_weight,
     )
     action_samples: dict[tuple[int, int], list[float]] = {}
-    for branch, ((environment, action, prior, _), leaf) in enumerate(
+    for branch, ((environment, action, prior, _, _), leaf) in enumerate(
         zip(branch_roots, branch_rows)
     ):
         learned_leaf = leaf_ranked.get(branch, [(prior, action)])[0][0]
         score = branch_score(rows[environment]["measurements"], leaf, learned_leaf)
         key = (environment, action)
         action_samples.setdefault(key, []).append(score)
-    action_values = {
-        key: sum(samples) / len(samples) for key, samples in action_samples.items()
-    }
+    action_values: dict[tuple[int, int], float] = {}
+    for key, samples in action_samples.items():
+        mean = sum(samples) / len(samples)
+        variance = sum((sample - mean) ** 2 for sample in samples) / len(samples)
+        action_values[key] = mean + args.lookahead_optimism * math.sqrt(variance)
     if args.branches_output is not None:
         for (environment, action), score in action_values.items():
             branch_records.append(
@@ -464,6 +640,63 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             output.write(json.dumps(row, separators=(",", ":")) + "\n")
 
 
+def load_resume_prefixes(
+    path: Path,
+    min_floor: int,
+    min_enemy_hp: int,
+    max_enemy_hp: int | None,
+    max_terminal_enemy_hp: int | None,
+) -> tuple[list[int], list[list[dict[str, Any]]], list[dict[str, Any]]]:
+    source: TextIO
+    if path.suffix == ".xz":
+        source = lzma.open(path, "rt", encoding="utf-8")
+    else:
+        source = path.open("r", encoding="utf-8")
+    seeds: list[int] = []
+    prefixes: list[list[dict[str, Any]]] = []
+    roots: list[dict[str, Any]] = []
+    with source:
+        for line_number, line in enumerate(source, 1):
+            if not line.strip():
+                continue
+            episode = json.loads(line)
+            if episode.get("schema_version") != 1:
+                raise ValueError(f"{path}:{line_number}: unsupported trace schema")
+            if max_terminal_enemy_hp is not None:
+                terminal_enemy_hp = int(
+                    episode.get("result", {}).get("terminal", {}).get(
+                        "enemy_hp", 2**31 - 1
+                    )
+                )
+                if terminal_enemy_hp > max_terminal_enemy_hp:
+                    continue
+            transitions = episode["transitions"]
+            resume_index = next(
+                (
+                    index
+                    for index, transition in enumerate(transitions)
+                    if transition["before"]["floor"] >= min_floor
+                    and transition["before"]["enemy_hp"] >= min_enemy_hp
+                    and (
+                        max_enemy_hp is None
+                        or transition["before"]["enemy_hp"] <= max_enemy_hp
+                    )
+                ),
+                None,
+            )
+            if resume_index is None:
+                continue
+            seeds.append(int(episode["result"]["seed"]))
+            prefixes.append(transitions[:resume_index])
+            roots.append(transitions[resume_index]["observation"])
+    if not seeds:
+        raise ValueError(
+            f"{path}: no resumable state at floor>={min_floor} "
+            f"and enemy_hp>={min_enemy_hp}"
+        )
+    return seeds, prefixes, roots
+
+
 def evaluate(args: argparse.Namespace) -> None:
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     if checkpoint.get("teacher") is not None:
@@ -478,13 +711,50 @@ def evaluate(args: argparse.Namespace) -> None:
     model_config["target_names"] = target_names
     model = SelfPlayHrm(model_config)
     model.load_state_dict(checkpoint["model"])
+    if args.menu_residual_scale is not None:
+        if model.choice_critic is None or model.choice_critic.menu_residual is None:
+            raise ValueError(
+                "menu-residual-scale requires a checkpoint with a menu residual"
+            )
+        model.choice_critic.menu_residual_scale = args.menu_residual_scale
+    dataset_signature = checkpoint.get("dataset_signature", {})
+    model.search_value_supported = bool(
+        checkpoint.get(
+            "search_value_supported",
+            dataset_signature.get("branch_datasets", ["legacy-checkpoint"]),
+        )
+    )
     model.to(device).eval()
 
-    if args.seeds_jsonl is not None:
-        seeds = load_seeds(args.seeds_jsonl)
+    resume_prefixes: list[list[dict[str, Any]]] | None = None
+    resume_roots: list[dict[str, Any]] | None = None
+    if args.resume_traces_jsonl is not None:
+        seeds, resume_prefixes, resume_roots = load_resume_prefixes(
+            args.resume_traces_jsonl,
+            args.resume_min_floor,
+            args.resume_min_enemy_hp,
+            args.resume_max_enemy_hp,
+            args.resume_max_terminal_enemy_hp,
+        )
+        if args.resume_copies > 1:
+            seeds = [seed for seed in seeds for _ in range(args.resume_copies)]
+            resume_prefixes = [
+                prefix
+                for prefix in resume_prefixes
+                for _ in range(args.resume_copies)
+            ]
+            resume_roots = [
+                root for root in resume_roots for _ in range(args.resume_copies)
+            ]
+    elif args.seeds_jsonl is not None:
+        seeds = load_seeds(args.seeds_jsonl, args.seeds_min_floor)
+        if args.seed_limit is not None:
+            seeds = seeds[: args.seed_limit]
     else:
         seed_rng = SplitMix64(args.seed_source)
         seeds = [signed_i64(seed_rng.next()) for _ in range(args.count)]
+    if args.resume_traces_jsonl is None and args.seed_copies > 1:
+        seeds = [seed for seed in seeds for _ in range(args.seed_copies)]
     binary = args.engine
     if not binary.is_file():
         raise FileNotFoundError(f"build sts-selfplay first; missing {binary}")
@@ -499,8 +769,13 @@ def evaluate(args: argparse.Namespace) -> None:
     started = time.monotonic()
     terminal_rows: dict[int, dict[str, Any]] = {}
     total_steps = 0
+    replay_steps = 0
     branch_steps = 0
     lookahead_decisions = 0
+    next_progress_step = 25_000
+    # Rebuild replayed prefixes from current engine observations. This keeps
+    # old traces schema-compatible while enriching the complete trajectory
+    # when new visible features are introduced.
     traces: list[list[dict[str, Any]]] = [[] for _ in seeds]
     branch_records: list[dict[str, Any]] = []
     max_floors = [0 for _ in seeds]
@@ -510,12 +785,74 @@ def evaluate(args: argparse.Namespace) -> None:
             {} for _ in seeds
         ]
         histories: list[list[int]] = [[] for _ in seeds]
+        if resume_prefixes is not None:
+            for index, prefix in enumerate(resume_prefixes):
+                histories[index] = [
+                    decision_signature(
+                        transition["observation"], transition["action_index"]
+                    )
+                    for transition in prefix
+                ]
+                for transition in prefix:
+                    max_floors[index] = max(
+                        max_floors[index],
+                        transition["before"]["floor"],
+                        transition["after"]["floor"],
+                    )
+            for replay_step in range(max(map(len, resume_prefixes), default=0)):
+                before_replay = rows
+                replay_actions: list[int | None] = []
+                for index, prefix in enumerate(resume_prefixes):
+                    if replay_step >= len(prefix):
+                        replay_actions.append(None)
+                        continue
+                    expected = prefix[replay_step]
+                    if not contains_expected(
+                        rows[index]["observation"], expected["observation"]
+                    ):
+                        raise RuntimeError(
+                            f"resume replay diverged for seed {seeds[index]} "
+                            f"at prefix step {replay_step}"
+                        )
+                    replay_actions.append(int(expected["action_index"]))
+                rows = request(process, {"op": "step", "actions": replay_actions})
+                if args.transitions_output is not None:
+                    for index, action_index in enumerate(replay_actions):
+                        if action_index is None:
+                            continue
+                        before = before_replay[index]
+                        after = rows[index]
+                        traces[index].append(
+                            {
+                                "step": before["steps"],
+                                "observation": before["observation"],
+                                "action_index": action_index,
+                                "before": before["measurements"],
+                                "after": after["measurements"],
+                                "reward": after["reward"],
+                                "outcome": after["outcome"],
+                            }
+                        )
+                replay_steps += sum(action is not None for action in replay_actions)
+            assert resume_roots is not None
+            for index, expected_root in enumerate(resume_roots):
+                if not contains_expected(rows[index]["observation"], expected_root):
+                    raise RuntimeError(
+                        f"resume root diverged for seed {seeds[index]} "
+                        f"after {len(resume_prefixes[index])} prefix steps"
+                    )
         exploration_rngs = [
-            SplitMix64((seed & ((1 << 64) - 1)) ^ args.exploration_seed)
-            for seed in seeds
+            SplitMix64(
+                (seed & ((1 << 64) - 1))
+                ^ args.exploration_seed
+                ^ (index * 0x9E3779B97F4A7C15)
+            )
+            for index, seed in enumerate(seeds)
         ]
         for row in rows:
-            max_floors[row["index"]] = row["measurements"]["floor"]
+            max_floors[row["index"]] = max(
+                max_floors[row["index"]], row["measurements"]["floor"]
+            )
         while len(terminal_rows) < len(seeds):
             before_rows = rows
             actions = choose_actions(
@@ -528,6 +865,10 @@ def evaluate(args: argparse.Namespace) -> None:
                 args.temperature,
                 target_names,
                 histories,
+                args.combat_search_weight,
+                args.counterfactual_search_weight,
+                args.outside_search_weight,
+                args.counterfactual_outside_weight,
                 False,
             )
             actions, simulated, improved = improve_with_exact_lookahead(
@@ -574,12 +915,14 @@ def evaluate(args: argparse.Namespace) -> None:
                     )
                 if row["outcome"] != "running" and row["index"] not in terminal_rows:
                     terminal_rows[row["index"]] = row
-            if total_steps and total_steps % 25_000 < len(seeds):
+            if total_steps >= next_progress_step:
                 print(
                     f"progress terminal={len(terminal_rows)}/{len(seeds)} "
                     f"steps={total_steps}",
                     flush=True,
                 )
+                while next_progress_step <= total_steps:
+                    next_progress_step += 25_000
     finally:
         if process.stdin is not None:
             process.stdin.close()
@@ -624,19 +967,46 @@ def evaluate(args: argparse.Namespace) -> None:
         "exploration_seed": args.exploration_seed,
         "seed_source": args.seed_source,
         "seeds_jsonl": str(args.seeds_jsonl) if args.seeds_jsonl is not None else None,
+        "seed_limit": args.seed_limit,
+        "seed_copies": args.seed_copies,
+        "resume_traces_jsonl": (
+            str(args.resume_traces_jsonl)
+            if args.resume_traces_jsonl is not None
+            else None
+        ),
+        "resume_copies": args.resume_copies,
+        "resume_max_enemy_hp": args.resume_max_enemy_hp,
+        "resume_max_terminal_enemy_hp": args.resume_max_terminal_enemy_hp,
+        "replay_steps": replay_steps,
         "episodes": len(results),
         "wins": wins,
         "win_rate": wins / len(results),
         "mean_floor": mean_floor,
         "mean_steps": mean_steps,
         "elapsed_seconds": elapsed,
-        "engine_steps_per_second": total_steps / elapsed,
+        "engine_steps_per_second": (total_steps + replay_steps) / elapsed,
         "lookahead_depth": args.lookahead_depth,
         "lookahead_candidates": args.lookahead_candidates,
         "lookahead_rollouts": args.lookahead_rollouts,
         "lookahead_temperature": args.lookahead_temperature,
+        "lookahead_optimism": args.lookahead_optimism,
         "lookahead_min_enemy_hp": args.lookahead_min_enemy_hp,
         "lookahead_min_floor": args.lookahead_min_floor,
+        "lookahead_identity_choices_only": args.lookahead_identity_choices_only,
+        "lookahead_include_identity_choices": args.lookahead_include_identity_choices,
+        "lookahead_identity_depth": args.lookahead_identity_depth,
+        "lookahead_boss_depth": args.lookahead_boss_depth,
+        "lookahead_noncombat_only": args.lookahead_noncombat_only,
+        "combat_search_weight": args.combat_search_weight,
+        "counterfactual_search_weight": args.counterfactual_search_weight,
+        "outside_search_weight": args.outside_search_weight,
+        "counterfactual_outside_weight": args.counterfactual_outside_weight,
+        "menu_residual_scale": (
+            model.choice_critic.menu_residual_scale
+            if model.choice_critic is not None
+            and model.choice_critic.menu_residual is not None
+            else None
+        ),
         "lookahead_decisions": lookahead_decisions,
         "branch_steps": branch_steps,
         "output": str(args.output),
@@ -684,9 +1054,52 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--seed-source", type=int, default=20260827)
     parser.add_argument(
+        "--seed-copies",
+        type=int,
+        default=1,
+        help=(
+            "independently explore each first-choice seed this many times; "
+            "useful for teacher-free common-random-number action comparisons"
+        ),
+    )
+    parser.add_argument(
         "--seeds-jsonl",
         type=Path,
         help="evaluate explicit integer or result-object seeds from their first choice",
+    )
+    parser.add_argument(
+        "--seeds-min-floor",
+        type=int,
+        default=0,
+        help="when seed rows contain max_floor, keep only prior frontier runs",
+    )
+    parser.add_argument(
+        "--seed-limit",
+        type=int,
+        help="limit an explicit seed file after filtering, preserving its order",
+    )
+    parser.add_argument(
+        "--resume-traces-jsonl",
+        type=Path,
+        help="replay verified self-play prefixes and resume at a deep state",
+    )
+    parser.add_argument("--resume-min-floor", type=int, default=33)
+    parser.add_argument("--resume-min-enemy-hp", type=int, default=1)
+    parser.add_argument(
+        "--resume-max-enemy-hp",
+        type=int,
+        help="resume at the first matching state no more than this enemy HP",
+    )
+    parser.add_argument(
+        "--resume-max-terminal-enemy-hp",
+        type=int,
+        help="resume only source episodes whose terminal enemy HP is at most this value",
+    )
+    parser.add_argument(
+        "--resume-copies",
+        type=int,
+        default=1,
+        help="run this many independently explored suffixes from each resumed state",
     )
     parser.add_argument(
         "--temperature",
@@ -695,6 +1108,38 @@ def parse_args() -> argparse.Namespace:
         help="Gumbel action-exploration temperature; zero is greedy",
     )
     parser.add_argument("--exploration-seed", type=int, default=0x51F9A7)
+    parser.add_argument(
+        "--combat-search-weight",
+        type=float,
+        default=1.5,
+        help="weight of the learned exact-branch value in combat",
+    )
+    parser.add_argument(
+        "--outside-search-weight",
+        type=float,
+        default=0.0,
+        help="weight of the learned exact-branch value outside combat",
+    )
+    parser.add_argument(
+        "--counterfactual-search-weight",
+        type=float,
+        default=0.0,
+        help="residual weight of the isolated counterfactual critic in combat",
+    )
+    parser.add_argument(
+        "--counterfactual-outside-weight",
+        type=float,
+        default=0.0,
+        help="weight of the isolated critic on every non-combat decision",
+    )
+    parser.add_argument(
+        "--menu-residual-scale",
+        type=float,
+        help=(
+            "override only the gated menu adapter scale; zero reproduces the "
+            "underlying critic exactly"
+        ),
+    )
     parser.add_argument("--max-steps", type=int, default=5_000)
     parser.add_argument(
         "--lookahead-depth",
@@ -711,6 +1156,12 @@ def parse_args() -> argparse.Namespace:
         help="Gumbel temperature inside cloned continuations",
     )
     parser.add_argument(
+        "--lookahead-optimism",
+        type=float,
+        default=0.0,
+        help="standard-deviation bonus over mean cloned-return value",
+    )
+    parser.add_argument(
         "--lookahead-min-enemy-hp",
         type=int,
         default=100,
@@ -722,19 +1173,88 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="plan only at or beyond this reached floor",
     )
+    parser.add_argument(
+        "--lookahead-identity-choices-only",
+        action="store_true",
+        help="plan only non-combat choices that add, remove, or select inventory identities",
+    )
+    parser.add_argument(
+        "--lookahead-include-identity-choices",
+        action="store_true",
+        help="plan inventory-identity menus in addition to qualifying combats",
+    )
+    parser.add_argument(
+        "--lookahead-identity-depth",
+        type=int,
+        help=(
+            "separate exact rollout depth for included inventory menus; "
+            "defaults to lookahead-depth"
+        ),
+    )
+    parser.add_argument(
+        "--lookahead-boss-depth",
+        type=int,
+        help=(
+            "separate exact rollout depth for floor-50 boss combat; "
+            "defaults to lookahead-depth"
+        ),
+    )
+    parser.add_argument(
+        "--lookahead-noncombat-only",
+        action="store_true",
+        help="plan route, event, rest, shop, and reward choices but not combat actions",
+    )
     args = parser.parse_args()
     if (
         args.count <= 0
         or args.max_steps <= 0
+        or args.seed_copies <= 0
         or args.temperature < 0
         or args.lookahead_depth < 0
+        or (
+            args.lookahead_identity_depth is not None
+            and args.lookahead_identity_depth <= 0
+        )
+        or (
+            args.lookahead_boss_depth is not None
+            and args.lookahead_boss_depth <= 0
+        )
         or args.lookahead_candidates <= 0
         or args.lookahead_rollouts <= 0
         or args.lookahead_temperature < 0
+        or args.lookahead_optimism < 0
         or args.lookahead_min_enemy_hp < 0
         or args.lookahead_min_floor < 0
+        or args.seeds_min_floor < 0
+        or (args.seed_limit is not None and args.seed_limit <= 0)
+        or args.resume_min_floor < 0
+        or args.resume_min_enemy_hp < 0
+        or (args.resume_max_enemy_hp is not None and args.resume_max_enemy_hp < 0)
+        or (
+            args.resume_max_terminal_enemy_hp is not None
+            and args.resume_max_terminal_enemy_hp < 0
+        )
+        or args.resume_copies <= 0
+        or args.combat_search_weight < 0
+        or args.counterfactual_search_weight < 0
+        or args.outside_search_weight < 0
+        or args.counterfactual_outside_weight < 0
+        or (args.menu_residual_scale is not None and args.menu_residual_scale < 0)
     ):
         parser.error("counts must be positive; temperatures and thresholds cannot be negative")
+    if args.seeds_jsonl is not None and args.resume_traces_jsonl is not None:
+        parser.error("seeds-jsonl and resume-traces-jsonl are mutually exclusive")
+    if args.lookahead_identity_choices_only and args.lookahead_noncombat_only:
+        parser.error(
+            "identity-choices-only and noncombat-only lookahead are mutually exclusive"
+        )
+    if (
+        args.lookahead_identity_choices_only
+        and args.lookahead_include_identity_choices
+    ):
+        parser.error(
+            "identity-choices-only already includes inventory choices"
+        )
     return args
 
 

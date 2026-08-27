@@ -1,6 +1,6 @@
 use crate::action::Action;
 use crate::game::{Game, Screen};
-use crate::ids::{Act, Character, PotionId, RoomType};
+use crate::ids::{Act, CardId, CardType, Character, PotionId, RoomType};
 use crate::unlocks::Unlocks;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,6 +25,7 @@ impl RunOutcome {
 
 /// Named auxiliary prediction targets; these are not blended into the reward.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default)]
 pub struct RunMeasurements {
     pub act: i32,
     pub floor: i32,
@@ -40,6 +41,15 @@ pub struct RunMeasurements {
     pub deck_base_damage: i32,
     pub deck_base_block: i32,
     pub deck_base_magic: i32,
+    pub deck_total_cost: i32,
+    pub deck_attack_cards: usize,
+    pub deck_skill_cards: usize,
+    pub deck_power_cards: usize,
+    pub deck_exhaust_cards: usize,
+    pub deck_orb_cards: usize,
+    pub deck_card_access: usize,
+    pub deck_energy_cards: usize,
+    pub deck_focus_cards: usize,
     pub relics: usize,
     pub potions: usize,
     pub player_power_amount: i32,
@@ -61,6 +71,78 @@ pub struct RunMeasurements {
     pub enemy_power_amount: i32,
     pub incoming_attack: i32,
     pub legal_actions: usize,
+}
+
+fn card_channels_or_manipulates_orbs(id: CardId) -> bool {
+    matches!(
+        id,
+        CardId::Ball_Lightning
+            | CardId::Barrage
+            | CardId::Capacitor
+            | CardId::Chaos
+            | CardId::Chill
+            | CardId::Cold_Snap
+            | CardId::Compile_Driver
+            | CardId::Consume
+            | CardId::Coolheaded
+            | CardId::Darkness
+            | CardId::Doom_and_Gloom
+            | CardId::Dualcast
+            | CardId::Electrodynamics
+            | CardId::Fission
+            | CardId::Fusion
+            | CardId::Glacier
+            | CardId::Loop
+            | CardId::Meteor_Strike
+            | CardId::Multi_Cast
+            | CardId::Rainbow
+            | CardId::Redo
+            | CardId::Static_Discharge
+            | CardId::Storm
+            | CardId::Tempest
+            | CardId::Zap
+    )
+}
+
+fn card_accesses_more_cards(id: CardId) -> bool {
+    matches!(
+        id,
+        CardId::All_For_One
+            | CardId::Compile_Driver
+            | CardId::Coolheaded
+            | CardId::FTL
+            | CardId::Heatsinks
+            | CardId::Hologram
+            | CardId::Machine_Learning
+            | CardId::Reboot
+            | CardId::Rebound
+            | CardId::Scrape
+            | CardId::Seek
+            | CardId::Skim
+            | CardId::Steam_Power
+            | CardId::Sweeping_Beam
+    )
+}
+
+fn card_generates_energy(id: CardId) -> bool {
+    matches!(
+        id,
+        CardId::Aggregate
+            | CardId::Conserve_Battery
+            | CardId::Double_Energy
+            | CardId::Fission
+            | CardId::Fusion
+            | CardId::Meteor_Strike
+            | CardId::Recycle
+            | CardId::Turbo
+    )
+}
+
+fn card_changes_focus(id: CardId) -> bool {
+    matches!(
+        id,
+        CardId::Biased_Cognition | CardId::Consume | CardId::Defragment
+    )
 }
 
 impl RunMeasurements {
@@ -127,6 +209,55 @@ impl RunMeasurements {
                 .iter()
                 .map(|card| i32::from(card.base_magic.max(0)))
                 .sum(),
+            deck_total_cost: game
+                .player
+                .deck
+                .iter()
+                .map(|card| i32::from(card.cost.max(0)))
+                .sum(),
+            deck_attack_cards: game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card.card_type() == CardType::ATTACK)
+                .count(),
+            deck_skill_cards: game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card.card_type() == CardType::SKILL)
+                .count(),
+            deck_power_cards: game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card.card_type() == CardType::POWER)
+                .count(),
+            deck_exhaust_cards: game.player.deck.iter().filter(|card| card.exhaust).count(),
+            deck_orb_cards: game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card_channels_or_manipulates_orbs(card.id))
+                .count(),
+            deck_card_access: game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card_accesses_more_cards(card.id))
+                .count(),
+            deck_energy_cards: game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card_generates_energy(card.id))
+                .count(),
+            deck_focus_cards: game
+                .player
+                .deck
+                .iter()
+                .filter(|card| card_changes_focus(card.id))
+                .count(),
             relics: game.player.relics.len(),
             potions,
             player_power_amount,
@@ -197,6 +328,11 @@ pub struct StepInfo {
 #[derive(Clone, Debug, Serialize)]
 pub struct TrainingObservation {
     pub state_features: Vec<u16>,
+    /// Shared card/relic identity tokens, repeated once per owned copy. These
+    /// are kept separate from state_features so older checkpoints retain
+    /// bit-exact inputs while relational models can join inventory to a
+    /// candidate action without reversing the feature hash.
+    pub inventory_identities: Vec<u16>,
     pub actions: Vec<TrainingAction>,
 }
 
@@ -205,6 +341,26 @@ pub struct TrainingAction {
     pub index: usize,
     pub action: Action,
     pub features: Vec<u16>,
+    /// Identity tokens drawn from the same namespace as inventory_identities.
+    pub candidate_identities: Vec<u16>,
+    /// Deterministic, candidate-specific resource changes. These remain raw
+    /// numeric parameters so adjacent costs (for example 10 versus 11 HP)
+    /// share structure instead of becoming unrelated hashed feature IDs.
+    pub parameters: ActionParameters,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct ActionParameters {
+    /// False for actions whose immediate resource effect is intentionally not
+    /// evaluated (notably combat actions and room transitions).
+    pub known: bool,
+    pub hp_delta: i32,
+    pub max_hp_delta: i32,
+    pub gold_delta: i32,
+    pub deck_size_delta: i32,
+    pub upgraded_cards_delta: i32,
+    pub relic_delta: i32,
+    pub potion_delta: i32,
 }
 
 pub const TRAINING_FEATURE_BUCKETS: u64 = 32_768;
@@ -246,6 +402,68 @@ fn card_identity(card: &crate::card::Card) -> String {
         card.base_magic,
         card.misc,
     )
+}
+
+fn card_identity_tokens(card: &crate::card::Card) -> [String; 2] {
+    [
+        format!("IDENTITY:CARD:{:?}", card.id),
+        format!("IDENTITY:CARD_EXACT:{}", card_identity(card)),
+    ]
+}
+
+fn inventory_identity_tokens(game: &Game) -> Vec<String> {
+    let mut tokens = Vec::with_capacity(game.player.deck.len() * 2 + game.player.relics.len());
+    for card in &game.player.deck {
+        tokens.extend(card_identity_tokens(card));
+    }
+    for relic in &game.player.relics {
+        tokens.push(format!("IDENTITY:RELIC:{:?}", relic.id));
+    }
+    for potion in game
+        .player
+        .potions
+        .iter()
+        .filter(|potion| potion.id != PotionId::Slot)
+    {
+        tokens.push(format!("IDENTITY:POTION:{:?}", potion.id));
+    }
+    tokens
+}
+
+fn inventory_identity_features(game: &Game) -> Vec<u16> {
+    inventory_identity_tokens(game)
+        .into_iter()
+        .map(|token| feature_id(&token))
+        .collect()
+}
+
+fn add_card_identities(features: &mut Vec<u16>, card: &crate::card::Card) {
+    for token in card_identity_tokens(card) {
+        push_feature(features, token);
+    }
+}
+
+fn add_identity_delta(features: &mut Vec<u16>, before: &Game, after: &Game) {
+    let mut before_counts = BTreeMap::<String, i32>::new();
+    let mut after_counts = BTreeMap::<String, i32>::new();
+    for token in inventory_identity_tokens(before) {
+        *before_counts.entry(token).or_default() += 1;
+    }
+    for token in inventory_identity_tokens(after) {
+        *after_counts.entry(token).or_default() += 1;
+    }
+    let identities: BTreeSet<_> = before_counts
+        .keys()
+        .chain(after_counts.keys())
+        .cloned()
+        .collect();
+    for identity in identities {
+        let delta = after_counts.get(&identity).copied().unwrap_or(0)
+            - before_counts.get(&identity).copied().unwrap_or(0);
+        for _ in 0..delta.unsigned_abs() {
+            push_feature(features, &identity);
+        }
+    }
 }
 
 fn add_card_multiset(
@@ -515,6 +733,56 @@ fn add_inventory_delta(features: &mut Vec<u16>, before: &Game, after: &Game) {
     }
 }
 
+fn occupied_potion_slots(game: &Game) -> i32 {
+    game.player
+        .potions
+        .iter()
+        .filter(|potion| potion.id != PotionId::Slot)
+        .count() as i32
+}
+
+fn action_parameters(game: &Game, action: &Action) -> ActionParameters {
+    let parameterized_screen = matches!(
+        game.screen,
+        Screen::Neow
+            | Screen::CombatReward
+            | Screen::CardReward
+            | Screen::Rest
+            | Screen::Treasure
+            | Screen::BossRelic
+            | Screen::Event
+            | Screen::Shop
+            | Screen::Grid
+    );
+    if game.combat.is_some()
+        || !parameterized_screen
+        || !matches!(action, Action::Choose { .. } | Action::Skip)
+    {
+        return ActionParameters::default();
+    }
+
+    let before_upgrades = game.player.deck.iter().filter(|card| card.upgraded).count() as i32;
+    let before_potions = occupied_potion_slots(game);
+    let mut after = game.clone();
+    after.step(action);
+    ActionParameters {
+        known: true,
+        hp_delta: after.player.hp - game.player.hp,
+        max_hp_delta: after.player.max_hp - game.player.max_hp,
+        gold_delta: after.player.gold - game.player.gold,
+        deck_size_delta: after.player.deck.len() as i32 - game.player.deck.len() as i32,
+        upgraded_cards_delta: after
+            .player
+            .deck
+            .iter()
+            .filter(|card| card.upgraded)
+            .count() as i32
+            - before_upgrades,
+        relic_delta: after.player.relics.len() as i32 - game.player.relics.len() as i32,
+        potion_delta: occupied_potion_slots(&after) - before_potions,
+    }
+}
+
 fn action_features(game: &Game, action: &Action) -> Vec<u16> {
     let mut features = Vec::with_capacity(16);
     push_feature(&mut features, "[ACTION]");
@@ -623,6 +891,78 @@ fn action_features(game: &Game, action: &Action) -> Vec<u16> {
     features
 }
 
+fn action_identity_features(game: &Game, action: &Action) -> Vec<u16> {
+    let mut features = Vec::with_capacity(8);
+    match action {
+        Action::Play { hand_index, .. } => {
+            if let Some(card) = game.player.hand.get(*hand_index) {
+                add_card_identities(&mut features, card);
+            }
+        }
+        Action::Choose { index, .. } => match game.screen {
+            Screen::CardReward => {
+                if let Some(card) = game.card_reward.get(*index) {
+                    add_card_identities(&mut features, card);
+                }
+            }
+            Screen::BossRelic => {
+                if let Some(relic) = game.boss_relics.get(*index) {
+                    push_feature(&mut features, format!("IDENTITY:RELIC:{relic:?}"));
+                }
+            }
+            Screen::HandSelect => {
+                if let Some(card) = game.player.hand.get(*index) {
+                    add_card_identities(&mut features, card);
+                }
+            }
+            Screen::Grid => {
+                let mut after = game.clone();
+                after.step(action);
+                let before = features.len();
+                add_identity_delta(&mut features, game, &after);
+                if features.len() == before {
+                    if let Some((_, cards)) = game.grid_view() {
+                        if let Some((_, card)) =
+                            cards.into_iter().find(|(choice, _)| choice == index)
+                        {
+                            add_card_identities(&mut features, card);
+                        }
+                    }
+                }
+            }
+            Screen::Rest if game.rest_is_smithing() => {
+                if let Some(card) = game
+                    .player
+                    .deck
+                    .iter()
+                    .filter(|card| card.can_upgrade())
+                    .nth(*index)
+                {
+                    add_card_identities(&mut features, card);
+                }
+            }
+            Screen::CombatReward | Screen::Shop | Screen::Rest | Screen::Treasure => {
+                let mut after = game.clone();
+                after.step(action);
+                add_identity_delta(&mut features, game, &after);
+            }
+            _ => {}
+        },
+        Action::Potion { slot, .. } => {
+            if let Some(potion) = game.player.potions.get(*slot) {
+                push_feature(&mut features, format!("IDENTITY:POTION:{:?}", potion.id));
+            }
+        }
+        Action::Proceed if matches!(game.screen, Screen::Grid | Screen::Rest) => {
+            let mut after = game.clone();
+            after.step(action);
+            add_identity_delta(&mut features, game, &after);
+        }
+        Action::EndTurn | Action::Proceed | Action::Skip | Action::Quit => {}
+    }
+    features
+}
+
 impl TrainEnv {
     pub const DEFAULT_MAX_STEPS: usize = 5_000;
 
@@ -677,17 +1017,32 @@ impl TrainEnv {
 
     pub fn training_observation(&self) -> TrainingObservation {
         let legal = self.game.legal_actions();
+        let mut actions: Vec<_> = legal
+            .into_iter()
+            .enumerate()
+            .map(|(index, action)| TrainingAction {
+                index,
+                candidate_identities: action_identity_features(&self.game, &action),
+                features: action_features(&self.game, &action),
+                parameters: action_parameters(&self.game, &action),
+                action,
+            })
+            .collect();
+        if self.game.combat.is_none()
+            && actions
+                .iter()
+                .any(|action| !action.candidate_identities.is_empty())
+        {
+            for action in &mut actions {
+                if action.candidate_identities.is_empty() {
+                    push_feature(&mut action.candidate_identities, "IDENTITY:CHOICE_NONE");
+                }
+            }
+        }
         TrainingObservation {
             state_features: state_features(&self.game),
-            actions: legal
-                .into_iter()
-                .enumerate()
-                .map(|(index, action)| TrainingAction {
-                    index,
-                    features: action_features(&self.game, &action),
-                    action,
-                })
-                .collect(),
+            inventory_identities: inventory_identity_features(&self.game),
+            actions,
         }
     }
 
@@ -767,6 +1122,7 @@ impl TrainEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card::Card;
 
     #[test]
     fn reset_preserves_character_and_ascension() {
@@ -813,10 +1169,66 @@ mod tests {
         let env = TrainEnv::defect_a0(1);
         let observation = env.training_observation();
         assert!(!observation.state_features.is_empty());
+        assert!(!observation.inventory_identities.is_empty());
         assert_eq!(observation.actions.len(), env.game.legal_actions().len());
         assert!(observation
             .actions
             .iter()
             .all(|action| !action.features.is_empty()));
+    }
+
+    #[test]
+    fn reward_candidate_joins_to_every_owned_copy_by_shared_identity() {
+        let mut env = TrainEnv::defect_a0(1);
+        env.game.player.deck = vec![
+            Card::new(CardId::Ball_Lightning),
+            Card::new(CardId::Ball_Lightning),
+            Card::new(CardId::Skim),
+        ]
+        .into();
+        env.game.screen = Screen::CardReward;
+        env.game.card_reward = vec![Card::new(CardId::Ball_Lightning)];
+
+        let observation = env.training_observation();
+        let candidate = observation
+            .actions
+            .iter()
+            .find(|action| matches!(&action.action, Action::Choose { index: 0, .. }))
+            .expect("card reward action");
+        assert_eq!(candidate.candidate_identities.len(), 2);
+        assert!(candidate.parameters.known);
+        assert_eq!(candidate.parameters.deck_size_delta, 1);
+        assert!(candidate.candidate_identities.iter().all(|identity| {
+            observation
+                .inventory_identities
+                .iter()
+                .filter(|owned| *owned == identity)
+                .count()
+                == 2
+        }));
+    }
+
+    #[test]
+    fn deck_measurements_expose_mechanisms_without_policy_preferences() {
+        let mut env = TrainEnv::defect_a0(1);
+        env.game.player.deck = vec![
+            Card::new(CardId::Ball_Lightning),
+            Card::new(CardId::Skim),
+            Card::new(CardId::Turbo),
+            Card::new(CardId::Fission),
+            Card::new(CardId::Defragment),
+        ]
+        .into();
+
+        let measurements = env.measurements();
+        assert_eq!(measurements.deck_total_cost, 3);
+        assert_eq!(measurements.deck_attack_cards, 1);
+        assert_eq!(measurements.deck_skill_cards, 3);
+        assert_eq!(measurements.deck_power_cards, 1);
+        assert_eq!(measurements.deck_exhaust_cards, 1);
+        assert_eq!(measurements.deck_orb_cards, 2);
+        assert_eq!(measurements.deck_card_access, 1);
+        assert_eq!(measurements.deck_energy_cards, 2);
+        assert_eq!(measurements.deck_focus_cards, 1);
     }
 }
