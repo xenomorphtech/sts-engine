@@ -1,0 +1,57 @@
+{
+  "format": "sts-mean-progress-v1",
+  "character": "defect",
+  "ascension": 20,
+  "initialized_from": null,
+  "checkpoint": {
+    "path": "artifacts/selfplay/defect-a20-mean-progress-v1.pt",
+    "sha256": "9d5abb0268d40021f9dcd66cb6badbc547d1b40b6a5f3de17bd4ca05ebe2141c",
+    "parameters": 3673519
+  },
+  "dataset": {
+    "path": "artifacts/selfplay/defect-a20-mean-progress-v1-data.pt",
+    "sha256": "8e701e52166cf38a73c4887f51d3351ae0383a56e9652137a50fc0a2e2c66513",
+    "trajectory_files": 145,
+    "eligible_episodes": 18430,
+    "unique_seeds": 7280,
+    "sampled_trajectory_decisions": 160000,
+    "exact_branch_files": 28,
+    "exact_action_menus": 110661,
+    "sampled_preference_pairs": 100000
+  },
+  "training": {
+    "random_initialization": true,
+    "seconds": 180,
+    "steps": 4010,
+    "targets": [
+      "progress_value",
+      "final_floor",
+      "entry_hp_fraction"
+    ],
+    "validation": {
+      "progress_mae": 0.1192069074154128,
+      "floor_mae": 2.459309906790618,
+      "entry_hp_fraction_mae": 0.19847217539245135,
+      "branch_pair_accuracy": 0.578768318213538
+    }
+  },
+  "evaluation": {
+    "planned": {
+      "seed_source": 20262092,
+      "episodes": 50,
+      "mean_floor": 10.68,
+      "mean_entry_hp_fraction": 0.4206660113148218,
+      "lookahead_depth": 12,
+      "lookahead_beam_width": 8,
+      "lookahead_beam_expansion": 4
+    },
+    "direct": {
+      "seed_source": 20262093,
+      "episodes": 100,
+      "mean_floor": 7.51,
+      "mean_entry_hp_fraction": 0.4140600574327935,
+      "lookahead_depth": 0
+    },
+    "wins": 0
+  }
+}

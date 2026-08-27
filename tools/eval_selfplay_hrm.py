@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Closed-loop evaluation of a teacher-free whole-run HRM checkpoint."""
+"""Closed-loop evaluation of the teacher-free mean-progress checkpoint."""
 
 from __future__ import annotations
 
@@ -7,27 +6,24 @@ import argparse
 import json
 import lzma
 import math
-from pathlib import Path
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, TextIO
 
 import torch
-
-from train_selfplay_hrm import (
-    FLOOR_SURVIVAL_NAMES,
+from mean_progress_model import MeanProgressModel
+from training_schema import (
     MAX_ACTION_FEATURES,
     MAX_CANDIDATE_IDENTITIES,
     MAX_HISTORY_STEPS,
     MAX_INVENTORY_IDENTITIES,
     MAX_STATE_FEATURES,
-    SelfPlayHrm,
     action_parameter_vector,
     candidate_identity_features,
     decision_signature,
     measurement_vector,
 )
-
 
 INFERENCE_BATCH_SIZE = 512
 
@@ -43,13 +39,10 @@ def apply_lookahead_defaults(args: argparse.Namespace) -> None:
             args.lookahead_identity_choices_only
             or args.lookahead_include_identity_choices
         )
-        args.lookahead_noncombat_only = (
-            args.lookahead_noncombat_depth is not None
-            or (
-                args.ascension == 20
-                and args.lookahead_depth > 0
-                and not identity_specialization
-            )
+        args.lookahead_noncombat_only = args.lookahead_noncombat_depth is not None or (
+            args.ascension == 20
+            and args.lookahead_depth > 0
+            and not identity_specialization
         )
     if (
         args.lookahead_noncombat_only
@@ -98,14 +91,16 @@ def load_seeds(path: Path, min_floor: int = 0) -> list[int]:
                 continue
             seed = value.get("seed") if isinstance(value, dict) else value
             if not isinstance(seed, int):
-                raise ValueError(f"{path}:{line_number}: seed must be an integer")
+                raise TypeError(f"{path}:{line_number}: seed must be an integer")
             seeds.append(seed)
     if not seeds:
         raise ValueError(f"{path}: no seeds")
     return seeds
 
 
-def request(process: subprocess.Popen[str], body: dict[str, Any]) -> list[dict[str, Any]]:
+def request(
+    process: subprocess.Popen[str], body: dict[str, Any]
+) -> list[dict[str, Any]]:
     assert process.stdin is not None and process.stdout is not None
     process.stdin.write(json.dumps(body, separators=(",", ":")) + "\n")
     process.stdin.flush()
@@ -133,7 +128,9 @@ def contains_expected(actual: Any, expected: Any) -> bool:
     return actual == expected
 
 
-def pad_features(rows: list[list[int]], width: int, device: torch.device) -> torch.Tensor:
+def pad_features(
+    rows: list[list[int]], width: int, device: torch.device
+) -> torch.Tensor:
     tensor = torch.zeros((len(rows), width), dtype=torch.long)
     for index, row in enumerate(rows):
         row = row[:width]
@@ -164,63 +161,9 @@ def utilities(
     counterfactual_outside_weight: float,
 ) -> torch.Tensor:
     head = {name: prediction[:, index] for index, name in enumerate(target_names)}
-    zero = torch.zeros_like(prediction[:, 0])
-
-    def value(name: str) -> torch.Tensor:
-        return head.get(name, zero) if name in supported_targets else zero
-
-    survival_logits = [
-        head[name]
-        for name in FLOOR_SURVIVAL_NAMES
-        if name in head and name in supported_targets
-    ]
-    expected_floor = (
-        torch.stack(survival_logits, dim=1).sigmoid().sum(dim=1)
-        if survival_logits
-        else value("max_floor")
-    )
-    if policy == "floor":
-        return expected_floor
-    milestone = (
-        0.15 * value("reach_act1_boss")
-        + 0.30 * value("reach_act2")
-        + 0.45 * value("reach_act2_boss")
-        + 0.60 * value("reach_act3")
-        + 0.80 * value("reach_act3_boss")
-        + value("act3_win")
-    )
-    combat_local = (
-        2.0 * value("combat_margin")
-        + 0.50 * expected_floor
-        + 0.20 * value("terminal_margin")
-        + 0.25 * value("hp_delta_1")
-        - 0.25 * value("enemy_hp_delta_1")
-        + 0.10 * value("hp_delta_8")
-        - 0.10 * value("enemy_hp_delta_8")
-        + combat_search_weight * value("search_value") * search_supported
-        + counterfactual_search_weight * value("choice_value")
-        + milestone
-    )
-    outside_choice_value = (
-        value("choice_value") * choice_supported
-        if "choice_value" in head
-        else value("search_value") * search_supported
-    )
-    if policy == "local":
-        outside = expected_floor + 0.10 * value("terminal_margin") + milestone
-    else:
-        outside = (
-            expected_floor
-            + 0.25 * value("terminal_margin")
-            + 0.10 * value("floor_delta_32")
-            + 0.05 * value("gold_delta_32")
-            + 0.05 * value("relic_delta_128")
-            + 0.05 * value("upgrade_delta_128")
-            + milestone
-            + outside_search_weight * outside_choice_value
-            + counterfactual_outside_weight * value("choice_value")
-        )
-    return torch.where(combat, combat_local, outside)
+    if "progress_value" not in head or "progress_value" not in supported_targets:
+        raise ValueError("checkpoint does not expose the mean-progress policy value")
+    return head["progress_value"]
 
 
 def observation_key(observation: dict[str, Any]) -> tuple[int, ...]:
@@ -256,7 +199,7 @@ def replay_policy_state(
 
 @torch.inference_mode()
 def rank_actions(
-    model: SelfPlayHrm,
+    model: MeanProgressModel,
     rows: list[dict[str, Any]],
     device: torch.device,
     policy: str,
@@ -294,14 +237,11 @@ def rank_actions(
                 row["measurements"]["enemy_max_hp"] > 0,
             )
             candidate_rows.append(candidate_ids)
-            numeric_rows.append(
-                measurement_vector(row["measurements"], model.numeric_size)
-            )
+            numeric_rows.append(measurement_vector(row["measurements"]))
             action_numeric_rows.append(
                 action_parameter_vector(
                     action,
                     row["measurements"],
-                    model.action_numeric_size,
                 )
             )
             history_rows.append(histories[environment])
@@ -317,12 +257,8 @@ def rank_actions(
         return {}
     state = pad_features(state_rows, MAX_STATE_FEATURES, device)
     action = pad_features(action_rows, MAX_ACTION_FEATURES, device)
-    inventory = pad_features(
-        inventory_rows, MAX_INVENTORY_IDENTITIES, device
-    )
-    candidate = pad_features(
-        candidate_rows, MAX_CANDIDATE_IDENTITIES, device
-    )
+    inventory = pad_features(inventory_rows, MAX_INVENTORY_IDENTITIES, device)
+    candidate = pad_features(candidate_rows, MAX_CANDIDATE_IDENTITIES, device)
     numeric = torch.tensor(numeric_rows, dtype=torch.float32, device=device)
     action_numeric = torch.tensor(
         action_numeric_rows, dtype=torch.float32, device=device
@@ -380,7 +316,7 @@ def rank_actions(
 
 
 def choose_actions(
-    model: SelfPlayHrm,
+    model: MeanProgressModel,
     rows: list[dict[str, Any]],
     device: torch.device,
     policy: str,
@@ -489,7 +425,7 @@ def branch_score(
 
 def improve_with_exact_combat_beam(
     process: subprocess.Popen[str],
-    model: SelfPlayHrm,
+    model: MeanProgressModel,
     rows: list[dict[str, Any]],
     base_choices: list[int | None],
     histories: list[list[int]],
@@ -505,11 +441,13 @@ def improve_with_exact_combat_beam(
     Width is shared by all root actions for one live environment. A root that
     leaves the beam retains its exact frontier value, while combat wins and
     deaths become terminal leaves. This makes width one equivalent to the
-    legacy single-continuation experiment and keeps the new path opt-in.
+    single-continuation experiment and keeps the wider beam opt-in.
     """
     if args.lookahead_depth <= 0 or args.lookahead_beam_width <= 1:
         return base_choices, 0, 0
-    rank_rngs = [SplitMix64(args.exploration_seed ^ index) for index in range(len(rows))]
+    rank_rngs = [
+        SplitMix64(args.exploration_seed ^ index) for index in range(len(rows))
+    ]
     root_ranked = rank_actions(
         model,
         rows,
@@ -633,9 +571,7 @@ def improve_with_exact_combat_beam(
                 next_meta.append({**meta, "history": history})
         if not expansions:
             break
-        current_rows = request(
-            process, {"op": "branch_fork", "branches": expansions}
-        )
+        current_rows = request(process, {"op": "branch_fork", "branches": expansions})
         current_meta = next_meta
         simulated_steps += len(current_rows)
 
@@ -646,9 +582,7 @@ def improve_with_exact_combat_beam(
             root_values[key] = max(winning)
             continue
         deepest = max(depth for depth, _ in values)
-        root_values[key] = max(
-            score for depth, score in values if depth == deepest
-        )
+        root_values[key] = max(score for depth, score in values if depth == deepest)
     if args.branches_output is not None:
         for (environment, action), score in root_values.items():
             branch_records.append(
@@ -675,7 +609,7 @@ def improve_with_exact_combat_beam(
 
 def improve_with_exact_lookahead(
     process: subprocess.Popen[str],
-    model: SelfPlayHrm,
+    model: MeanProgressModel,
     rows: list[dict[str, Any]],
     base_choices: list[int | None],
     histories: list[list[int]],
@@ -688,7 +622,9 @@ def improve_with_exact_lookahead(
 ) -> tuple[list[int | None], int, int]:
     if args.lookahead_depth <= 0:
         return base_choices, 0, 0
-    rank_rngs = [SplitMix64(args.exploration_seed ^ index) for index in range(len(rows))]
+    rank_rngs = [
+        SplitMix64(args.exploration_seed ^ index) for index in range(len(rows))
+    ]
     ranked = rank_actions(
         model,
         rows,
@@ -725,11 +661,8 @@ def improve_with_exact_lookahead(
         elif args.lookahead_identity_choices_only:
             if not identity_choice:
                 continue
-        elif (
-            measurements["enemy_max_hp"] < args.lookahead_min_enemy_hp
-            and not (
-                args.lookahead_include_identity_choices and identity_choice
-            )
+        elif measurements["enemy_max_hp"] < args.lookahead_min_enemy_hp and not (
+            args.lookahead_include_identity_choices and identity_choice
         ):
             continue
         root_depth = (
@@ -751,9 +684,7 @@ def improve_with_exact_lookahead(
         untried = [candidate for candidate in candidates if candidate[1] not in tried]
         for prior, action in untried[: args.lookahead_candidates]:
             for rollout in range(args.lookahead_rollouts):
-                branch_roots.append(
-                    (environment, action, prior, rollout, root_depth)
-                )
+                branch_roots.append((environment, action, prior, rollout, root_depth))
     if not branch_roots:
         return base_choices, 0, 0
 
@@ -767,9 +698,7 @@ def improve_with_exact_lookahead(
         history = list(histories[environment])
         history.append(decision_signature(rows[environment]["observation"], action))
         branch_histories.append(history)
-    branch_tried: list[dict[tuple[int, ...], set[int]]] = [
-        {} for _ in branch_roots
-    ]
+    branch_tried: list[dict[tuple[int, ...], set[int]]] = [{} for _ in branch_roots]
     branch_rngs = [
         SplitMix64(
             args.exploration_seed
@@ -799,16 +728,12 @@ def improve_with_exact_lookahead(
         )
         branch_actions = [
             action if branch_step < root_depth else None
-            for action, (_, _, _, _, root_depth) in zip(
-                branch_actions, branch_roots
-            )
+            for action, (_, _, _, _, root_depth) in zip(branch_actions, branch_roots)
         ]
         if not any(action is not None for action in branch_actions):
             break
         before = branch_rows
-        branch_rows = request(
-            process, {"op": "branch_step", "actions": branch_actions}
-        )
+        branch_rows = request(process, {"op": "branch_step", "actions": branch_actions})
         simulated_steps += sum(action is not None for action in branch_actions)
         for index, action in enumerate(branch_actions):
             if action is not None:
@@ -816,7 +741,9 @@ def improve_with_exact_lookahead(
                     decision_signature(before[index]["observation"], action)
                 )
 
-    leaf_rngs = [SplitMix64(args.exploration_seed ^ index) for index in range(len(branch_rows))]
+    leaf_rngs = [
+        SplitMix64(args.exploration_seed ^ index) for index in range(len(branch_rows))
+    ]
     leaf_ranked = rank_actions(
         model,
         branch_rows,
@@ -880,6 +807,12 @@ def open_output(path: Path) -> TextIO:
     return path.open("w", encoding="utf-8")
 
 
+def open_input(path: Path) -> TextIO:
+    if path.suffix == ".xz":
+        return lzma.open(path, "rt", encoding="utf-8")
+    return path.open("r", encoding="utf-8")
+
+
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     with open_output(path) as output:
         for row in rows:
@@ -894,31 +827,24 @@ def load_resume_prefixes(
     min_terminal_floor: int,
     max_terminal_enemy_hp: int | None,
 ) -> tuple[list[int], list[list[dict[str, Any]]], list[dict[str, Any]]]:
-    source: TextIO
-    if path.suffix == ".xz":
-        source = lzma.open(path, "rt", encoding="utf-8")
-    else:
-        source = path.open("r", encoding="utf-8")
     seeds: list[int] = []
     prefixes: list[list[dict[str, Any]]] = []
     roots: list[dict[str, Any]] = []
-    with source:
+    with open_input(path) as source:
         for line_number, line in enumerate(source, 1):
             if not line.strip():
                 continue
             episode = json.loads(line)
             if episode.get("schema_version") != 1:
                 raise ValueError(f"{path}:{line_number}: unsupported trace schema")
-            terminal_floor = int(
-                episode.get("result", {}).get("max_floor", -1)
-            )
+            terminal_floor = int(episode.get("result", {}).get("max_floor", -1))
             if terminal_floor < min_terminal_floor:
                 continue
             if max_terminal_enemy_hp is not None:
                 terminal_enemy_hp = int(
-                    episode.get("result", {}).get("terminal", {}).get(
-                        "enemy_hp", 2**31 - 1
-                    )
+                    episode.get("result", {})
+                    .get("terminal", {})
+                    .get("enemy_hp", 2**31 - 1)
                 )
                 if terminal_enemy_hp > max_terminal_enemy_hp:
                     continue
@@ -953,7 +879,7 @@ def evaluate(args: argparse.Namespace) -> None:
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     if checkpoint.get("teacher") is not None:
         raise ValueError("checkpoint is not marked teacher-free")
-    if checkpoint.get("format") != "sts-selfplay-hrm-v1":
+    if checkpoint.get("format") != "sts-mean-progress-v1":
         raise ValueError(f"unsupported checkpoint format {checkpoint.get('format')!r}")
     device = torch.device(
         "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
@@ -961,64 +887,10 @@ def evaluate(args: argparse.Namespace) -> None:
     target_names = tuple(checkpoint["target_names"])
     model_config = dict(checkpoint["config"])
     model_config["target_names"] = target_names
-    model = SelfPlayHrm(model_config)
+    model = MeanProgressModel(model_config)
     model.load_state_dict(checkpoint["model"])
-    if args.counterfactual_adapter_scale is not None:
-        if model.counterfactual_value_adapter is None:
-            raise ValueError(
-                "counterfactual-adapter-scale requires an adapter checkpoint"
-            )
-        model.counterfactual_adapter_scale = args.counterfactual_adapter_scale
-    if args.counterfactual_adapter_min_enemy_hp is not None:
-        if model.counterfactual_value_adapter is None:
-            raise ValueError(
-                "counterfactual-adapter-min-enemy-hp requires an adapter checkpoint"
-            )
-        model.counterfactual_adapter_min_enemy_hp = (
-            args.counterfactual_adapter_min_enemy_hp
-        )
-    if args.population_adapter_scale is not None:
-        if model.population_value_adapter is None:
-            raise ValueError(
-                "population-adapter-scale requires a population-adapter checkpoint"
-            )
-        model.population_adapter_scale = args.population_adapter_scale
-    if args.menu_residual_scale is not None:
-        if model.choice_critic is None or model.choice_critic.menu_residual is None:
-            raise ValueError(
-                "menu-residual-scale requires a checkpoint with a menu residual"
-            )
-        model.choice_critic.menu_residual_scale = args.menu_residual_scale
-    if args.combat_menu_residual_scale is not None:
-        if (
-            model.choice_critic is None
-            or model.choice_critic.combat_menu_residual is None
-        ):
-            raise ValueError(
-                "combat-menu-residual-scale requires a combat residual checkpoint"
-            )
-        model.choice_critic.combat_menu_residual_scale = (
-            args.combat_menu_residual_scale
-        )
-    if args.combat_menu_residual_min_enemy_hp is not None:
-        if (
-            model.choice_critic is None
-            or model.choice_critic.combat_menu_residual is None
-        ):
-            raise ValueError(
-                "combat-menu-residual-min-enemy-hp requires a combat residual checkpoint"
-            )
-        model.choice_critic.combat_menu_residual_min_enemy_hp = (
-            args.combat_menu_residual_min_enemy_hp
-        )
-    dataset_signature = checkpoint.get("dataset_signature", {})
-    model.search_value_supported = bool(
-        checkpoint.get(
-            "search_value_supported",
-            dataset_signature.get("branch_datasets", ["legacy-checkpoint"]),
-        )
-    )
-    model.search_value_min_floor = int(checkpoint.get("search_value_min_floor", 16))
+    model.search_value_supported = True
+    model.search_value_min_floor = 0
     model.policy_supported_targets = frozenset(
         checkpoint.get("policy_supported_targets", target_names)
     )
@@ -1038,9 +910,7 @@ def evaluate(args: argparse.Namespace) -> None:
         if args.resume_copies > 1:
             seeds = [seed for seed in seeds for _ in range(args.resume_copies)]
             resume_prefixes = [
-                prefix
-                for prefix in resume_prefixes
-                for _ in range(args.resume_copies)
+                prefix for prefix in resume_prefixes for _ in range(args.resume_copies)
             ]
             resume_roots = [
                 root for root in resume_roots for _ in range(args.resume_copies)
@@ -1087,9 +957,7 @@ def evaluate(args: argparse.Namespace) -> None:
     max_floors = [0 for _ in seeds]
     try:
         rows = request(process, {"op": "reset", "seeds": seeds})
-        tried_actions: list[dict[tuple[int, ...], set[int]]] = [
-            {} for _ in seeds
-        ]
+        tried_actions: list[dict[tuple[int, ...], set[int]]] = [{} for _ in seeds]
         histories: list[list[int]] = [[] for _ in seeds]
         if resume_prefixes is not None:
             for index, prefix in enumerate(resume_prefixes):
@@ -1203,7 +1071,10 @@ def evaluate(args: argparse.Namespace) -> None:
             branch_steps += simulated
             lookahead_decisions += improved
             for index, action in enumerate(actions):
-                if action is not None and before_rows[index].get("observation") is not None:
+                if (
+                    action is not None
+                    and before_rows[index].get("observation") is not None
+                ):
                     key = observation_key(before_rows[index]["observation"])
                     tried_actions[index].setdefault(key, set()).add(action)
             rows = request(process, {"op": "step", "actions": actions})
@@ -1214,7 +1085,9 @@ def evaluate(args: argparse.Namespace) -> None:
                 action_index = actions[index]
                 if action_index is not None:
                     histories[index].append(
-                        decision_signature(before_rows[index]["observation"], action_index)
+                        decision_signature(
+                            before_rows[index]["observation"], action_index
+                        )
                     )
                 if action_index is not None and args.transitions_output is not None:
                     before = before_rows[index]
@@ -1319,49 +1192,13 @@ def evaluate(args: argparse.Namespace) -> None:
         "lookahead_boss_depth": args.lookahead_boss_depth,
         "lookahead_noncombat_only": args.lookahead_noncombat_only,
         "lookahead_noncombat_depth": args.lookahead_noncombat_depth,
-        "combat_search_weight": args.combat_search_weight,
-        "search_value_min_floor": model.search_value_min_floor,
-        "counterfactual_search_weight": args.counterfactual_search_weight,
-        "counterfactual_adapter_scale": (
-            model.counterfactual_adapter_scale
-            if model.counterfactual_value_adapter is not None
-            else None
-        ),
-        "counterfactual_adapter_min_enemy_hp": (
-            model.counterfactual_adapter_min_enemy_hp
-            if model.counterfactual_value_adapter is not None
-            else None
-        ),
-        "population_adapter_scale": (
-            model.population_adapter_scale
-            if model.population_value_adapter is not None
-            else None
-        ),
-        "outside_search_weight": args.outside_search_weight,
-        "counterfactual_outside_weight": args.counterfactual_outside_weight,
-        "menu_residual_scale": (
-            model.choice_critic.menu_residual_scale
-            if model.choice_critic is not None
-            and model.choice_critic.menu_residual is not None
-            else None
-        ),
-        "combat_menu_residual_scale": (
-            model.choice_critic.combat_menu_residual_scale
-            if model.choice_critic is not None
-            and model.choice_critic.combat_menu_residual is not None
-            else None
-        ),
-        "combat_menu_residual_min_enemy_hp": (
-            model.choice_critic.combat_menu_residual_min_enemy_hp
-            if model.choice_critic is not None
-            and model.choice_critic.combat_menu_residual is not None
-            else None
-        ),
         "lookahead_decisions": lookahead_decisions,
         "branch_steps": branch_steps,
         "output": str(args.output),
         "transitions_output": (
-            str(args.transitions_output) if args.transitions_output is not None else None
+            str(args.transitions_output)
+            if args.transitions_output is not None
+            else None
         ),
         "branches_output": (
             str(args.branches_output) if args.branches_output is not None else None
@@ -1379,7 +1216,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("artifacts/selfplay/defect-a0-selfplay-hrm-20s.pt"),
+        default=Path("artifacts/selfplay/defect-a20-mean-progress-v1.pt"),
     )
     parser.add_argument(
         "--engine", type=Path, default=Path("target/release/sts-selfplay")
@@ -1387,7 +1224,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/selfplay/defect-a0-selfplay-eval.jsonl"),
+        default=Path("artifacts/selfplay/defect-a20-mean-progress-eval.jsonl"),
     )
     parser.add_argument(
         "--transitions-output",
@@ -1399,9 +1236,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="write exact self-play branch values for dynamic legal actions",
     )
-    parser.add_argument("--policy", choices=("floor", "local", "hybrid"), default="hybrid")
+    parser.set_defaults(policy="mean_progress")
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
-    parser.add_argument("--ascension", type=int, choices=range(21), default=0)
+    parser.add_argument("--ascension", type=int, choices=range(21), default=20)
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--seed-source", type=int, default=20260827)
     parser.add_argument(
@@ -1465,75 +1302,18 @@ def parse_args() -> argparse.Namespace:
         help="Gumbel action-exploration temperature; zero is greedy",
     )
     parser.add_argument("--exploration-seed", type=int, default=0x51F9A7)
-    parser.add_argument(
-        "--combat-search-weight",
-        type=float,
-        default=1.5,
-        help="weight of the learned exact-branch value in combat",
-    )
-    parser.add_argument(
-        "--outside-search-weight",
-        type=float,
-        default=0.0,
-        help="weight of the learned exact-branch value outside combat",
-    )
-    parser.add_argument(
-        "--counterfactual-search-weight",
-        type=float,
-        default=0.0,
-        help="residual weight of the isolated counterfactual critic in combat",
-    )
-    parser.add_argument(
-        "--counterfactual-outside-weight",
-        type=float,
-        default=0.0,
-        help="weight of the isolated critic on every non-combat decision",
-    )
-    parser.add_argument(
-        "--counterfactual-adapter-scale",
-        type=float,
-        help=(
-            "override the isolated exact-branch residual scale; zero reproduces "
-            "the underlying policy and choice critic"
-        ),
-    )
-    parser.add_argument(
-        "--counterfactual-adapter-min-enemy-hp",
-        type=float,
-        help="apply the isolated residual only in combats at or above this max HP",
-    )
-    parser.add_argument(
-        "--population-adapter-scale",
-        type=float,
-        help=(
-            "override the isolated population-return residual scale; zero "
-            "reproduces the incumbent checkpoint exactly"
-        ),
-    )
-    parser.add_argument(
-        "--menu-residual-scale",
-        type=float,
-        help=(
-            "override only the gated menu adapter scale; zero reproduces the "
-            "underlying critic exactly"
-        ),
-    )
-    parser.add_argument(
-        "--combat-menu-residual-scale",
-        type=float,
-        help="override the isolated combat menu residual scale",
-    )
-    parser.add_argument(
-        "--combat-menu-residual-min-enemy-hp",
-        type=float,
-        help="apply the combat menu residual only in active combats above this HP",
+    parser.set_defaults(
+        combat_search_weight=0.0,
+        outside_search_weight=0.0,
+        counterfactual_search_weight=0.0,
+        counterfactual_outside_weight=0.0,
     )
     parser.add_argument("--max-steps", type=int, default=5_000)
     parser.add_argument(
         "--lookahead-depth",
         type=int,
-        default=0,
-        help="exact cloned rollout depth; zero disables model-based planning",
+        default=12,
+        help="exact cloned rollout depth; defaults to the A20 baseline, zero disables it",
     )
     parser.add_argument(
         "--lookahead-candidates",
@@ -1544,13 +1324,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lookahead-beam-width",
         type=int,
-        default=1,
+        default=8,
         help="active exact combat paths retained per live environment",
     )
     parser.add_argument(
         "--lookahead-beam-expansion",
         type=int,
-        default=2,
+        default=4,
         help="top model actions forked from each retained combat path",
     )
     parser.add_argument(
@@ -1651,10 +1431,7 @@ def parse_args() -> argparse.Namespace:
             args.lookahead_identity_depth is not None
             and args.lookahead_identity_depth <= 0
         )
-        or (
-            args.lookahead_boss_depth is not None
-            and args.lookahead_boss_depth <= 0
-        )
+        or (args.lookahead_boss_depth is not None and args.lookahead_boss_depth <= 0)
         or (
             args.lookahead_noncombat_depth is not None
             and args.lookahead_noncombat_depth <= 0
@@ -1677,46 +1454,18 @@ def parse_args() -> argparse.Namespace:
             and args.resume_max_terminal_enemy_hp < 0
         )
         or args.resume_copies <= 0
-        or args.combat_search_weight < 0
-        or args.counterfactual_search_weight < 0
-        or args.outside_search_weight < 0
-        or args.counterfactual_outside_weight < 0
-        or (
-            args.counterfactual_adapter_scale is not None
-            and args.counterfactual_adapter_scale < 0
-        )
-        or (
-            args.counterfactual_adapter_min_enemy_hp is not None
-            and args.counterfactual_adapter_min_enemy_hp < 0
-        )
-        or (
-            args.population_adapter_scale is not None
-            and args.population_adapter_scale < 0
-        )
-        or (args.menu_residual_scale is not None and args.menu_residual_scale < 0)
-        or (
-            args.combat_menu_residual_scale is not None
-            and args.combat_menu_residual_scale < 0
-        )
-        or (
-            args.combat_menu_residual_min_enemy_hp is not None
-            and args.combat_menu_residual_min_enemy_hp < 0
-        )
     ):
-        parser.error("counts must be positive; temperatures and thresholds cannot be negative")
+        parser.error(
+            "counts must be positive; temperatures and thresholds cannot be negative"
+        )
     if args.seeds_jsonl is not None and args.resume_traces_jsonl is not None:
         parser.error("seeds-jsonl and resume-traces-jsonl are mutually exclusive")
     if args.lookahead_identity_choices_only and args.lookahead_noncombat_only:
         parser.error(
             "identity-choices-only and noncombat-only lookahead are mutually exclusive"
         )
-    if (
-        args.lookahead_identity_choices_only
-        and args.lookahead_include_identity_choices
-    ):
-        parser.error(
-            "identity-choices-only already includes inventory choices"
-        )
+    if args.lookahead_identity_choices_only and args.lookahead_include_identity_choices:
+        parser.error("identity-choices-only already includes inventory choices")
     return args
 
 

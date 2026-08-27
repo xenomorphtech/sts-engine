@@ -1,4 +1,11 @@
-# Combat HRM artifacts
+# Combat HRM artifacts (historical)
+
+The active from-scratch mean-floor training path is documented in
+`docs/mean-progress-training.md`. This file remains as the experiment history;
+its legacy checkpoint-migration and residual-training commands are no longer
+part of the supported toolchain. Superseded local `.pt`, `.onnx`, and runtime
+exports were moved to the desktop trash; the checked-in metrics below remain as
+the reproducible historical record.
 
 Run the standard experiment from the repository root with no training
 hyperparameters:

@@ -1,24 +1,25 @@
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import torch
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from eval_selfplay_hrm import (  # noqa: E402
+from eval_selfplay_hrm import (
     apply_lookahead_defaults,
     branch_score,
     decision_signature,
     observation_key,
     replay_policy_state,
 )
-from train_selfplay_hrm import (  # noqa: E402
+from mean_progress_model import (
     ActionConditionedStateAttention,
-    CounterfactualChoiceCritic,
-    ENEMY_MAX_HP_MEASUREMENT_INDEX,
-    SelfPlayHrm,
+    MeanProgressModel,
+)
+from training_schema import (
+    ACTION_PARAMETER_SPECS,
+    action_parameter_vector,
 )
 
 
@@ -152,8 +153,8 @@ def test_replay_policy_state_restores_tried_actions() -> None:
         "state_features": [1, 2],
         "inventory_identities": [3],
         "actions": [
-            {"features": [4], "candidate_identities": [5]},
-            {"features": [6], "candidate_identities": [7]},
+            {"index": 0, "features": [4], "candidate_identities": [5]},
+            {"index": 1, "features": [6], "candidate_identities": [7]},
         ],
     }
     prefix = [
@@ -170,88 +171,52 @@ def test_replay_policy_state_restores_tried_actions() -> None:
     assert tried == {observation_key(observation): {0, 1}}
 
 
-def test_combat_menu_residual_is_enemy_hp_gated() -> None:
-    critic = CounterfactualChoiceCritic(
-        hidden_size=4,
-        numeric_size=35,
-        action_numeric_size=12,
-        combat_menu_residual=True,
-    ).eval()
-    assert critic.combat_menu_residual is not None
-    with torch.no_grad():
-        critic.combat_menu_residual[-1].bias.fill_(1.0)
+def test_combat_action_parameters_share_one_transition_schema() -> None:
+    action = {
+        "parameters": {
+            "known": True,
+            "hp_delta": -7,
+            "enemy_hp_delta": -12,
+            "energy_delta": -1,
+        }
+    }
+    measurements = {"hp": 30, "max_hp": 70, "enemy_hp": 40, "gold": 99}
 
-    state = torch.ones((2, 2), dtype=torch.long)
-    action = torch.ones((2, 1), dtype=torch.long)
-    numeric = torch.zeros((2, 35))
-    numeric[1, ENEMY_MAX_HP_MEASUREMENT_INDEX] = 168.0 / 500.0
-    inventory = torch.zeros((2, 1), dtype=torch.long)
-    candidate = torch.zeros((2, 1), dtype=torch.long)
-    action_numeric = torch.zeros((2, 12))
+    encoded = action_parameter_vector(action, measurements)
 
-    critic.combat_menu_residual_scale = 0.0
-    baseline = critic(
-        state, action, numeric, inventory, candidate, action_numeric
-    )
-    critic.combat_menu_residual_scale = 1.0
-    corrected = critic(
-        state, action, numeric, inventory, candidate, action_numeric
-    )
-
-    assert torch.allclose(corrected[0], baseline[0])
-    assert torch.allclose(corrected[1], baseline[1] + 1.0)
+    assert len(encoded) == len(ACTION_PARAMETER_SPECS)
+    assert encoded[0] == 1.0
+    assert encoded[1] < 0.0
+    assert encoded[3] < 0.0
+    assert encoded[6] < 0.0
 
 
-def test_relational_population_adapter_is_exactly_disabled_at_zero_scale() -> None:
-    model = SelfPlayHrm(
+def test_mean_progress_model_has_one_shared_embedding_and_three_outputs() -> None:
+    model = MeanProgressModel(
         {
             "hidden_size": 8,
-            "expansion": 2,
-            "h_cycles": 1,
-            "l_cycles": 1,
-            "segments": 1,
-            "architecture": "hrm_choice_critic_ssm",
             "numeric_measurements": 45,
-            "numeric_prefix_measurements": 35,
-            "choice_numeric_measurements": 35,
-            "action_numeric_measurements": 12,
-            "action_numeric_mode": "additive_gated_residual",
-            "target_names": ("max_floor", "choice_value"),
-            "actor_target_names": ("max_floor",),
-            "counterfactual_value_adapter": True,
-            "population_value_adapter": True,
-            "population_relational_inventory": True,
-            "population_action_attention": True,
-            "population_adapter_combat_only": True,
+            "action_numeric_measurements": len(ACTION_PARAMETER_SPECS),
+            "target_names": (
+                "progress_value",
+                "final_floor",
+                "entry_hp_fraction",
+            ),
         }
     ).eval()
-    assert model.population_inventory_memory is not None
-    assert model.population_state_attention is not None
-    assert model.population_value_adapter is not None
-    with torch.no_grad():
-        model.population_value_adapter[-1].bias.fill_(1.0)
 
     inputs = {
         "state_ids": torch.tensor([[1, 2]], dtype=torch.long),
         "action_ids": torch.tensor([[3]], dtype=torch.long),
         "numeric": torch.zeros((1, 45)),
         "history_ids": torch.zeros((1, 1), dtype=torch.long),
-        "inventory_ids": torch.tensor([[4, 5]], dtype=torch.long),
-        "candidate_identity_ids": torch.tensor([[6]], dtype=torch.long),
-        "action_numeric": torch.zeros((1, 12)),
+        "inventory_ids": torch.tensor([[4]], dtype=torch.long),
+        "candidate_identity_ids": torch.tensor([[5]], dtype=torch.long),
+        "action_numeric": torch.zeros((1, len(ACTION_PARAMETER_SPECS))),
     }
-    model.population_adapter_scale = 0.0
-    baseline = model(**inputs)
-    model.population_adapter_scale = 1.0
-    noncombat = model(**inputs)
+    prediction = model(**inputs)
 
-    assert torch.equal(noncombat, baseline)
-
-    inputs["numeric"][:, ENEMY_MAX_HP_MEASUREMENT_INDEX] = 1.0
-    model.population_adapter_scale = 0.0
-    combat_baseline = model(**inputs)
-    model.population_adapter_scale = 1.0
-    corrected = model(**inputs)
-
-    assert torch.equal(corrected[:, :-1], combat_baseline[:, :-1])
-    assert torch.allclose(corrected[:, -1], combat_baseline[:, -1] + 1.0)
+    assert prediction.shape == (1, 3)
+    assert (
+        sum(isinstance(module, torch.nn.Embedding) for module in model.modules()) == 1
+    )

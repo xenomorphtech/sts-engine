@@ -353,16 +353,33 @@ pub struct TrainingAction {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ActionParameters {
-    /// False for actions whose immediate resource effect is intentionally not
-    /// evaluated (notably combat actions and room transitions).
+    /// False only when cloning the action would cross an intentionally opaque
+    /// room transition.
     pub known: bool,
     pub hp_delta: i32,
     pub max_hp_delta: i32,
+    pub enemy_hp_delta: i32,
+    pub block_delta: i32,
+    pub enemy_block_delta: i32,
+    pub energy_delta: i32,
     pub gold_delta: i32,
+    pub hand_delta: i32,
+    pub draw_delta: i32,
+    pub discard_delta: i32,
+    pub exhaust_delta: i32,
     pub deck_size_delta: i32,
     pub upgraded_cards_delta: i32,
     pub relic_delta: i32,
     pub potion_delta: i32,
+    pub orb_slots_delta: i32,
+    pub filled_orbs_delta: i32,
+    pub orb_evoke_delta: i32,
+    pub incoming_attack_delta: i32,
+    pub living_enemies_delta: i32,
+    pub turn_delta: i32,
+    pub cards_played_delta: i32,
+    pub player_power_delta: i32,
+    pub enemy_power_delta: i32,
 }
 
 pub const TRAINING_FEATURE_BUCKETS: u64 = 32_768;
@@ -744,6 +761,91 @@ fn occupied_potion_slots(game: &Game) -> i32 {
         .count() as i32
 }
 
+#[derive(Clone, Copy)]
+struct ActionSnapshot {
+    hp: i32,
+    max_hp: i32,
+    block: i32,
+    energy: i32,
+    gold: i32,
+    hand: i32,
+    draw: i32,
+    discard: i32,
+    exhaust: i32,
+    deck_size: i32,
+    upgraded_cards: i32,
+    relics: i32,
+    potions: i32,
+    orb_slots: i32,
+    filled_orbs: i32,
+    dark_evoke: i32,
+    player_power: i32,
+    turn: i32,
+    cards_played: i32,
+    living_enemies: i32,
+    enemy_hp: i32,
+    enemy_block: i32,
+    enemy_power: i32,
+    incoming_attack: i32,
+}
+
+impl ActionSnapshot {
+    fn from_game(game: &Game) -> Self {
+        let mut snapshot = Self {
+            hp: game.player.hp,
+            max_hp: game.player.max_hp,
+            block: game.player.block,
+            energy: game.player.energy,
+            gold: game.player.gold,
+            hand: game.player.hand.len() as i32,
+            draw: game.player.draw.len() as i32,
+            discard: game.player.discard.len() as i32,
+            exhaust: game.player.exhaust.len() as i32,
+            deck_size: game.player.deck.len() as i32,
+            upgraded_cards: game.player.deck.iter().filter(|card| card.upgraded).count() as i32,
+            relics: game.player.relics.len() as i32,
+            potions: occupied_potion_slots(game),
+            orb_slots: game.player.max_orbs,
+            filled_orbs: game.player.orbs.len() as i32,
+            dark_evoke: game.player.orbs.iter().map(|orb| orb.evoke.max(0)).sum(),
+            player_power: game
+                .player
+                .powers
+                .iter()
+                .map(|power| power.amount.abs())
+                .sum(),
+            turn: 0,
+            cards_played: 0,
+            living_enemies: 0,
+            enemy_hp: 0,
+            enemy_block: 0,
+            enemy_power: 0,
+            incoming_attack: 0,
+        };
+        if let Some(combat) = &game.combat {
+            snapshot.turn = combat.turn;
+            snapshot.cards_played = combat.cards_played_this_turn;
+            for monster in combat
+                .monsters
+                .iter()
+                .filter(|monster| !monster.dead && !monster.escaped)
+            {
+                snapshot.living_enemies += 1;
+                snapshot.enemy_hp += monster.hp.max(0);
+                snapshot.enemy_block += monster.block.max(0);
+                snapshot.enemy_power += monster
+                    .powers
+                    .iter()
+                    .map(|power| power.amount.abs())
+                    .sum::<i32>();
+                snapshot.incoming_attack +=
+                    monster.intent_damage.max(0) * monster.intent_hits.max(1);
+            }
+        }
+        snapshot
+    }
+}
+
 fn action_parameters(game: &Game, action: &Action) -> ActionParameters {
     let parameterized_screen = matches!(
         game.screen,
@@ -757,32 +859,46 @@ fn action_parameters(game: &Game, action: &Action) -> ActionParameters {
             | Screen::Shop
             | Screen::Grid
     );
-    if game.combat.is_some()
-        || !parameterized_screen
-        || !matches!(action, Action::Choose { .. } | Action::Skip)
-    {
+    let combat_action = game.combat.is_some() && !matches!(action, Action::Quit);
+    let noncombat_action = parameterized_screen
+        && matches!(
+            action,
+            Action::Choose { .. } | Action::Skip | Action::Potion { .. }
+        );
+    if !combat_action && !noncombat_action {
         return ActionParameters::default();
     }
 
-    let before_upgrades = game.player.deck.iter().filter(|card| card.upgraded).count() as i32;
-    let before_potions = occupied_potion_slots(game);
-    let mut after = game.clone();
-    after.step(action);
+    let before = ActionSnapshot::from_game(game);
+    let mut after_game = game.clone();
+    after_game.step(action);
+    let after = ActionSnapshot::from_game(&after_game);
     ActionParameters {
         known: true,
-        hp_delta: after.player.hp - game.player.hp,
-        max_hp_delta: after.player.max_hp - game.player.max_hp,
-        gold_delta: after.player.gold - game.player.gold,
-        deck_size_delta: after.player.deck.len() as i32 - game.player.deck.len() as i32,
-        upgraded_cards_delta: after
-            .player
-            .deck
-            .iter()
-            .filter(|card| card.upgraded)
-            .count() as i32
-            - before_upgrades,
-        relic_delta: after.player.relics.len() as i32 - game.player.relics.len() as i32,
-        potion_delta: occupied_potion_slots(&after) - before_potions,
+        hp_delta: after.hp - before.hp,
+        max_hp_delta: after.max_hp - before.max_hp,
+        enemy_hp_delta: after.enemy_hp - before.enemy_hp,
+        block_delta: after.block - before.block,
+        enemy_block_delta: after.enemy_block - before.enemy_block,
+        energy_delta: after.energy - before.energy,
+        gold_delta: after.gold - before.gold,
+        hand_delta: after.hand - before.hand,
+        draw_delta: after.draw - before.draw,
+        discard_delta: after.discard - before.discard,
+        exhaust_delta: after.exhaust - before.exhaust,
+        deck_size_delta: after.deck_size - before.deck_size,
+        upgraded_cards_delta: after.upgraded_cards - before.upgraded_cards,
+        relic_delta: after.relics - before.relics,
+        potion_delta: after.potions - before.potions,
+        orb_slots_delta: after.orb_slots - before.orb_slots,
+        filled_orbs_delta: after.filled_orbs - before.filled_orbs,
+        orb_evoke_delta: after.dark_evoke - before.dark_evoke,
+        incoming_attack_delta: after.incoming_attack - before.incoming_attack,
+        living_enemies_delta: after.living_enemies - before.living_enemies,
+        turn_delta: after.turn - before.turn,
+        cards_played_delta: after.cards_played - before.cards_played,
+        player_power_delta: after.player_power - before.player_power,
+        enemy_power_delta: after.enemy_power - before.enemy_power,
     }
 }
 
@@ -1179,6 +1295,36 @@ mod tests {
             .actions
             .iter()
             .all(|action| !action.features.is_empty()));
+    }
+
+    #[test]
+    fn combat_actions_expose_their_immediate_transition() {
+        let mut env = TrainEnv::defect_a0(1);
+        for _ in 0..64 {
+            if env.game.combat.is_some() {
+                break;
+            }
+            env.step(0);
+        }
+        assert!(
+            env.game.combat.is_some(),
+            "seed did not reach its first combat"
+        );
+
+        let observation = env.training_observation();
+        let play = observation
+            .actions
+            .iter()
+            .find(|action| matches!(action.action, Action::Play { .. }))
+            .expect("playable opening card");
+        assert!(play.parameters.known);
+        assert!(play.parameters.cards_played_delta >= 1);
+        assert!(
+            play.parameters.energy_delta != 0
+                || play.parameters.enemy_hp_delta != 0
+                || play.parameters.block_delta != 0
+                || play.parameters.filled_orbs_delta != 0
+        );
     }
 
     #[test]
