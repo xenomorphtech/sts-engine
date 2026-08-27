@@ -84,6 +84,10 @@ Train from scratch using all locally available A20 evidence:
 uv run --with torch --with numpy python tools/train_mean_progress.py
 ```
 
+An existing cache is a frozen data generation: newly written evaluation traces
+do not silently change later runs. Use `--rebuild-cache` when intentionally
+starting a new self-play generation from all currently available evidence.
+
 Evaluate 100 fresh A20 seeds with the default depth-12, width-8 exact planner:
 
 ```bash

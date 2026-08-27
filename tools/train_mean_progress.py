@@ -400,6 +400,18 @@ def split_tensors(
 
 
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
+    if (
+        args.cache.exists()
+        and not args.rebuild_cache
+        and args.trajectory is None
+        and args.branch is None
+    ):
+        cached = torch.load(args.cache, map_location="cpu", weights_only=False)
+        if cached.get("format") != "sts-mean-progress-data-v1":
+            raise ValueError(f"{args.cache}: unsupported dataset cache")
+        print(f"loaded frozen canonical dataset cache {args.cache}", flush=True)
+        return cached
+
     trajectory_paths = args.trajectory or sorted(
         Path("artifacts/selfplay").glob("defect-a20-*-traces.jsonl*")
     )
