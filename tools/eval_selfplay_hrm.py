@@ -1216,7 +1216,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("artifacts/selfplay/defect-a20-mean-progress-v1.pt"),
+        default=Path(
+            "artifacts/selfplay/defect-a20-mean-progress-v4-planner-selected-10m.pt"
+        ),
     )
     parser.add_argument(
         "--engine", type=Path, default=Path("target/release/sts-selfplay")

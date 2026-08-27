@@ -11,7 +11,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from train_mean_progress import final_entry, prepare, progress_target
+from train_mean_progress import final_entry, prepare, progress_target, selection_score
 
 
 def episode(floor: int, entry_hp: int, max_hp: int) -> dict:
@@ -60,3 +60,12 @@ def test_existing_implicit_cache_is_a_frozen_generation(tmp_path: Path) -> None:
     )
 
     assert loaded == expected
+
+
+def test_checkpoint_selection_tracks_progress_and_pair_ordering() -> None:
+    reference = {"progress_mae": 0.12, "branch_pair_accuracy": 0.55}
+    better_progress = {"progress_mae": 0.11, "branch_pair_accuracy": 0.55}
+    better_pairs = {"progress_mae": 0.12, "branch_pair_accuracy": 0.60}
+
+    assert selection_score(better_progress) < selection_score(reference)
+    assert selection_score(better_pairs) < selection_score(reference)

@@ -17,11 +17,11 @@ not part of the active training interface.
 
 ## Evidence available on 2026-08-27
 
-The local A20 corpus contains:
+The local A20 corpus now contains:
 
-- 27,347 complete trajectories and 3,560,274 decisions;
-- 7,280 unique seeds;
-- mean observed final floor 9.866 and maximum floor 33;
+- 29,697 complete trajectories and 3,802,739 decisions;
+- 8,430 unique seeds;
+- mean observed final floor 9.773 and maximum floor 33;
 - no A20 wins yet;
 - 283,108 exact evaluated branches grouped into 98,372 distinct action menus;
 - 169,217 combat branches and 113,891 noncombat branches.
@@ -78,7 +78,7 @@ explicit candidate-to-inventory join. It emits only:
 
 ## Commands
 
-Train from scratch using all locally available A20 evidence:
+Train from scratch for ten minutes using the frozen A20 evidence:
 
 ```bash
 uv run --with torch --with numpy python tools/train_mean_progress.py
@@ -87,6 +87,9 @@ uv run --with torch --with numpy python tools/train_mean_progress.py
 An existing cache is a frozen data generation: newly written evaluation traces
 do not silently change later runs. Use `--rebuild-cache` when intentionally
 starting a new self-play generation from all currently available evidence.
+During the run, held-out seed validation selects the exported checkpoint rather
+than blindly using the last optimizer step. `--snapshot-dir PATH` additionally
+retains time-separated checkpoints for closed-loop mean-floor selection.
 
 Evaluate 100 fresh A20 seeds with the default depth-12, width-8 exact planner:
 
@@ -95,6 +98,28 @@ uv run --with torch --with numpy python tools/eval_selfplay_hrm.py
 ```
 
 Use `--lookahead-depth 0` to measure the learned policy without search.
+
+## Promoted generation 4
+
+Generation 4 deliberately rebuilt the cache after collecting direct and exact-
+planner trajectories from several policies on common seeds. The resulting
+corpus contained 20,580 seed-balanced episodes from 8,330 unique seeds. A
+ten-minute random-initialization run produced ten one-minute snapshots.
+
+The unbounded pair objective showed a sharp temporal phase change: direct mean
+floor peaked at step 1,305 and then fell monotonically as exact-pair fitting
+continued. Selecting the early snapshot by closed-loop play raised direct mean
+floor from 7.57 to 9.42 on 200 unseen seeds, a paired gain of 1.85 floors with
+95% confidence interval `[1.23, 2.47]`.
+
+On a separate 100-seed cohort with the default exact planner, mean floor rose
+from 11.57 to 12.27. The paired estimate was +0.70 floors with 95% confidence
+interval `[-0.27, 1.67]`; this is a positive mean-floor promotion, but it needs
+larger-cohort confirmation. Neither checkpoint won an A20 run yet.
+
+The key evidence is that extra optimizer steps are harmful without new data.
+Ten-minute experiments should retain temporal snapshots and select by actual
+closed-loop mean floor; the final training step is not a valid default.
 
 ## First scratch round
 
@@ -122,5 +147,9 @@ checkpoints/caches (3.38 GiB), and seven superseded combat-model exports
 (roughly 105 MiB) were moved to the desktop trash. Raw trajectory and exact
 branch evidence was retained. The active local artifacts are:
 
-- `artifacts/selfplay/defect-a20-mean-progress-v1-data.pt`;
-- `artifacts/selfplay/defect-a20-mean-progress-v1.pt`.
+After generation 4 was promoted, its ten temporary snapshots and the
+superseded generation-1 checkpoint/cache (roughly 645 MiB total) were also
+moved to trash.
+
+- `artifacts/selfplay/defect-a20-mean-progress-v4-planner-data.pt`;
+- `artifacts/selfplay/defect-a20-mean-progress-v4-planner-selected-10m.pt`.

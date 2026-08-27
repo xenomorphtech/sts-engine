@@ -474,6 +474,37 @@ def model_call(
     return model(state, action, numeric, history, inventory, candidate, action_numeric)
 
 
+def selection_score(metrics: dict[str, float | int]) -> float:
+    return float(metrics["progress_mae"]) + 0.1 * (
+        1.0 - float(metrics["branch_pair_accuracy"])
+    )
+
+
+def cpu_state_dict(model: MeanProgressModel) -> dict[str, torch.Tensor]:
+    return {
+        name: value.detach().cpu().clone() for name, value in model.state_dict().items()
+    }
+
+
+def checkpoint_payload(
+    model_state: dict[str, torch.Tensor],
+    config: dict[str, Any],
+    prepared: dict[str, Any],
+    training: dict[str, Any],
+    metrics: dict[str, float | int],
+) -> dict[str, Any]:
+    return {
+        "format": "sts-mean-progress-v1",
+        "teacher": None,
+        "config": config,
+        "target_names": TARGET_NAMES,
+        "model": model_state,
+        "dataset_signature": prepared["signature"],
+        "training": training,
+        "validation": metrics,
+    }
+
+
 def to_device(
     batch: tuple[torch.Tensor, ...], device: torch.device
 ) -> tuple[torch.Tensor, ...]:
@@ -563,6 +594,12 @@ def train(args: argparse.Namespace) -> None:
     )
     started = time.monotonic()
     steps = 0
+    best_step = 0
+    best_elapsed_seconds = 0.0
+    best_score = float("inf")
+    best_metrics: dict[str, float | int] | None = None
+    best_model: dict[str, torch.Tensor] | None = None
+    next_validation = args.validation_interval_seconds
     point_iterator = iter(point_loader)
     pair_iterator = iter(pair_loader)
     model.train()
@@ -607,23 +644,75 @@ def train(args: argparse.Namespace) -> None:
                 flush=True,
             )
 
-    metrics = validate(
+        elapsed = time.monotonic() - started
+        if elapsed >= next_validation:
+            metrics = validate(
+                model,
+                point_validation_loader,
+                pair_validation_loader,
+                device,
+            )
+            score = selection_score(metrics)
+            model_state = cpu_state_dict(model)
+            if score < best_score:
+                best_step = steps
+                best_elapsed_seconds = elapsed
+                best_score = score
+                best_metrics = metrics
+                best_model = model_state
+            if args.snapshot_dir is not None:
+                args.snapshot_dir.mkdir(parents=True, exist_ok=True)
+                snapshot_training = {
+                    "seconds": elapsed,
+                    "steps": steps,
+                    "parameters": sum(
+                        parameter.numel() for parameter in model.parameters()
+                    ),
+                    "learning_rate": args.learning_rate,
+                    "weight_decay": args.weight_decay,
+                    "pair_loss_weight": args.pair_loss_weight,
+                    "pair_margin_scale": args.pair_margin_scale,
+                    "selection_score": score,
+                }
+                torch.save(
+                    checkpoint_payload(
+                        model_state,
+                        config,
+                        prepared,
+                        snapshot_training,
+                        metrics,
+                    ),
+                    args.snapshot_dir / f"step-{steps}.pt",
+                )
+            print(
+                f"selection step={steps} score={score:.6f} "
+                f"best={best_score:.6f} progress_mae={metrics['progress_mae']:.6f} "
+                f"pair_accuracy={metrics['branch_pair_accuracy']:.6f}",
+                flush=True,
+            )
+            next_validation += args.validation_interval_seconds
+            model.train()
+
+    final_metrics = validate(
         model,
         point_validation_loader,
         pair_validation_loader,
         device,
     )
+    final_score = selection_score(final_metrics)
+    if final_score < best_score:
+        best_step = steps
+        best_elapsed_seconds = time.monotonic() - started
+        best_score = final_score
+        best_metrics = final_metrics
+        best_model = cpu_state_dict(model)
+    assert best_model is not None and best_metrics is not None
     parameters = sum(parameter.numel() for parameter in model.parameters())
-    checkpoint = {
-        "format": "sts-mean-progress-v1",
-        "teacher": None,
-        "config": config,
-        "target_names": TARGET_NAMES,
-        "model": {
-            name: value.detach().cpu() for name, value in model.state_dict().items()
-        },
-        "dataset_signature": prepared["signature"],
-        "training": {
+    checkpoint = checkpoint_payload(
+        best_model,
+        config,
+        prepared,
+        {
             "seconds": time.monotonic() - started,
             "steps": steps,
             "parameters": parameters,
@@ -631,9 +720,13 @@ def train(args: argparse.Namespace) -> None:
             "weight_decay": args.weight_decay,
             "pair_loss_weight": args.pair_loss_weight,
             "pair_margin_scale": args.pair_margin_scale,
+            "selected_step": best_step,
+            "selected_elapsed_seconds": best_elapsed_seconds,
+            "selection_score": best_score,
+            "final_unselected_validation": final_metrics,
         },
-        "validation": metrics,
-    }
+        best_metrics,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(checkpoint, args.output)
     metrics_path = args.output.with_suffix(".metrics.json")
@@ -646,7 +739,9 @@ def train(args: argparse.Namespace) -> None:
                 "output": str(args.output),
                 "parameters": parameters,
                 "steps": steps,
-                "validation": metrics,
+                "selected_step": best_step,
+                "selection_score": best_score,
+                "validation": best_metrics,
             },
             indent=2,
         ),
@@ -661,15 +756,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache",
         type=Path,
-        default=Path("artifacts/selfplay/defect-a20-mean-progress-v1-data.pt"),
+        default=Path("artifacts/selfplay/defect-a20-mean-progress-v4-planner-data.pt"),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/selfplay/defect-a20-mean-progress-v1.pt"),
+        default=Path(
+            "artifacts/selfplay/defect-a20-mean-progress-v4-planner-selected-10m.pt"
+        ),
     )
     parser.add_argument("--rebuild-cache", action="store_true")
-    parser.add_argument("--seconds", type=float, default=180.0)
+    parser.add_argument("--seconds", type=float, default=600.0)
     parser.add_argument("--hidden-size", type=int, default=96)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
@@ -681,6 +778,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pairs-per-menu", type=int, default=4)
     parser.add_argument("--pair-loss-weight", type=float, default=0.5)
     parser.add_argument("--pair-margin-scale", type=float, default=4.0)
+    parser.add_argument("--validation-interval-seconds", type=float, default=60.0)
+    parser.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
     parser.add_argument("--seed", type=int, default=20260827)
     args = parser.parse_args()
@@ -696,6 +795,7 @@ def parse_args() -> argparse.Namespace:
             args.episodes_per_seed,
             args.pairs_per_menu,
             args.pair_margin_scale,
+            args.validation_interval_seconds,
         )
         <= 0
         or args.weight_decay < 0
