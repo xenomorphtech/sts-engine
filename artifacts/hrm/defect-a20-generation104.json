@@ -1,0 +1,68 @@
+{
+  "ascension": 20,
+  "character": "defect",
+  "checkpoint": {
+    "path": "artifacts/selfplay/defect-a20-generation104-current-multicohort-noncombat-60s.pt",
+    "sha256": "5bff4da594b2da6efbe3a543baae2ac31f3c31b01fcd9917e6d0e1a0eae45938"
+  },
+  "initialized_from": "artifacts/selfplay/defect-a20-generation18-multicohort-menu-combat-pairwise-120s.pt",
+  "training": {
+    "module": "counterfactual_value_adapter",
+    "noncombat_only": true,
+    "seconds": 60,
+    "train_menus": 4278,
+    "validation_menus": 338,
+    "validation_pairwise_accuracy": 0.5317919075144508,
+    "validation_top1_accuracy": 0.46449704142011833,
+    "branch_datasets": [
+      {
+        "path": "artifacts/selfplay/defect-a20-generation101-head-branches-seed20262072-branches.jsonl.xz",
+        "sha256": "c741accd0f18c3b98ab7834ec3f10c418c8f5951e08a038adbefcb1ee2f46137"
+      },
+      {
+        "path": "artifacts/selfplay/defect-a20-generation103-current-branches-seed20262077-branches.jsonl.xz",
+        "sha256": "0fdd949d81e2e662cef5dd8c8953c0121684f6473859082d3ebcb870925a22d4"
+      },
+      {
+        "path": "artifacts/selfplay/defect-a20-generation103-current-branches-seed20262078-branches.jsonl.xz",
+        "sha256": "cc246821e94d3883ef401d3e40533dcc20d79b471b49bb3f966b76586348fd1d"
+      },
+      {
+        "path": "artifacts/selfplay/defect-a20-generation103-current-branches-seed20262079-branches.jsonl.xz",
+        "sha256": "0232abfff2e20eb4e2aada1d6dd5db0e8cb239fceae5fa8d9fe72ba3e97856b8"
+      }
+    ]
+  },
+  "evaluation": {
+    "counterfactual_outside_weight": 0.01,
+    "lookahead_depth": 12,
+    "lookahead_beam_width": 8,
+    "lookahead_beam_expansion": 4,
+    "lookahead_candidates": 3,
+    "lookahead_noncombat_depth": 64,
+    "cohorts": [
+      {
+        "seed_source": 20262080,
+        "episodes": 50,
+        "control_mean_floor": 11.12,
+        "candidate_mean_floor": 11.82
+      },
+      {
+        "seed_source": 20262081,
+        "episodes": 100,
+        "control_mean_floor": 10.43,
+        "candidate_mean_floor": 11.35,
+        "same_floor_entry_hp_delta": -0.9655172413793104
+      }
+    ],
+    "combined_paired_mean_floor_delta": 0.8466666666666667,
+    "combined_confidence_95": [
+      0.07755480031175577,
+      1.6157785330215777
+    ],
+    "improved_seeds": 61,
+    "regressed_seeds": 43,
+    "unchanged_seeds": 46,
+    "wins": 0
+  }
+}

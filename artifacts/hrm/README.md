@@ -392,3 +392,40 @@ Lower ascensions retain their previous behavior, and
 `--no-lookahead-noncombat` provides an explicit ablation. The combat beam still
 uses `--lookahead-depth`; only the noncombat root continuation uses the longer
 horizon. No A20 run has won yet.
+
+### Current-source A20 noncombat branch residual
+
+A clean release rebuild established a new current-source control before the
+next training round. On seed sources `20262077`, `20262078`, and `20262079`,
+the depth-12/width-8/noncombat-64 policy scored mean floors 11.80, 11.50, and
+11.08. These runs exported 22,753 exact branch records; source `20262072`
+contributed another 4,770. The older 14.80 selection result above came from a
+previous release artifact and is historical evidence, not the current-source
+promotion baseline.
+
+An isolated counterfactual residual was fine-tuned on the four current branch
+sets, restricted to noncombat menus. The seed split contained 4,278 training
+menus and 338 validation menus. Offline accuracy was modest (53.18% pairwise,
+46.45% top-1), so the residual was applied at only 0.01 weight and judged by
+fresh closed-loop runs:
+
+| Seed source | Episodes | Control mean | Residual mean | Delta |
+| --- | ---: | ---: | ---: | ---: |
+| `20262080` | 50 | 11.12 | 11.82 | +0.70 |
+| `20262081` | 100 | 10.43 | 11.35 | +0.92 |
+| Combined | 150 | 10.66 | 11.51 | **+0.847** |
+
+The combined paired 95% confidence interval is `[+0.078, +1.616]`: 61 seeds
+improved, 43 regressed, and 46 tied. The 100-seed confirmation's 29 same-floor
+pairs entered their frontier with 0.97 less HP on average, so this promotion is
+supported by converted floors, not by a diagnostic HP improvement. Mean final
+floor remains the selection objective; HP remains a within-frontier
+continuation signal.
+
+The local checkpoint is
+`artifacts/selfplay/defect-a20-generation104-current-multicohort-noncombat-60s.pt`
+(SHA-256 `5bff4da594b2da6efbe3a543baae2ac31f3c31b01fcd9917e6d0e1a0eae45938`).
+It is intentionally ignored with the other generated self-play artifacts; the
+tracked experiment manifest records its inputs and gate. Evaluate it with
+`--counterfactual-outside-weight 0.01`. Scale zero exactly recovers the
+incumbent checkpoint. No A20 run has won yet.
