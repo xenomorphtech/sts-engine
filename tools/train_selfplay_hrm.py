@@ -81,6 +81,11 @@ MEASUREMENT_SPECS = (
     # Append-only: old checkpoints retain their original numeric prefix.
     ("ascension", 20.0),
 )
+ENEMY_MAX_HP_MEASUREMENT_INDEX = next(
+    index
+    for index, (name, _) in enumerate(MEASUREMENT_SPECS)
+    if name == "enemy_max_hp"
+)
 ACTION_PARAMETER_SPECS = (
     ("known", 1.0),
     ("hp_delta", 100.0),
@@ -302,14 +307,14 @@ CHOICE_NONE_ID = feature_token_id("IDENTITY:CHOICE_NONE")
 def candidate_identity_features(
     observation: dict[str, Any], selected: dict[str, Any], in_combat: bool
 ) -> list[int]:
-    """Give every action in an inventory-choice menu a critic identity.
+    """Expose explicit card/relic identities carried by a legal action.
 
     Older traces predate the engine-side marker on Skip/leave actions. Adding
     the stable marker while preprocessing keeps those alternatives explicitly
     conditioned on the current deck and relics.
     """
     if in_combat:
-        return []
+        return list(selected.get("candidate_identities", []))
     identities = list(selected.get("candidate_identities", []))
     if not identities and any(
         action.get("candidate_identities") for action in observation["actions"]
@@ -467,6 +472,7 @@ def prepare(
         "max_history_steps": MAX_HISTORY_STEPS,
         "measurement_specs": MEASUREMENT_SPECS,
         "action_parameter_specs": ACTION_PARAMETER_SPECS,
+        "combat_candidate_identities": True,
         "targets": TARGET_NAMES,
         "branch_only": branch_only,
         "preprocess_version": 8,
@@ -790,8 +796,11 @@ class ActionConditionedStateAttention(nn.Module):
         scores = torch.einsum("bhd,bthd->bht", query, key) / math.sqrt(
             self.head_size
         )
-        scores = scores.masked_fill(~state_mask.unsqueeze(1), -torch.inf)
-        weights = F.softmax(scores.float(), dim=-1).to(value.dtype)
+        visible = state_mask.unsqueeze(1)
+        weights = F.softmax(scores.masked_fill(~visible, -1e4).float(), dim=-1)
+        weights = weights * visible
+        weights = weights / weights.sum(-1, keepdim=True).clamp_min(1e-6)
+        weights = weights.to(value.dtype)
         attended = torch.einsum("bht,bthd->bhd", weights, value)
         return self.output(attended.reshape(batch, hidden))
 
@@ -903,6 +912,7 @@ class CounterfactualChoiceCritic(nn.Module):
         numeric_size: int,
         action_numeric_size: int = 0,
         action_numeric_mode: str = "additive",
+        combat_menu_residual: bool = False,
     ):
         super().__init__()
         if action_numeric_mode not in (
@@ -913,6 +923,8 @@ class CounterfactualChoiceCritic(nn.Module):
             raise ValueError(f"unsupported action numeric mode {action_numeric_mode!r}")
         self.action_numeric_mode = action_numeric_mode
         self.menu_residual_scale = 1.0
+        self.combat_menu_residual_scale = 1.0
+        self.combat_menu_residual_min_enemy_hp = 1.0
         self.embedding = nn.Embedding(
             FEATURE_BUCKETS + 1, hidden_size, padding_idx=0
         )
@@ -967,9 +979,22 @@ class CounterfactualChoiceCritic(nn.Module):
             )
             else None
         )
+        self.combat_menu_residual = (
+            nn.Sequential(
+                nn.RMSNorm(hidden_size * 8 + action_numeric_size),
+                nn.Linear(hidden_size * 8 + action_numeric_size, hidden_size * 2),
+                nn.SiLU(),
+                nn.Linear(hidden_size * 2, 1),
+            )
+            if action_numeric_size and combat_menu_residual
+            else None
+        )
         if self.menu_residual is not None:
             nn.init.zeros_(self.menu_residual[-1].weight)
             nn.init.zeros_(self.menu_residual[-1].bias)
+        if self.combat_menu_residual is not None:
+            nn.init.zeros_(self.combat_menu_residual[-1].weight)
+            nn.init.zeros_(self.combat_menu_residual[-1].bias)
 
     @staticmethod
     def pool(embedded: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -1062,6 +1087,25 @@ class CounterfactualChoiceCritic(nn.Module):
             known = action_numeric[:, :1].clamp(0.0, 1.0)
             value = value + self.menu_residual_scale * known * self.menu_residual(
                 torch.cat((context, action_numeric), dim=-1)
+            )
+        if self.combat_menu_residual is not None:
+            if action_numeric is None:
+                raise ValueError(
+                    "action parameters are required by this combat menu residual"
+                )
+            enemy_hp_scale = MEASUREMENT_SPECS[
+                ENEMY_MAX_HP_MEASUREMENT_INDEX
+            ][1]
+            combat = (
+                numeric[:, ENEMY_MAX_HP_MEASUREMENT_INDEX] * enemy_hp_scale
+                >= self.combat_menu_residual_min_enemy_hp
+            ).to(value.dtype)
+            value = value + (
+                self.combat_menu_residual_scale
+                * combat.unsqueeze(1)
+                * self.combat_menu_residual(
+                    torch.cat((context, action_numeric), dim=-1)
+                )
             )
         return value.squeeze(1)
 
@@ -1167,6 +1211,7 @@ class SelfPlayHrm(nn.Module):
                 self.choice_numeric_size,
                 self.action_numeric_size,
                 self.action_numeric_mode,
+                bool(config.get("combat_menu_residual", False)),
             )
             if self.architecture == "hrm_choice_critic_ssm"
             and self.choice_value_index is not None
@@ -1176,6 +1221,12 @@ class SelfPlayHrm(nn.Module):
         if self.choice_critic is not None:
             self.choice_critic.menu_residual_scale = float(
                 config.get("menu_residual_scale", 1.0)
+            )
+            self.choice_critic.combat_menu_residual_scale = float(
+                config.get("combat_menu_residual_scale", 1.0)
+            )
+            self.choice_critic.combat_menu_residual_min_enemy_hp = float(
+                config.get("combat_menu_residual_min_enemy_hp", 1.0)
             )
         self.low = GatedBlock(hidden, expansion)
         self.high = GatedBlock(hidden, expansion)
@@ -1207,6 +1258,9 @@ class SelfPlayHrm(nn.Module):
         self.counterfactual_adapter_min_enemy_hp = float(
             config.get("counterfactual_adapter_min_enemy_hp", 0.0)
         )
+        self.counterfactual_adapter_combat_identities = bool(
+            config.get("counterfactual_adapter_combat_identities", False)
+        )
         self.counterfactual_value_adapter = (
             nn.Sequential(
                 nn.RMSNorm(adapter_input_width),
@@ -1221,6 +1275,58 @@ class SelfPlayHrm(nn.Module):
         if self.counterfactual_value_adapter is not None:
             nn.init.zeros_(self.counterfactual_value_adapter[-1].weight)
             nn.init.zeros_(self.counterfactual_value_adapter[-1].bias)
+        self.population_adapter_scale = float(
+            config.get("population_adapter_scale", 1.0)
+        )
+        self.population_adapter_combat_identities = bool(
+            config.get("population_adapter_combat_identities", True)
+        )
+        self.population_adapter_noncombat_only = bool(
+            config.get("population_adapter_noncombat_only", False)
+        )
+        self.population_adapter_combat_only = bool(
+            config.get("population_adapter_combat_only", False)
+        )
+        if (
+            self.population_adapter_noncombat_only
+            and self.population_adapter_combat_only
+        ):
+            raise ValueError("population adapter cannot be both combat- and noncombat-only")
+        self.population_relational_inventory = bool(
+            config.get("population_relational_inventory", False)
+        )
+        self.population_inventory_memory = (
+            CandidateInventoryMemory(hidden)
+            if self.population_relational_inventory
+            else None
+        )
+        self.population_action_attention = bool(
+            config.get("population_action_attention", False)
+        )
+        self.population_state_attention = (
+            ActionConditionedStateAttention(hidden)
+            if self.population_action_attention
+            else None
+        )
+        population_adapter_input_width = adapter_input_width + (
+            hidden if self.population_inventory_memory is not None else 0
+        ) + (
+            hidden if self.population_state_attention is not None else 0
+        )
+        self.population_value_adapter = (
+            nn.Sequential(
+                nn.RMSNorm(population_adapter_input_width),
+                nn.Linear(population_adapter_input_width, hidden * 2),
+                nn.SiLU(),
+                nn.Linear(hidden * 2, 1),
+            )
+            if config.get("population_value_adapter", False)
+            and self.choice_value_index is not None
+            else None
+        )
+        if self.population_value_adapter is not None:
+            nn.init.zeros_(self.population_value_adapter[-1].weight)
+            nn.init.zeros_(self.population_value_adapter[-1].bias)
 
     def pool(self, ids: torch.Tensor) -> torch.Tensor:
         embedded = self.embedding(ids)
@@ -1237,6 +1343,14 @@ class SelfPlayHrm(nn.Module):
         candidate_identity_ids: torch.Tensor | None = None,
         action_numeric: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        def routed_candidate_identities(include_combat: bool) -> torch.Tensor | None:
+            if candidate_identity_ids is None or include_combat:
+                return candidate_identity_ids
+            if numeric is None:
+                return candidate_identity_ids
+            combat = numeric[:, ENEMY_MAX_HP_MEASUREMENT_INDEX].gt(0.0)
+            return candidate_identity_ids.masked_fill(combat.unsqueeze(1), 0)
+
         state_embedded = self.embedding(state_ids)
         state_mask = state_ids.ne(0)
         state = self.state_projection(
@@ -1281,7 +1395,9 @@ class SelfPlayHrm(nn.Module):
                     "relational checkpoint"
                 )
             inventory_memory = self.inventory_memory(
-                inventory_ids, candidate_identity_ids, self.embedding
+                inventory_ids,
+                routed_candidate_identities(False),
+                self.embedding,
             )
             problem = problem + inventory_memory
         high = torch.zeros_like(problem)
@@ -1298,33 +1414,79 @@ class SelfPlayHrm(nn.Module):
         actor_context = torch.cat((high, state, action, *context_parts), dim=-1)
         prediction = self.output(actor_context)
         counterfactual_correction = None
-        if self.counterfactual_value_adapter is not None:
+        population_correction = None
+        if (
+            self.counterfactual_value_adapter is not None
+            or self.population_value_adapter is not None
+        ):
             if inventory_ids is None or candidate_identity_ids is None:
                 raise ValueError(
-                    "inventory and candidate identity IDs are required by the "
-                    "counterfactual-value adapter"
+                    "inventory and candidate identity IDs are required by value adapters"
                 )
-            adapter_parts = [
-                actor_context,
-                self.pool(inventory_ids),
-                self.pool(candidate_identity_ids),
-            ]
-            if self.numeric_size > self.numeric_prefix_size:
-                if numeric is None:
-                    raise ValueError(
-                        "numeric measurements are required by the "
-                        "counterfactual-value adapter"
+
+            def adapter_input(
+                include_combat_identities: bool,
+                relational_inventory: bool = False,
+                action_attention: bool = False,
+            ) -> torch.Tensor:
+                routed_candidates = routed_candidate_identities(
+                    include_combat_identities
+                )
+                assert routed_candidates is not None
+                adapter_parts = [
+                    actor_context,
+                    self.pool(inventory_ids),
+                    self.pool(routed_candidates),
+                ]
+                if relational_inventory:
+                    if self.population_inventory_memory is None:
+                        raise ValueError(
+                            "relational population input requires inventory memory"
+                        )
+                    adapter_parts.append(
+                        self.population_inventory_memory(
+                            inventory_ids,
+                            routed_candidates,
+                            self.embedding,
+                        )
                     )
-                adapter_parts.append(numeric[:, self.numeric_prefix_size :])
-            if self.action_numeric_size:
-                if action_numeric is None:
-                    raise ValueError(
-                        "action parameters are required by the "
-                        "counterfactual-value adapter"
+                if action_attention:
+                    if self.population_state_attention is None:
+                        raise ValueError(
+                            "action-attentive population input requires state attention"
+                        )
+                    adapter_parts.append(
+                        self.population_state_attention(
+                            state_embedded,
+                            state_mask,
+                            action,
+                        )
                     )
-                adapter_parts.append(action_numeric)
+                if self.numeric_size > self.numeric_prefix_size:
+                    if numeric is None:
+                        raise ValueError(
+                            "numeric measurements are required by value adapters"
+                        )
+                    adapter_parts.append(numeric[:, self.numeric_prefix_size :])
+                if self.action_numeric_size:
+                    if action_numeric is None:
+                        raise ValueError(
+                            "action parameters are required by value adapters"
+                        )
+                    adapter_parts.append(action_numeric)
+                return torch.cat(adapter_parts, dim=-1)
+
+        if self.counterfactual_value_adapter is not None:
             counterfactual_correction = self.counterfactual_value_adapter(
-                torch.cat(adapter_parts, dim=-1)
+                adapter_input(self.counterfactual_adapter_combat_identities)
+            ).squeeze(1)
+        if self.population_value_adapter is not None:
+            population_correction = self.population_value_adapter(
+                adapter_input(
+                    self.population_adapter_combat_identities,
+                    self.population_relational_inventory,
+                    self.population_action_attention,
+                )
             ).squeeze(1)
         if self.choice_critic is not None:
             if (
@@ -1341,7 +1503,7 @@ class SelfPlayHrm(nn.Module):
                 action_ids,
                 numeric[:, : self.choice_numeric_size],
                 inventory_ids,
-                candidate_identity_ids,
+                routed_candidate_identities(False),
                 action_numeric,
             ).unsqueeze(1)
             index = self.choice_value_index
@@ -1352,27 +1514,43 @@ class SelfPlayHrm(nn.Module):
                 (prediction, choice_value),
                 dim=1,
             )
-        if counterfactual_correction is not None:
+        if counterfactual_correction is not None or population_correction is not None:
             index = self.choice_value_index
             assert index is not None
-            if self.counterfactual_adapter_min_enemy_hp > 0.0:
+            prediction = prediction.clone()
+            if counterfactual_correction is not None and (
+                self.counterfactual_adapter_min_enemy_hp > 0.0
+            ):
                 assert numeric is not None
-                measurement_index = next(
-                    index
-                    for index, (name, _) in enumerate(MEASUREMENT_SPECS)
-                    if name == "enemy_max_hp"
-                )
+                measurement_index = ENEMY_MAX_HP_MEASUREMENT_INDEX
                 enemy_hp_scale = MEASUREMENT_SPECS[measurement_index][1]
                 gate = (
                     numeric[:, measurement_index] * enemy_hp_scale
                     >= self.counterfactual_adapter_min_enemy_hp
                 ).to(counterfactual_correction.dtype)
                 counterfactual_correction = counterfactual_correction * gate
-            prediction = prediction.clone()
-            prediction[:, index] = (
-                prediction[:, index]
-                + self.counterfactual_adapter_scale * counterfactual_correction
-            )
+            if counterfactual_correction is not None:
+                prediction[:, index] = (
+                    prediction[:, index]
+                    + self.counterfactual_adapter_scale * counterfactual_correction
+                )
+            if population_correction is not None:
+                if self.population_adapter_noncombat_only:
+                    assert numeric is not None
+                    noncombat = numeric[
+                        :, ENEMY_MAX_HP_MEASUREMENT_INDEX
+                    ].eq(0.0).to(population_correction.dtype)
+                    population_correction = population_correction * noncombat
+                if self.population_adapter_combat_only:
+                    assert numeric is not None
+                    combat = numeric[
+                        :, ENEMY_MAX_HP_MEASUREMENT_INDEX
+                    ].gt(0.0).to(population_correction.dtype)
+                    population_correction = population_correction * combat
+                prediction[:, index] = (
+                    prediction[:, index]
+                    + self.population_adapter_scale * population_correction
+                )
         return prediction
 
 
@@ -1705,13 +1883,23 @@ def train(args: argparse.Namespace) -> None:
             config["counterfactual_value_adapter"] = (
                 args.counterfactual_adapter_only
             )
+            config["counterfactual_adapter_combat_identities"] = (
+                args.counterfactual_adapter_combat_identities
+            )
         else:
-            if tuple(initial_checkpoint["target_names"]) != TARGET_NAMES:
+            initial_target_names = tuple(initial_checkpoint["target_names"])
+            initial_actor_names = tuple(
+                config.get("actor_target_names", initial_target_names)
+            )
+            if initial_actor_names != TARGET_NAMES or (
+                initial_target_names[: len(TARGET_NAMES)] != TARGET_NAMES
+            ):
                 raise ValueError(
-                    "initial checkpoint target heads do not match; "
+                    "initial checkpoint actor target heads do not match; "
                     "use --expand-init-schema for an append-only migration"
                 )
-            config["target_names"] = TARGET_NAMES
+            config["target_names"] = initial_target_names
+            config["actor_target_names"] = initial_actor_names
     else:
         config = {
             **DEFAULTS,
@@ -2048,6 +2236,14 @@ def parse_args() -> argparse.Namespace:
             "counterfactual-value residual from exact branch records"
         ),
     )
+    parser.add_argument(
+        "--counterfactual-adapter-combat-identities",
+        action="store_true",
+        help=(
+            "let the isolated counterfactual adapter join played-card identity "
+            "tokens with the full deck during combat"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260826)
     args = parser.parse_args()
     if args.dataset is None:
@@ -2064,6 +2260,14 @@ def parse_args() -> argparse.Namespace:
         parser.error("counterfactual-adapter-only requires expand-init-schema")
     if args.counterfactual_adapter_only and args.search_head_only:
         parser.error("counterfactual adapter and search head modes are mutually exclusive")
+    if (
+        args.counterfactual_adapter_combat_identities
+        and not args.counterfactual_adapter_only
+    ):
+        parser.error(
+            "counterfactual-adapter-combat-identities requires "
+            "counterfactual-adapter-only"
+        )
     if (
         args.seconds <= 0
         or args.hidden_size <= 0

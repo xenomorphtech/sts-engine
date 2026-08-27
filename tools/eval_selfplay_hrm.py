@@ -212,6 +212,21 @@ def observation_key(observation: dict[str, Any]) -> tuple[int, ...]:
     return tuple(key)
 
 
+def replay_policy_state(
+    prefix: list[dict[str, Any]],
+) -> tuple[list[int], dict[tuple[int, ...], set[int]]]:
+    """Rebuild policy memory consumed while producing a replayed prefix."""
+    history: list[int] = []
+    tried: dict[tuple[int, ...], set[int]] = {}
+    for transition in prefix:
+        observation = transition["observation"]
+        action_index = int(transition["action_index"])
+        history.append(decision_signature(observation, action_index))
+        key = observation_key(observation)
+        tried.setdefault(key, set()).add(action_index)
+    return history, tried
+
+
 @torch.inference_mode()
 def rank_actions(
     model: SelfPlayHrm,
@@ -385,6 +400,7 @@ def branch_score(
     root: dict[str, Any],
     leaf: dict[str, Any],
     learned_leaf_value: float,
+    combat_hp_weight: float = 20.0,
 ) -> float:
     """Score an exact self-play branch without a scripted action target."""
     measurements = leaf["measurements"]
@@ -438,7 +454,7 @@ def branch_score(
         return -500.0 + learned_leaf_value
     return (
         50.0 * damage_progress
-        + 20.0 * hp_fraction
+        + combat_hp_weight * hp_fraction
         - 0.10 * measurements["incoming_attack"]
         + learned_leaf_value
     )
@@ -551,7 +567,10 @@ def improve_with_exact_combat_beam(
             learned_leaf = candidates[0][0]
             environment = int(meta["environment"])
             score = branch_score(
-                rows[environment]["measurements"], leaf, learned_leaf
+                rows[environment]["measurements"],
+                leaf,
+                learned_leaf,
+                args.lookahead_combat_hp_weight,
             )
             scores.append(score)
             key = (environment, int(meta["root_action"]))
@@ -787,7 +806,12 @@ def improve_with_exact_lookahead(
         zip(branch_roots, branch_rows)
     ):
         learned_leaf = leaf_ranked.get(branch, [(prior, action)])[0][0]
-        score = branch_score(rows[environment]["measurements"], leaf, learned_leaf)
+        score = branch_score(
+            rows[environment]["measurements"],
+            leaf,
+            learned_leaf,
+            args.lookahead_combat_hp_weight,
+        )
         key = (environment, action)
         action_samples.setdefault(key, []).append(score)
     action_values: dict[tuple[int, int], float] = {}
@@ -837,6 +861,7 @@ def load_resume_prefixes(
     min_floor: int,
     min_enemy_hp: int,
     max_enemy_hp: int | None,
+    min_terminal_floor: int,
     max_terminal_enemy_hp: int | None,
 ) -> tuple[list[int], list[list[dict[str, Any]]], list[dict[str, Any]]]:
     source: TextIO
@@ -854,6 +879,11 @@ def load_resume_prefixes(
             episode = json.loads(line)
             if episode.get("schema_version") != 1:
                 raise ValueError(f"{path}:{line_number}: unsupported trace schema")
+            terminal_floor = int(
+                episode.get("result", {}).get("max_floor", -1)
+            )
+            if terminal_floor < min_terminal_floor:
+                continue
             if max_terminal_enemy_hp is not None:
                 terminal_enemy_hp = int(
                     episode.get("result", {}).get("terminal", {}).get(
@@ -917,12 +947,40 @@ def evaluate(args: argparse.Namespace) -> None:
         model.counterfactual_adapter_min_enemy_hp = (
             args.counterfactual_adapter_min_enemy_hp
         )
+    if args.population_adapter_scale is not None:
+        if model.population_value_adapter is None:
+            raise ValueError(
+                "population-adapter-scale requires a population-adapter checkpoint"
+            )
+        model.population_adapter_scale = args.population_adapter_scale
     if args.menu_residual_scale is not None:
         if model.choice_critic is None or model.choice_critic.menu_residual is None:
             raise ValueError(
                 "menu-residual-scale requires a checkpoint with a menu residual"
             )
         model.choice_critic.menu_residual_scale = args.menu_residual_scale
+    if args.combat_menu_residual_scale is not None:
+        if (
+            model.choice_critic is None
+            or model.choice_critic.combat_menu_residual is None
+        ):
+            raise ValueError(
+                "combat-menu-residual-scale requires a combat residual checkpoint"
+            )
+        model.choice_critic.combat_menu_residual_scale = (
+            args.combat_menu_residual_scale
+        )
+    if args.combat_menu_residual_min_enemy_hp is not None:
+        if (
+            model.choice_critic is None
+            or model.choice_critic.combat_menu_residual is None
+        ):
+            raise ValueError(
+                "combat-menu-residual-min-enemy-hp requires a combat residual checkpoint"
+            )
+        model.choice_critic.combat_menu_residual_min_enemy_hp = (
+            args.combat_menu_residual_min_enemy_hp
+        )
     dataset_signature = checkpoint.get("dataset_signature", {})
     model.search_value_supported = bool(
         checkpoint.get(
@@ -944,6 +1002,7 @@ def evaluate(args: argparse.Namespace) -> None:
             args.resume_min_floor,
             args.resume_min_enemy_hp,
             args.resume_max_enemy_hp,
+            args.resume_min_terminal_floor,
             args.resume_max_terminal_enemy_hp,
         )
         if args.resume_copies > 1:
@@ -1004,12 +1063,7 @@ def evaluate(args: argparse.Namespace) -> None:
         histories: list[list[int]] = [[] for _ in seeds]
         if resume_prefixes is not None:
             for index, prefix in enumerate(resume_prefixes):
-                histories[index] = [
-                    decision_signature(
-                        transition["observation"], transition["action_index"]
-                    )
-                    for transition in prefix
-                ]
+                histories[index], tried_actions[index] = replay_policy_state(prefix)
                 for transition in prefix:
                     max_floors[index] = max(
                         max_floors[index],
@@ -1209,6 +1263,7 @@ def evaluate(args: argparse.Namespace) -> None:
         ),
         "resume_copies": args.resume_copies,
         "resume_max_enemy_hp": args.resume_max_enemy_hp,
+        "resume_min_terminal_floor": args.resume_min_terminal_floor,
         "resume_max_terminal_enemy_hp": args.resume_max_terminal_enemy_hp,
         "replay_steps": replay_steps,
         "episodes": len(results),
@@ -1225,6 +1280,7 @@ def evaluate(args: argparse.Namespace) -> None:
         "lookahead_beam_expansion": args.lookahead_beam_expansion,
         "lookahead_temperature": args.lookahead_temperature,
         "lookahead_optimism": args.lookahead_optimism,
+        "lookahead_combat_hp_weight": args.lookahead_combat_hp_weight,
         "lookahead_min_enemy_hp": args.lookahead_min_enemy_hp,
         "lookahead_min_floor": args.lookahead_min_floor,
         "lookahead_identity_choices_only": args.lookahead_identity_choices_only,
@@ -1245,12 +1301,29 @@ def evaluate(args: argparse.Namespace) -> None:
             if model.counterfactual_value_adapter is not None
             else None
         ),
+        "population_adapter_scale": (
+            model.population_adapter_scale
+            if model.population_value_adapter is not None
+            else None
+        ),
         "outside_search_weight": args.outside_search_weight,
         "counterfactual_outside_weight": args.counterfactual_outside_weight,
         "menu_residual_scale": (
             model.choice_critic.menu_residual_scale
             if model.choice_critic is not None
             and model.choice_critic.menu_residual is not None
+            else None
+        ),
+        "combat_menu_residual_scale": (
+            model.choice_critic.combat_menu_residual_scale
+            if model.choice_critic is not None
+            and model.choice_critic.combat_menu_residual is not None
+            else None
+        ),
+        "combat_menu_residual_min_enemy_hp": (
+            model.choice_critic.combat_menu_residual_min_enemy_hp
+            if model.choice_critic is not None
+            and model.choice_critic.combat_menu_residual is not None
             else None
         ),
         "lookahead_decisions": lookahead_decisions,
@@ -1338,6 +1411,12 @@ def parse_args() -> argparse.Namespace:
         help="resume at the first matching state no more than this enemy HP",
     )
     parser.add_argument(
+        "--resume-min-terminal-floor",
+        type=int,
+        default=0,
+        help="resume only source episodes that reached at least this floor",
+    )
+    parser.add_argument(
         "--resume-max-terminal-enemy-hp",
         type=int,
         help="resume only source episodes whose terminal enemy HP is at most this value",
@@ -1393,12 +1472,30 @@ def parse_args() -> argparse.Namespace:
         help="apply the isolated residual only in combats at or above this max HP",
     )
     parser.add_argument(
+        "--population-adapter-scale",
+        type=float,
+        help=(
+            "override the isolated population-return residual scale; zero "
+            "reproduces the incumbent checkpoint exactly"
+        ),
+    )
+    parser.add_argument(
         "--menu-residual-scale",
         type=float,
         help=(
             "override only the gated menu adapter scale; zero reproduces the "
             "underlying critic exactly"
         ),
+    )
+    parser.add_argument(
+        "--combat-menu-residual-scale",
+        type=float,
+        help="override the isolated combat menu residual scale",
+    )
+    parser.add_argument(
+        "--combat-menu-residual-min-enemy-hp",
+        type=float,
+        help="apply the combat menu residual only in active combats above this HP",
     )
     parser.add_argument("--max-steps", type=int, default=5_000)
     parser.add_argument(
@@ -1432,6 +1529,14 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="standard-deviation bonus over mean cloned-return value",
+    )
+    parser.add_argument(
+        "--lookahead-combat-hp-weight",
+        type=float,
+        help=(
+            "value of retained HP fraction at a nonterminal combat rollout leaf; "
+            "defaults to 100 on A20 and 20 otherwise"
+        ),
     )
     parser.add_argument(
         "--lookahead-min-enemy-hp",
@@ -1477,6 +1582,8 @@ def parse_args() -> argparse.Namespace:
         help="plan route, event, rest, shop, and reward choices but not combat actions",
     )
     args = parser.parse_args()
+    if args.lookahead_combat_hp_weight is None:
+        args.lookahead_combat_hp_weight = 100.0 if args.ascension == 20 else 20.0
     if (
         args.count <= 0
         or args.max_steps <= 0
@@ -1497,6 +1604,7 @@ def parse_args() -> argparse.Namespace:
         or args.lookahead_rollouts <= 0
         or args.lookahead_temperature < 0
         or args.lookahead_optimism < 0
+        or args.lookahead_combat_hp_weight < 0
         or args.lookahead_min_enemy_hp < 0
         or args.lookahead_min_floor < 0
         or args.seeds_min_floor < 0
@@ -1504,6 +1612,7 @@ def parse_args() -> argparse.Namespace:
         or args.resume_min_floor < 0
         or args.resume_min_enemy_hp < 0
         or (args.resume_max_enemy_hp is not None and args.resume_max_enemy_hp < 0)
+        or args.resume_min_terminal_floor < 0
         or (
             args.resume_max_terminal_enemy_hp is not None
             and args.resume_max_terminal_enemy_hp < 0
@@ -1521,7 +1630,19 @@ def parse_args() -> argparse.Namespace:
             args.counterfactual_adapter_min_enemy_hp is not None
             and args.counterfactual_adapter_min_enemy_hp < 0
         )
+        or (
+            args.population_adapter_scale is not None
+            and args.population_adapter_scale < 0
+        )
         or (args.menu_residual_scale is not None and args.menu_residual_scale < 0)
+        or (
+            args.combat_menu_residual_scale is not None
+            and args.combat_menu_residual_scale < 0
+        )
+        or (
+            args.combat_menu_residual_min_enemy_hp is not None
+            and args.combat_menu_residual_min_enemy_hp < 0
+        )
     ):
         parser.error("counts must be positive; temperatures and thresholds cannot be negative")
     if args.seeds_jsonl is not None and args.resume_traces_jsonl is not None:

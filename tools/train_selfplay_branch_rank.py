@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import math
 from pathlib import Path
@@ -55,7 +56,9 @@ def group_key(row: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def aggregate_action_rollouts(
-    rows: list[dict[str, Any]], score_optimism: float
+    rows: list[dict[str, Any]],
+    score_optimism: float,
+    return_aggregation: str = "mean",
 ) -> list[dict[str, Any]]:
     by_action: dict[int, list[dict[str, Any]]] = {}
     for row in rows:
@@ -66,7 +69,11 @@ def aggregate_action_rollouts(
         mean = sum(scores) / len(scores)
         variance = sum((score - mean) ** 2 for score in scores) / len(scores)
         row = dict(action_rows[0])
-        row["branch_score"] = mean + score_optimism * math.sqrt(variance)
+        row["branch_score"] = (
+            max(scores)
+            if return_aggregation == "max"
+            else mean + score_optimism * math.sqrt(variance)
+        )
         aggregated.append(row)
     return aggregated
 
@@ -97,11 +104,11 @@ def iter_winning_imitation_rows(paths: list[Path]):
 
 
 def iter_floor_return_rows(paths: list[Path]):
-    """Emit observed actions labeled only by their episode's final floor."""
+    """Emit sampled actions labeled by population progress and entry health."""
     for episode in iter_episodes(paths):
         history: list[int] = []
         seed = int(episode["result"]["seed"])
-        final_floor = float(episode["result"]["max_floor"])
+        progress_return = episode_progress_return(episode)
         for step, transition in enumerate(episode["transitions"]):
             observation = transition["observation"]
             chosen = int(transition["action_index"])
@@ -112,20 +119,154 @@ def iter_floor_return_rows(paths: list[Path]):
                 "before": transition["before"],
                 "history": list(history),
                 "action_index": chosen,
-                "branch_score": final_floor,
+                "branch_score": progress_return,
             }
             history.append(decision_signature(observation, chosen))
 
 
+def centered_policy_advantages(returns: list[float]) -> list[float]:
+    """Standardize complete-run returns within one random-seed cohort."""
+    if not returns:
+        return []
+    mean = sum(returns) / len(returns)
+    variance = sum((value - mean) ** 2 for value in returns) / len(returns)
+    if variance <= 1e-12:
+        return [0.0] * len(returns)
+    scale = math.sqrt(variance)
+    return [(value - mean) / scale for value in returns]
+
+
+def iter_seed_policy_gradient_rows(
+    paths: list[Path], noncombat_only: bool = False, combat_only: bool = False
+):
+    """Turn random rollouts into seed-centered positive and negative menus.
+
+    Every action in the sampled menu is emitted.  The selected action receives
+    the standardized complete-run floor/entry-HP advantage and alternatives
+    receive zero.  Aggregating identical visible menus therefore estimates the
+    covariance between choosing an action and population progress, while poor
+    random trajectories remain useful negative evidence.
+    """
+    returns_by_seed: dict[int, list[float]] = {}
+    for episode in iter_episodes(paths):
+        seed = int(episode["result"]["seed"])
+        returns_by_seed.setdefault(seed, []).append(
+            episode_progress_return(episode)
+        )
+    advantages_by_seed = {
+        seed: iter(centered_policy_advantages(returns))
+        for seed, returns in returns_by_seed.items()
+    }
+    for episode in iter_episodes(paths):
+        seed = int(episode["result"]["seed"])
+        advantage = next(advantages_by_seed[seed])
+        if advantage == 0.0:
+            continue
+        history: list[int] = []
+        for step, transition in enumerate(episode["transitions"]):
+            observation = transition["observation"]
+            chosen = int(transition["action_index"])
+            if noncombat_only and int(transition["before"]["enemy_max_hp"]) > 0:
+                history.append(decision_signature(observation, chosen))
+                continue
+            if combat_only and int(transition["before"]["enemy_max_hp"]) <= 0:
+                history.append(decision_signature(observation, chosen))
+                continue
+            if len(observation["actions"]) < 2:
+                history.append(decision_signature(observation, chosen))
+                continue
+            for action in observation["actions"]:
+                action_index = int(action["index"])
+                yield {
+                    "seed": seed,
+                    "step": step,
+                    "observation": observation,
+                    "before": transition["before"],
+                    "history": list(history),
+                    "action_index": action_index,
+                    "branch_score": (
+                        advantage * 1_000.0 if action_index == chosen else 0.0
+                    ),
+                }
+            history.append(decision_signature(observation, chosen))
+
+
+def episode_progress_key(episode: dict[str, Any]) -> tuple[int, int, int, float]:
+    """Rank sampled runs by broad progress, then health carried forward.
+
+    Floor is deliberately the primary component: this is a mean-floor
+    objective, not a boss/frontier threshold.  Among runs that reach the same
+    floor, prefer the one that entered it with more current HP, then more max
+    HP.  The terminal score is only a final tie-break (normally remaining
+    player HP after a win or negated remaining monster HP after a loss).
+    """
+    result = episode["result"]
+    max_floor = int(result["max_floor"])
+    entry: dict[str, Any] | None = None
+    for transition in episode["transitions"]:
+        for state in (transition["before"], transition["after"]):
+            if int(state["floor"]) == max_floor and int(state["hp"]) > 0:
+                entry = state
+                break
+        if entry is not None:
+            break
+    if entry is None:
+        entry = result["terminal"]
+    return (
+        max_floor,
+        int(entry["hp"]),
+        int(entry["max_hp"]),
+        float(result["terminal_score"]),
+    )
+
+
+def episode_progress_return(episode: dict[str, Any]) -> float:
+    """Scalar Monte-Carlo return aligned with mean floor and entry HP.
+
+    A complete floor remains more valuable than any possible Defect HP
+    difference: 200 current HP is worth one floor.  The smaller terms make
+    health, max health, and terminal
+    combat margin useful when sampled continuations reach the same floor.
+    Averaging this value across repeated state/action samples estimates the
+    population objective directly rather than applying a frontier threshold.
+    """
+    floor, hp, max_hp, terminal_score = episode_progress_key(episode)
+    return (
+        float(floor)
+        + float(hp) / 200.0
+        + float(max_hp) / 200_000.0
+        + terminal_score / 1_000_000_000.0
+    )
+
+
+def progress_prefix(episode: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keep only decisions that caused the selected floor/HP achievement.
+
+    Once the run has entered its final reached floor, later decisions belong to
+    the failed attempt to leave that floor.  Imitating them would turn the
+    terminal loss into a positive target even though it did not contribute to
+    the selected progress-and-health result.
+    """
+    max_floor = int(episode["result"]["max_floor"])
+    prefix: list[dict[str, Any]] = []
+    for transition in episode["transitions"]:
+        prefix.append(transition)
+        after = transition["after"]
+        if int(after["floor"]) == max_floor and int(after["hp"]) > 0:
+            break
+    return prefix
+
+
 def iter_seed_elite_imitation_rows(paths: list[Path], elites_per_seed: int):
-    """Imitate each seed's best self-play rollout, selected only by final floor."""
-    elites: dict[int, list[tuple[float, int, dict[str, Any]]]] = {}
+    """Imitate each seed's best progress-and-health self-play rollout."""
+    elites: dict[
+        int, list[tuple[tuple[int, int, int, float], int, dict[str, Any]]]
+    ] = {}
     serial = 0
     for episode in iter_episodes(paths):
         seed = int(episode["result"]["seed"])
-        final_floor = float(episode["result"]["max_floor"])
         candidates = elites.setdefault(seed, [])
-        candidates.append((final_floor, -serial, episode))
+        candidates.append((episode_progress_key(episode), -serial, episode))
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         del candidates[elites_per_seed:]
         serial += 1
@@ -133,7 +274,7 @@ def iter_seed_elite_imitation_rows(paths: list[Path], elites_per_seed: int):
     for seed, candidates in elites.items():
         for elite_index, (_, _, episode) in enumerate(candidates):
             history: list[int] = []
-            for step, transition in enumerate(episode["transitions"]):
+            for step, transition in enumerate(progress_prefix(episode)):
                 observation = transition["observation"]
                 chosen = int(transition["action_index"])
                 for action in observation["actions"]:
@@ -159,9 +300,15 @@ def prepare_groups(
     score_optimism: float = 0.0,
     winning_paths: list[Path] | None = None,
     floor_return_paths: list[Path] | None = None,
+    seed_policy_gradient_paths: list[Path] | None = None,
     seed_elite_paths: list[Path] | None = None,
     elites_per_seed: int = 1,
     parameterized_menus_only: bool = False,
+    min_action_samples: int = 1,
+    noncombat_only: bool = False,
+    combat_only: bool = False,
+    include_pointwise_groups: bool = False,
+    return_aggregation: str = "mean",
 ) -> dict[str, TensorDataset]:
     grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for row in iter_branch_rows(paths):
@@ -170,6 +317,10 @@ def prepare_groups(
         grouped.setdefault(("imitation", *group_key(row)), []).append(row)
     for row in iter_floor_return_rows(floor_return_paths or []):
         grouped.setdefault(("floor_return", *group_key(row)), []).append(row)
+    for row in iter_seed_policy_gradient_rows(
+        seed_policy_gradient_paths or [], noncombat_only, combat_only
+    ):
+        grouped.setdefault(("seed_policy_gradient", *group_key(row)), []).append(row)
     for row in iter_seed_elite_imitation_rows(
         seed_elite_paths or [], elites_per_seed
     ):
@@ -179,9 +330,24 @@ def prepare_groups(
     groups = [
         aggregated
         for rows in grouped.values()
-        if len(aggregated := aggregate_action_rollouts(rows, score_optimism)) >= 2
-        and max(row["branch_score"] for row in aggregated)
-        > min(row["branch_score"] for row in aggregated)
+        if min(
+            Counter(int(row["action_index"]) for row in rows).values(),
+            default=0,
+        )
+        >= min_action_samples
+        if not noncombat_only or int(rows[0]["before"]["enemy_max_hp"]) <= 0
+        if not combat_only or int(rows[0]["before"]["enemy_max_hp"]) > 0
+        if len(
+            aggregated := aggregate_action_rollouts(
+                rows, score_optimism, return_aggregation
+            )
+        )
+        >= (1 if include_pointwise_groups else 2)
+        and (
+            include_pointwise_groups
+            or max(row["branch_score"] for row in aggregated)
+            > min(row["branch_score"] for row in aggregated)
+        )
         and (
             not parameterized_menus_only
             or any(
@@ -348,6 +514,18 @@ def listwise_loss(
     return -(preference * F.log_softmax(prediction, dim=-1)).sum(-1).mean()
 
 
+def policy_gradient_loss(
+    prediction: torch.Tensor,
+    advantage: torch.Tensor,
+    mask: torch.Tensor,
+) -> torch.Tensor:
+    """Signed seed-centered REINFORCE loss over complete legal-action menus."""
+    floor = torch.finfo(prediction.dtype).min
+    log_policy = F.log_softmax(prediction.masked_fill(~mask, floor), dim=-1)
+    log_policy = log_policy.masked_fill(~mask, 0.0)
+    return -(advantage.masked_fill(~mask, 0.0) * log_policy).sum(-1).mean()
+
+
 @torch.inference_mode()
 def evaluate(
     model: SelfPlayHrm,
@@ -413,10 +591,48 @@ def train(args: argparse.Namespace) -> None:
             if already_parameterized
             else "gated_residual"
         )
+    if args.add_combat_menu_residual:
+        if config.get("architecture") != "hrm_choice_critic_ssm":
+            raise ValueError(
+                "combat menu residual requires the isolated choice critic"
+            )
+        if int(config.get("action_numeric_measurements", 0)) <= 0:
+            raise ValueError(
+                "combat menu residual requires an action-parameter checkpoint"
+            )
+        config["combat_menu_residual"] = True
+    if args.add_population_adapter:
+        if config.get("architecture") != "hrm_choice_critic_ssm":
+            raise ValueError(
+                "population adapter requires the isolated choice critic"
+            )
+        if "choice_value" not in target_names:
+            raise ValueError("population adapter requires a choice-value head")
+        config["population_value_adapter"] = True
+        config["population_adapter_combat_identities"] = True
+        config["population_adapter_noncombat_only"] = args.noncombat_only
+        config["population_adapter_combat_only"] = args.combat_only
+        config["population_relational_inventory"] = True
+        config["population_action_attention"] = True
+        config["counterfactual_adapter_scale"] = (
+            args.incumbent_counterfactual_adapter_scale
+        )
+        config["menu_residual_scale"] = args.incumbent_menu_residual_scale
+    if args.counterfactual_adapter_only and not config.get(
+        "counterfactual_value_adapter", False
+    ):
+        raise ValueError(
+            "counterfactual-adapter-only requires an adapter checkpoint"
+        )
     config["target_names"] = target_names
     model = SelfPlayHrm(config)
     actor_keys: list[str] = []
-    if args.add_choice_critic or args.add_action_parameters:
+    if (
+        args.add_choice_critic
+        or args.add_action_parameters
+        or args.add_combat_menu_residual
+        or args.add_population_adapter
+    ):
         composed_state = model.state_dict()
         for name, value in checkpoint["model"].items():
             if name in composed_state and composed_state[name].shape == value.shape:
@@ -448,13 +664,30 @@ def train(args: argparse.Namespace) -> None:
         model.load_state_dict(composed_state)
     for parameter in model.parameters():
         parameter.requires_grad_(False)
-    search_module = (
-        model.choice_critic.menu_residual
-        if args.add_action_parameters and model.choice_critic is not None
-        else model.choice_critic
-        if model.choice_critic is not None
-        else model.output[-1]
-    )
+    if args.add_population_adapter:
+        search_module = nn.ModuleList(
+            [
+                module
+                for module in (
+                    model.population_value_adapter,
+                    model.population_inventory_memory,
+                    model.population_state_attention,
+                )
+                if module is not None
+            ]
+        )
+    else:
+        search_module = (
+            model.counterfactual_value_adapter
+            if args.counterfactual_adapter_only
+            else model.choice_critic.combat_menu_residual
+            if args.add_combat_menu_residual and model.choice_critic is not None
+            else model.choice_critic.menu_residual
+            if args.add_action_parameters and model.choice_critic is not None
+            else model.choice_critic
+            if model.choice_critic is not None
+            else model.output[-1]
+        )
     if search_module is None:
         raise ValueError("requested menu residual was not constructed")
     for parameter in search_module.parameters():
@@ -468,9 +701,15 @@ def train(args: argparse.Namespace) -> None:
         args.score_optimism,
         args.winning_trace,
         args.floor_return_trace,
+        args.seed_policy_gradient_trace,
         args.seed_elite_trace,
         args.elites_per_seed,
-        args.add_action_parameters,
+        args.add_action_parameters and not args.add_combat_menu_residual,
+        args.min_action_samples,
+        args.noncombat_only,
+        args.combat_only,
+        args.include_pointwise_groups,
+        args.return_aggregation,
     )
     train_loader = DataLoader(
         datasets["train"],
@@ -505,8 +744,12 @@ def train(args: argparse.Namespace) -> None:
             prediction, target, mask = forward_groups(
                 model, batch, device, search_index
             )
-            loss = listwise_loss(
-                prediction, target, mask, args.target_temperature
+            loss = (
+                policy_gradient_loss(prediction, target, mask)
+                if args.policy_gradient_loss
+                else listwise_loss(
+                    prediction, target, mask, args.target_temperature
+                )
             )
             if args.pointwise_weight:
                 loss = loss + args.pointwise_weight * F.smooth_l1_loss(
@@ -536,7 +779,19 @@ def train(args: argparse.Namespace) -> None:
     result["teacher"] = None
     result["search_value_supported"] = True
     result["branch_rank"] = {
-        "method": "listwise_softmax",
+        "method": (
+            "seed_centered_reinforce"
+            if args.policy_gradient_loss
+            else "listwise_softmax"
+        ),
+        "trained_module": (
+            "population_value_adapter"
+            if args.add_population_adapter
+            else
+            "counterfactual_value_adapter"
+            if args.counterfactual_adapter_only
+            else "choice_critic"
+        ),
         "updates": updates,
         "seconds": time.monotonic() - started,
         "target_temperature": args.target_temperature,
@@ -583,6 +838,42 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--add-combat-menu-residual",
+        action="store_true",
+        help=(
+            "add and train an isolated enemy-HP-gated combat ranking residual "
+            "while preserving the actor and existing menu critic"
+        ),
+    )
+    parser.add_argument(
+        "--counterfactual-adapter-only",
+        action="store_true",
+        help=(
+            "freeze the policy and critic and train only an existing isolated "
+            "counterfactual-value adapter"
+        ),
+    )
+    parser.add_argument(
+        "--add-population-adapter",
+        action="store_true",
+        help=(
+            "add and train a zero-initialized population-return adapter while "
+            "preserving the incumbent policy and counterfactual adapter"
+        ),
+    )
+    parser.add_argument(
+        "--incumbent-counterfactual-adapter-scale",
+        type=float,
+        default=1.0,
+        help="counterfactual adapter scale used by the frozen incumbent",
+    )
+    parser.add_argument(
+        "--incumbent-menu-residual-scale",
+        type=float,
+        default=1.0,
+        help="menu residual scale used by the frozen incumbent",
+    )
+    parser.add_argument(
         "--branch-dataset", type=Path, action="append", default=[]
     )
     parser.add_argument(
@@ -599,7 +890,18 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help=(
             "repeated-seed teacher-free trajectories; identical visible states "
-            "are grouped and actions are ranked by observed final floor"
+            "are grouped and sampled actions are ranked by mean final floor, "
+            "then HP carried into that floor"
+        ),
+    )
+    parser.add_argument(
+        "--seed-policy-gradient-trace",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "repeated-seed random trajectories; train selected actions from "
+            "their mean-floor/entry-HP advantage over other copies of the same seed"
         ),
     )
     parser.add_argument(
@@ -609,10 +911,37 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help=(
             "repeated-seed teacher-free trajectories; imitate the rollout with "
-            "the highest observed final floor for each seed"
+            "the highest observed final floor, then highest entry HP, for each seed"
         ),
     )
     parser.add_argument("--elites-per-seed", type=int, default=1)
+    parser.add_argument(
+        "--min-action-samples",
+        type=int,
+        default=1,
+        help=(
+            "require this many sampled returns for every action in a grouped "
+            "common-random-number menu"
+        ),
+    )
+    parser.add_argument(
+        "--noncombat-only",
+        action="store_true",
+        help="train only path, reward, shop, rest, card, and relic decisions",
+    )
+    parser.add_argument(
+        "--combat-only",
+        action="store_true",
+        help="train and apply the population adapter only during combat",
+    )
+    parser.add_argument(
+        "--include-pointwise-groups",
+        action="store_true",
+        help=(
+            "retain one-action sampled states for Monte-Carlo return regression; "
+            "requires a positive pointwise weight"
+        ),
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -624,6 +953,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-temperature", type=float, default=0.20)
     parser.add_argument("--pointwise-weight", type=float, default=0.0)
     parser.add_argument("--score-optimism", type=float, default=0.0)
+    parser.add_argument(
+        "--return-aggregation",
+        choices=("mean", "max"),
+        default="mean",
+        help="back up either mean sampled return or the best sampled continuation",
+    )
+    parser.add_argument(
+        "--policy-gradient-loss",
+        action="store_true",
+        help=(
+            "optimize signed seed-centered advantages directly instead of "
+            "converting them to listwise target probabilities"
+        ),
+    )
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
     parser.add_argument("--seed", type=int, default=20260827)
     args = parser.parse_args()
@@ -634,22 +977,58 @@ def parse_args() -> argparse.Namespace:
         or args.pointwise_weight < 0
         or args.score_optimism < 0
         or args.elites_per_seed <= 0
+        or args.min_action_samples <= 0
+        or args.incumbent_counterfactual_adapter_scale < 0
+        or args.incumbent_menu_residual_scale < 0
     ):
         parser.error(
             "seconds, batch size, and target temperature must be positive; "
             "pointwise weight cannot be negative"
         )
-    if args.add_choice_critic and args.actor_checkpoint is not None:
-        parser.error("add-choice-critic and actor-checkpoint are mutually exclusive")
-    if not (
+    if (
+        args.add_choice_critic or args.counterfactual_adapter_only
+    ) and args.actor_checkpoint is not None:
+        parser.error(
+            "add-choice-critic/counterfactual-adapter-only and actor-checkpoint "
+            "are mutually exclusive"
+        )
+    if args.include_pointwise_groups and args.pointwise_weight <= 0:
+        parser.error("include-pointwise-groups requires a positive pointwise weight")
+    if args.noncombat_only and args.combat_only:
+        parser.error("noncombat-only and combat-only are mutually exclusive")
+    if args.policy_gradient_loss and not args.seed_policy_gradient_trace:
+        parser.error("policy-gradient-loss requires seed-policy-gradient-trace")
+    if args.policy_gradient_loss and (
         args.branch_dataset
         or args.winning_trace
         or args.floor_return_trace
         or args.seed_elite_trace
     ):
+        parser.error("policy-gradient-loss accepts only seed-policy-gradient traces")
+    if sum(
+        (
+            args.add_choice_critic,
+            args.add_action_parameters,
+            args.add_combat_menu_residual,
+            args.counterfactual_adapter_only,
+            args.add_population_adapter,
+        )
+    ) > 1:
+        parser.error(
+            "add-choice-critic, add-action-parameters, add-combat-menu-residual, "
+            "counterfactual-adapter-only, and add-population-adapter are "
+            "mutually exclusive"
+        )
+    if not (
+        args.branch_dataset
+        or args.winning_trace
+        or args.floor_return_trace
+        or args.seed_policy_gradient_trace
+        or args.seed_elite_trace
+    ):
         parser.error(
             "at least one branch-dataset, winning-trace, floor-return-trace, "
-            "or seed-elite-trace is required"
+            "seed-policy-gradient-trace, or seed-elite-trace is required"
         )
     if args.device == "auto":
         args.device = "cuda" if torch.cuda.is_available() else "cpu"

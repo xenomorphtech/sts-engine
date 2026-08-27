@@ -296,3 +296,63 @@ with 55/88 HP, 25 cards, only three upgrades, and one focus card; even depth-32,
 width-16 suffix search left 276--287 of 388 enemy HP. That failure is evidence
 that the next training generation must improve earlier deck construction as
 well as combat ordering rather than spending more search on the terminal boss.
+
+### A20 mean-floor and retained-HP objective
+
+The population objective is lexicographic at the trajectory level: maximize
+mean reached floor first, then prefer more HP when two runs enter the same
+reached floor. A complete floor is worth more than any possible Defect HP
+difference. Maximum HP and terminal combat margin are lower-order tie-breaks.
+The trajectory trainers stop positive elite imitation after first entering the
+run's maximum floor, so actions from the subsequent terminal loss are not
+mistaken for causes of progress.
+
+Recalibrating the generation-18 counterfactual adapter from scale 0.2 to 0.1
+added 126 total floors across 2,400 fresh A20 seeds, or `+0.0525` mean floor.
+It was slightly worse in same-floor entry HP on the traced 500-seed cohort, so
+0.1 is the working mean-floor incumbent rather than evidence that the learned
+adapter has solved health preservation.
+
+A fresh on-policy common-random cohort used 200 seeds with 16 exploratory
+copies each. Its raw mean was 8.490 floors, while selecting the best sampled
+run per seed produced mean floor 13.200 and mean entry HP 32.04. Floor outcomes
+varied for 189/200 seeds, and 98 seeds also varied in HP among copies tied at
+their best floor. This supplied dense positive and negative evidence for
+seed-centered policy-gradient, elite-prefix, mean-return, and relational
+candidate/inventory experiments. None survived independent closed-loop gates.
+Full-trunk A20 value fine-tuning also regressed, including conservative weight
+interpolation. These checkpoints remain rejected; offline menu accuracy is not
+used as a promotion criterion.
+
+The retained-HP insight did transfer directly to exact combat planning. The
+legacy nonterminal rollout leaf score weighted damage progress by 50 but HP
+fraction by only 20. `--lookahead-combat-hp-weight` now exposes the latter and
+defaults to 100 for A20 while preserving 20 for lower ascensions. On the first
+paired 50-seed cohort, weight 100 raised mean floor from 9.04 to 9.68 and mean
+entry HP from 32.34 to 35.16. On 100 untouched seeds it raised mean floor from
+9.41 to 9.78; among the 68 same-floor pairs it carried 3.24 additional HP, and
+the cohort maximum rose from floor 16 to floor 23. Combined, the change added
+69 floors over 150 seeds. Weights 150, 200, and 300 were worse on the selection
+cohort, showing that health preservation must not dominate necessary damage.
+
+Reproduce the confirmed comparison with:
+
+```sh
+python3 tools/eval_selfplay_hrm.py \
+  --checkpoint artifacts/selfplay/defect-a20-generation18-multicohort-menu-combat-pairwise-120s.pt \
+  --ascension 20 \
+  --count 100 \
+  --seed-source 20262069 \
+  --counterfactual-adapter-scale 0.1 \
+  --menu-residual-scale 0.6 \
+  --counterfactual-search-weight 0.1 \
+  --counterfactual-outside-weight 0.1 \
+  --lookahead-depth 8 \
+  --lookahead-candidates 4 \
+  --lookahead-min-enemy-hp 0 \
+  --lookahead-combat-hp-weight 100 \
+  --output artifacts/selfplay/a20-hp-aware-lookahead.jsonl
+```
+
+No A20 run has won yet. This is a confirmed improvement to the population
+objective and health carried forward, not completion of the first-win goal.
