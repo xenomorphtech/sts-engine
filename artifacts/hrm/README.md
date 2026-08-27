@@ -242,3 +242,57 @@ Training only the zero-initialized menu residual preserved the baseline exactly
 at scale zero, but its best tested scale reached only 9.35. These results point
 to compounding off-policy error: logged menu accuracy is not yet a substitute
 for online exact planning.
+
+### A20 counterfactual combat adapter
+
+Updating the whole actor on mixed A0/A20 trajectories was also rejected. Its
+closed-loop A20 mean floor fell to 5.60 even though its offline losses improved.
+The replacement is an append-only checkpoint migration plus an isolated
+counterfactual adapter:
+
+- the legacy numeric projection remains an unchanged prefix, while appended
+  deck and ascension measurements enter through a zero-initialized projection;
+- named legacy actor rows and the complete choice critic are transplanted;
+- newly added survival heads are excluded from policy utility until a checkpoint
+  explicitly marks them supported, so random rows cannot alter old decisions;
+- the actor and choice critic are frozen, and a 203,543-parameter residual sees
+  actor context, full inventory identities, candidate identities, appended
+  numeric measurements, and parameterized action deltas;
+- exact actions from the same `(seed, step)` menu become winner/loser pairs.
+  Training optimizes their ordering rather than the rollout's arbitrary shared
+  state-value offset. Branch-score gaps below one point are ignored.
+
+Use `--expand-init-schema --counterfactual-adapter-only` to train this mode.
+For example:
+
+```sh
+uv run --with torch --with numpy python tools/train_selfplay_hrm.py \
+  --init-checkpoint artifacts/selfplay/defect-a20-generation4-menu-residual-60s.pt \
+  --expand-init-schema \
+  --counterfactual-adapter-only \
+  --branch-dataset artifacts/selfplay/a20-combat-branches-1.jsonl \
+  --branch-dataset artifacts/selfplay/a20-combat-branches-2.jsonl \
+  --cache artifacts/selfplay/a20-counterfactual-prepared.pt \
+  --output artifacts/selfplay/a20-counterfactual-adapter.pt
+```
+
+`--counterfactual-adapter-scale 0` is an exact policy-control setting. A
+positive scale adds the learned correction, and
+`--counterfactual-adapter-min-enemy-hp` can optionally gate it to harder
+combats. The evaluator records both values in its summary.
+
+The multi-cohort experiment collected 132,489 exact A20 actions from four
+depth-8 combat-rollout cohorts plus one depth-12 boss-beam cohort. These formed
+69,798 training and 9,293 seed-held-out preference pairs; held-out pair accuracy
+was 61.18%. With the existing menu residual fixed at 0.6 and the combat adapter
+fixed at 0.2, three untouched 100-seed cohorts averaged floor 9.40 versus 9.18
+at adapter scale zero. The paired gain was `+0.217` floors: 48 improved, 214
+unchanged, and 38 regressed, with bootstrap 95% interval `[-0.067, 0.513]`.
+This is a consistent training signal, but not yet a statistically conclusive
+promotion and not an A20 win.
+
+Frontier exploration did find one floor-33 Act 2 boss entry. The deck entered
+with 55/88 HP, 25 cards, only three upgrades, and one focus card; even depth-32,
+width-16 suffix search left 276--287 of 388 enemy HP. That failure is evidence
+that the next training generation must improve earlier deck construction as
+well as combat ordering rather than spending more search on the terminal boss.

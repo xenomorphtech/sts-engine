@@ -130,6 +130,7 @@ def utilities(
     choice_supported: torch.Tensor,
     policy: str,
     target_names: tuple[str, ...],
+    supported_targets: frozenset[str],
     combat_search_weight: float,
     counterfactual_search_weight: float,
     outside_search_weight: float,
@@ -139,9 +140,13 @@ def utilities(
     zero = torch.zeros_like(prediction[:, 0])
 
     def value(name: str) -> torch.Tensor:
-        return head.get(name, zero)
+        return head.get(name, zero) if name in supported_targets else zero
 
-    survival_logits = [head[name] for name in FLOOR_SURVIVAL_NAMES if name in head]
+    survival_logits = [
+        head[name]
+        for name in FLOOR_SURVIVAL_NAMES
+        if name in head and name in supported_targets
+    ]
     expected_floor = (
         torch.stack(survival_logits, dim=1).sigmoid().sum(dim=1)
         if survival_logits
@@ -261,7 +266,8 @@ def rank_actions(
             owners.append((environment, action_index))
             combat_flags.append(row["measurements"]["enemy_max_hp"] > 0)
             search_flags.append(
-                row["measurements"]["floor"] >= 16
+                row["measurements"]["floor"]
+                >= int(getattr(model, "search_value_min_floor", 16))
                 and bool(getattr(model, "search_value_supported", True))
             )
             choice_flags.append(bool(candidate_ids))
@@ -313,6 +319,7 @@ def rank_actions(
                     choice_supported[start:end],
                     policy,
                     target_names,
+                    model.policy_supported_targets,
                     combat_search_weight,
                     counterfactual_search_weight,
                     outside_search_weight,
@@ -896,6 +903,20 @@ def evaluate(args: argparse.Namespace) -> None:
     model_config["target_names"] = target_names
     model = SelfPlayHrm(model_config)
     model.load_state_dict(checkpoint["model"])
+    if args.counterfactual_adapter_scale is not None:
+        if model.counterfactual_value_adapter is None:
+            raise ValueError(
+                "counterfactual-adapter-scale requires an adapter checkpoint"
+            )
+        model.counterfactual_adapter_scale = args.counterfactual_adapter_scale
+    if args.counterfactual_adapter_min_enemy_hp is not None:
+        if model.counterfactual_value_adapter is None:
+            raise ValueError(
+                "counterfactual-adapter-min-enemy-hp requires an adapter checkpoint"
+            )
+        model.counterfactual_adapter_min_enemy_hp = (
+            args.counterfactual_adapter_min_enemy_hp
+        )
     if args.menu_residual_scale is not None:
         if model.choice_critic is None or model.choice_critic.menu_residual is None:
             raise ValueError(
@@ -908,6 +929,10 @@ def evaluate(args: argparse.Namespace) -> None:
             "search_value_supported",
             dataset_signature.get("branch_datasets", ["legacy-checkpoint"]),
         )
+    )
+    model.search_value_min_floor = int(checkpoint.get("search_value_min_floor", 16))
+    model.policy_supported_targets = frozenset(
+        checkpoint.get("policy_supported_targets", target_names)
     )
     model.to(device).eval()
 
@@ -1208,7 +1233,18 @@ def evaluate(args: argparse.Namespace) -> None:
         "lookahead_boss_depth": args.lookahead_boss_depth,
         "lookahead_noncombat_only": args.lookahead_noncombat_only,
         "combat_search_weight": args.combat_search_weight,
+        "search_value_min_floor": model.search_value_min_floor,
         "counterfactual_search_weight": args.counterfactual_search_weight,
+        "counterfactual_adapter_scale": (
+            model.counterfactual_adapter_scale
+            if model.counterfactual_value_adapter is not None
+            else None
+        ),
+        "counterfactual_adapter_min_enemy_hp": (
+            model.counterfactual_adapter_min_enemy_hp
+            if model.counterfactual_value_adapter is not None
+            else None
+        ),
         "outside_search_weight": args.outside_search_weight,
         "counterfactual_outside_weight": args.counterfactual_outside_weight,
         "menu_residual_scale": (
@@ -1344,6 +1380,19 @@ def parse_args() -> argparse.Namespace:
         help="weight of the isolated critic on every non-combat decision",
     )
     parser.add_argument(
+        "--counterfactual-adapter-scale",
+        type=float,
+        help=(
+            "override the isolated exact-branch residual scale; zero reproduces "
+            "the underlying policy and choice critic"
+        ),
+    )
+    parser.add_argument(
+        "--counterfactual-adapter-min-enemy-hp",
+        type=float,
+        help="apply the isolated residual only in combats at or above this max HP",
+    )
+    parser.add_argument(
         "--menu-residual-scale",
         type=float,
         help=(
@@ -1464,6 +1513,14 @@ def parse_args() -> argparse.Namespace:
         or args.counterfactual_search_weight < 0
         or args.outside_search_weight < 0
         or args.counterfactual_outside_weight < 0
+        or (
+            args.counterfactual_adapter_scale is not None
+            and args.counterfactual_adapter_scale < 0
+        )
+        or (
+            args.counterfactual_adapter_min_enemy_hp is not None
+            and args.counterfactual_adapter_min_enemy_hp < 0
+        )
         or (args.menu_residual_scale is not None and args.menu_residual_scale < 0)
     ):
         parser.error("counts must be positive; temperatures and thresholds cannot be negative")

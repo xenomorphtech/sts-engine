@@ -633,6 +633,42 @@ def prepare(
     return prepared
 
 
+def branch_preference_pairs(
+    paths: list[Path], minimum_gap: float = 1.0
+) -> dict[str, torch.Tensor]:
+    """Build within-menu winner/loser indices for counterfactual ranking."""
+    offsets = {"train": 0, "validation": 0}
+    menus: dict[str, dict[tuple[int, int, int], list[tuple[int, float]]]] = {
+        "train": {},
+        "validation": {},
+    }
+    for source, path in enumerate(paths):
+        for row in iter_branch_rows([path]):
+            split = split_for_seed(int(row["seed"]))
+            index = offsets[split]
+            offsets[split] += 1
+            key = (source, int(row["seed"]), int(row["step"]))
+            menus[split].setdefault(key, []).append(
+                (index, float(row["branch_score"]))
+            )
+    result: dict[str, torch.Tensor] = {}
+    for split, grouped in menus.items():
+        pairs: list[tuple[int, int]] = []
+        for actions in grouped.values():
+            for left in range(len(actions)):
+                for right in range(left + 1, len(actions)):
+                    left_index, left_score = actions[left]
+                    right_index, right_score = actions[right]
+                    if abs(left_score - right_score) < minimum_gap:
+                        continue
+                    if left_score > right_score:
+                        pairs.append((left_index, right_index))
+                    else:
+                        pairs.append((right_index, left_index))
+        result[split] = torch.tensor(pairs, dtype=torch.long).reshape(-1, 2)
+    return result
+
+
 class GatedBlock(nn.Module):
     def __init__(self, hidden_size: int, expansion: int):
         super().__init__()
@@ -1042,8 +1078,16 @@ class SelfPlayHrm(nn.Module):
         self.segments = int(config["segments"])
         self.architecture = str(config.get("architecture", "hrm"))
         self.numeric_size = int(config.get("numeric_measurements", 0))
+        self.numeric_prefix_size = int(
+            config.get("numeric_prefix_measurements", self.numeric_size)
+        )
+        if not 0 <= self.numeric_prefix_size <= self.numeric_size:
+            raise ValueError("numeric prefix must fit inside numeric measurements")
         self.action_numeric_size = int(
             config.get("action_numeric_measurements", 0)
+        )
+        self.choice_numeric_size = int(
+            config.get("choice_numeric_measurements", self.numeric_size)
         )
         self.action_numeric_mode = str(
             config.get("action_numeric_mode", "additive")
@@ -1059,14 +1103,27 @@ class SelfPlayHrm(nn.Module):
         )
         self.numeric_projection = (
             nn.Sequential(
-                nn.RMSNorm(self.numeric_size),
-                nn.Linear(self.numeric_size, hidden),
+                nn.RMSNorm(self.numeric_prefix_size),
+                nn.Linear(self.numeric_prefix_size, hidden),
                 nn.SiLU(),
                 nn.Linear(hidden, hidden, bias=False),
             )
-            if self.numeric_size
+            if self.numeric_prefix_size
             else None
         )
+        extra_numeric_size = self.numeric_size - self.numeric_prefix_size
+        self.extra_numeric_projection = (
+            nn.Sequential(
+                nn.RMSNorm(extra_numeric_size),
+                nn.Linear(extra_numeric_size, hidden),
+                nn.SiLU(),
+                nn.Linear(hidden, hidden, bias=False),
+            )
+            if extra_numeric_size
+            else None
+        )
+        if self.extra_numeric_projection is not None:
+            nn.init.zeros_(self.extra_numeric_projection[-1].weight)
         self.history_memory = (
             SelectiveSsmMemory(hidden)
             if self.architecture in ("hrm_ssm", "hrm_dual_ssm")
@@ -1097,6 +1154,8 @@ class SelfPlayHrm(nn.Module):
         )
         target_names = tuple(config.get("target_names", TARGET_NAMES))
         actor_target_names = tuple(config.get("actor_target_names", target_names))
+        self.target_names = target_names
+        self.actor_target_names = actor_target_names
         self.choice_value_index = (
             target_names.index("choice_value")
             if "choice_value" in target_names
@@ -1105,7 +1164,7 @@ class SelfPlayHrm(nn.Module):
         self.choice_critic = (
             CounterfactualChoiceCritic(
                 hidden,
-                self.numeric_size,
+                self.choice_numeric_size,
                 self.action_numeric_size,
                 self.action_numeric_mode,
             )
@@ -1136,6 +1195,32 @@ class SelfPlayHrm(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden * 2, output_count),
         )
+        adapter_input_width = (
+            output_width
+            + hidden * 2
+            + extra_numeric_size
+            + self.action_numeric_size
+        )
+        self.counterfactual_adapter_scale = float(
+            config.get("counterfactual_adapter_scale", 1.0)
+        )
+        self.counterfactual_adapter_min_enemy_hp = float(
+            config.get("counterfactual_adapter_min_enemy_hp", 0.0)
+        )
+        self.counterfactual_value_adapter = (
+            nn.Sequential(
+                nn.RMSNorm(adapter_input_width),
+                nn.Linear(adapter_input_width, hidden * 2),
+                nn.SiLU(),
+                nn.Linear(hidden * 2, 1),
+            )
+            if config.get("counterfactual_value_adapter", False)
+            and self.choice_value_index is not None
+            else None
+        )
+        if self.counterfactual_value_adapter is not None:
+            nn.init.zeros_(self.counterfactual_value_adapter[-1].weight)
+            nn.init.zeros_(self.counterfactual_value_adapter[-1].bias)
 
     def pool(self, ids: torch.Tensor) -> torch.Tensor:
         embedded = self.embedding(ids)
@@ -1162,7 +1247,15 @@ class SelfPlayHrm(nn.Module):
         if self.numeric_projection is not None:
             if numeric is None:
                 raise ValueError("numeric measurements are required by this checkpoint")
-            state = state + self.numeric_projection(numeric)
+            state = state + self.numeric_projection(
+                numeric[:, : self.numeric_prefix_size]
+            )
+        if self.extra_numeric_projection is not None:
+            if numeric is None:
+                raise ValueError("numeric measurements are required by this checkpoint")
+            state = state + self.extra_numeric_projection(
+                numeric[:, self.numeric_prefix_size :]
+            )
         context_parts: list[torch.Tensor] = []
         problem = state + action
         if self.history_memory is not None:
@@ -1202,9 +1295,37 @@ class SelfPlayHrm(nn.Module):
                 # Preserve HRM's bounded-memory, one-step gradient approximation.
                 high = high.detach()
                 low = low.detach()
-        prediction = self.output(
-            torch.cat((high, state, action, *context_parts), dim=-1)
-        )
+        actor_context = torch.cat((high, state, action, *context_parts), dim=-1)
+        prediction = self.output(actor_context)
+        counterfactual_correction = None
+        if self.counterfactual_value_adapter is not None:
+            if inventory_ids is None or candidate_identity_ids is None:
+                raise ValueError(
+                    "inventory and candidate identity IDs are required by the "
+                    "counterfactual-value adapter"
+                )
+            adapter_parts = [
+                actor_context,
+                self.pool(inventory_ids),
+                self.pool(candidate_identity_ids),
+            ]
+            if self.numeric_size > self.numeric_prefix_size:
+                if numeric is None:
+                    raise ValueError(
+                        "numeric measurements are required by the "
+                        "counterfactual-value adapter"
+                    )
+                adapter_parts.append(numeric[:, self.numeric_prefix_size :])
+            if self.action_numeric_size:
+                if action_numeric is None:
+                    raise ValueError(
+                        "action parameters are required by the "
+                        "counterfactual-value adapter"
+                    )
+                adapter_parts.append(action_numeric)
+            counterfactual_correction = self.counterfactual_value_adapter(
+                torch.cat(adapter_parts, dim=-1)
+            ).squeeze(1)
         if self.choice_critic is not None:
             if (
                 numeric is None
@@ -1218,7 +1339,7 @@ class SelfPlayHrm(nn.Module):
             choice_value = self.choice_critic(
                 state_ids,
                 action_ids,
-                numeric,
+                numeric[:, : self.choice_numeric_size],
                 inventory_ids,
                 candidate_identity_ids,
                 action_numeric,
@@ -1231,6 +1352,27 @@ class SelfPlayHrm(nn.Module):
                 (prediction, choice_value),
                 dim=1,
             )
+        if counterfactual_correction is not None:
+            index = self.choice_value_index
+            assert index is not None
+            if self.counterfactual_adapter_min_enemy_hp > 0.0:
+                assert numeric is not None
+                measurement_index = next(
+                    index
+                    for index, (name, _) in enumerate(MEASUREMENT_SPECS)
+                    if name == "enemy_max_hp"
+                )
+                enemy_hp_scale = MEASUREMENT_SPECS[measurement_index][1]
+                gate = (
+                    numeric[:, measurement_index] * enemy_hp_scale
+                    >= self.counterfactual_adapter_min_enemy_hp
+                ).to(counterfactual_correction.dtype)
+                counterfactual_correction = counterfactual_correction * gate
+            prediction = prediction.clone()
+            prediction[:, index] = (
+                prediction[:, index]
+                + self.counterfactual_adapter_scale * counterfactual_correction
+            )
         return prediction
 
 
@@ -1238,6 +1380,7 @@ def masked_loss(
     prediction: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
 ) -> torch.Tensor:
     """Mix regression heads with an ordinal final-floor survival objective."""
+    prediction = prediction[:, : len(TARGET_NAMES)]
     survival_start = len(TARGET_NAMES) - len(FLOOR_SURVIVAL_NAMES)
     regression = F.smooth_l1_loss(
         prediction[:, :survival_start],
@@ -1258,6 +1401,80 @@ def masked_loss(
     probabilities = prediction[:, survival_start:].sigmoid()
     monotonic = F.relu(probabilities[:, 1:] - probabilities[:, :-1])
     return data_loss + 0.05 * monotonic.mean()
+
+
+def policy_training_prediction(
+    model: nn.Module, prediction: torch.Tensor
+) -> torch.Tensor:
+    """Map an isolated counterfactual adapter onto existing branch labels."""
+    full_prediction = prediction
+    prediction = full_prediction[:, : len(TARGET_NAMES)].clone()
+    adapter = getattr(model, "counterfactual_value_adapter", None)
+    choice_index = getattr(model, "choice_value_index", None)
+    if adapter is not None and choice_index is not None:
+        search_index = TARGET_NAMES.index("search_value")
+        prediction[:, search_index] = full_prediction[:, choice_index]
+    return prediction
+
+
+@torch.inference_mode()
+def evaluate_preferences(
+    model: SelfPlayHrm,
+    tensors: dict[str, torch.Tensor],
+    pairs: torch.Tensor,
+    device: torch.device,
+    batch_size: int,
+) -> dict[str, float | int]:
+    """Measure held-out exact-branch ordering rather than absolute offsets."""
+    model.eval()
+    correct = 0
+    margin_sum = 0.0
+    loss_sum = 0.0
+    for start in range(0, len(pairs), batch_size):
+        batch = pairs[start : start + batch_size]
+        indices = torch.cat((batch[:, 0], batch[:, 1]), dim=0)
+        inputs = [
+            tensors[name].index_select(0, indices).to(
+                device=device,
+                dtype=torch.long if name in {
+                    "state", "action", "inventory", "candidate", "history"
+                } else torch.float32,
+                non_blocking=True,
+            )
+            for name in (
+                "state",
+                "action",
+                "inventory",
+                "candidate",
+                "numeric",
+                "action_numeric",
+                "history",
+            )
+        ]
+        state, action, inventory, candidate, numeric, action_numeric, history = inputs
+        prediction = model(
+            state,
+            action,
+            numeric,
+            history,
+            inventory,
+            candidate,
+            action_numeric,
+        )
+        index = model.choice_value_index
+        assert index is not None
+        winner, loser = prediction[:, index].float().chunk(2)
+        margin = winner - loser
+        correct += int(margin.gt(0).sum())
+        margin_sum += float(margin.sum())
+        loss_sum += float(F.softplus(-margin / 0.1).sum())
+    count = len(pairs)
+    return {
+        "count": count,
+        "accuracy": correct / max(count, 1),
+        "mean_margin": margin_sum / max(count, 1),
+        "pairwise_loss": loss_sum / max(count, 1),
+    }
 
 
 @torch.inference_mode()
@@ -1295,6 +1512,7 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> dict
             candidate,
             action_numeric,
         )
+        prediction = policy_training_prediction(model, prediction)
         survival_start = len(TARGET_NAMES) - len(FLOOR_SURVIVAL_NAMES)
         prediction = torch.cat(
             (
@@ -1315,6 +1533,66 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> dict
     }
 
 
+def transplant_expanded_checkpoint(
+    model: SelfPlayHrm, checkpoint: dict[str, Any]
+) -> dict[str, int]:
+    """Migrate a teacher-free actor into the current append-only schema.
+
+    Shared tensors copy exactly. Newly appended numeric channels initially
+    have zero projection weight, and actor output rows are joined by target
+    name rather than position. Old predictions are therefore preserved while
+    the ascension channel and newer auxiliary heads become trainable.
+    """
+    source = checkpoint["model"]
+    destination = model.state_dict()
+    exact_tensors = 0
+    for name, value in source.items():
+        if name in destination and destination[name].shape == value.shape:
+            destination[name] = value
+            exact_tensors += 1
+
+    old_numeric = int(checkpoint["config"].get("numeric_measurements", 0))
+    new_numeric = model.numeric_size
+    expanded_numeric_tensors = 0
+    if 0 < old_numeric < new_numeric:
+        if model.numeric_prefix_size != old_numeric:
+            raise ValueError(
+                "expanded migration must preserve the legacy numeric prefix"
+            )
+        expanded_numeric_tensors = sum(
+            name.startswith("extra_numeric_projection.") for name in destination
+        )
+
+    old_actor_names = tuple(
+        checkpoint["config"].get(
+            "actor_target_names",
+            tuple(
+                name
+                for name in checkpoint["target_names"]
+                if name != "choice_value"
+            ),
+        )
+    )
+    new_indices = {name: index for index, name in enumerate(TARGET_NAMES)}
+    copied_output_rows = 0
+    for parameter_name in ("output.3.weight", "output.3.bias"):
+        if parameter_name not in source or parameter_name not in destination:
+            continue
+        for old_index, target_name in enumerate(old_actor_names):
+            new_index = new_indices.get(target_name)
+            if new_index is None or old_index >= source[parameter_name].shape[0]:
+                continue
+            destination[parameter_name][new_index] = source[parameter_name][old_index]
+            if parameter_name.endswith("bias"):
+                copied_output_rows += 1
+    model.load_state_dict(destination)
+    return {
+        "exact_tensors": exact_tensors,
+        "expanded_numeric_tensors": expanded_numeric_tensors,
+        "copied_output_rows": copied_output_rows,
+    }
+
+
 def train(args: argparse.Namespace) -> None:
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -1327,7 +1605,7 @@ def train(args: argparse.Namespace) -> None:
         args.dataset,
         args.branch_dataset,
         args.cache,
-        branch_only=args.search_head_only,
+        branch_only=args.search_head_only or args.counterfactual_adapter_only,
     )
     train_tensors = prepared["tensors"]["train"]
     validation_tensors = prepared["tensors"]["validation"]
@@ -1353,22 +1631,41 @@ def train(args: argparse.Namespace) -> None:
         validation_tensors["target"],
         validation_tensors["mask"],
     )
-    sampling_weight = 1.0 + args.frontier_priority_scale * (
-        train_tensors["weight"].double() - 1.0
-    )
-    sampler = torch.utils.data.WeightedRandomSampler(
-        sampling_weight,
-        num_samples=len(train_set),
-        replacement=True,
-    )
-    train_loader = DataLoader(
-        train_set,
-        batch_size=args.batch_size,
-        sampler=sampler,
-        num_workers=2,
-        pin_memory=device.type == "cuda",
-        persistent_workers=True,
-    )
+    preference_pairs = None
+    if args.counterfactual_adapter_only:
+        preference_pairs = branch_preference_pairs(args.branch_dataset)
+        if not len(preference_pairs["train"]):
+            raise ValueError("counterfactual branch data contains no ranked pairs")
+        train_loader = DataLoader(
+            TensorDataset(preference_pairs["train"]),
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=2,
+            pin_memory=device.type == "cuda",
+            persistent_workers=True,
+        )
+        log(
+            "counterfactual preference pairs: "
+            f"train={len(preference_pairs['train'])}, "
+            f"validation={len(preference_pairs['validation'])}"
+        )
+    else:
+        sampling_weight = 1.0 + args.frontier_priority_scale * (
+            train_tensors["weight"].double() - 1.0
+        )
+        sampler = torch.utils.data.WeightedRandomSampler(
+            sampling_weight,
+            num_samples=len(train_set),
+            replacement=True,
+        )
+        train_loader = DataLoader(
+            train_set,
+            batch_size=args.batch_size,
+            sampler=sampler,
+            num_workers=2,
+            pin_memory=device.type == "cuda",
+            persistent_workers=True,
+        )
     validation_loader = DataLoader(
         validation_set,
         batch_size=args.batch_size,
@@ -1384,10 +1681,37 @@ def train(args: argparse.Namespace) -> None:
         )
         if initial_checkpoint.get("teacher") is not None:
             raise ValueError("initial checkpoint is not teacher-free")
-        if tuple(initial_checkpoint["target_names"]) != TARGET_NAMES:
-            raise ValueError("initial checkpoint target heads do not match")
         config = dict(initial_checkpoint["config"])
-        config["target_names"] = TARGET_NAMES
+        if args.expand_init_schema:
+            old_numeric = int(config.get("numeric_measurements", 0))
+            old_target_names = tuple(initial_checkpoint["target_names"])
+            old_actor_names = tuple(
+                config.get(
+                    "actor_target_names",
+                    tuple(name for name in old_target_names if name != "choice_value"),
+                )
+            )
+            auxiliary_names = tuple(
+                name
+                for name in old_target_names
+                if name not in old_actor_names and name not in TARGET_NAMES
+            )
+            config["numeric_measurements"] = len(MEASUREMENT_SPECS)
+            config["numeric_prefix_measurements"] = old_numeric
+            config["choice_numeric_measurements"] = old_numeric
+            config["action_numeric_measurements"] = len(ACTION_PARAMETER_SPECS)
+            config["target_names"] = (*TARGET_NAMES, *auxiliary_names)
+            config["actor_target_names"] = TARGET_NAMES
+            config["counterfactual_value_adapter"] = (
+                args.counterfactual_adapter_only
+            )
+        else:
+            if tuple(initial_checkpoint["target_names"]) != TARGET_NAMES:
+                raise ValueError(
+                    "initial checkpoint target heads do not match; "
+                    "use --expand-init-schema for an append-only migration"
+                )
+            config["target_names"] = TARGET_NAMES
     else:
         config = {
             **DEFAULTS,
@@ -1400,7 +1724,11 @@ def train(args: argparse.Namespace) -> None:
         }
     model = SelfPlayHrm(config).to(device)
     if initial_checkpoint is not None:
-        model.load_state_dict(initial_checkpoint["model"])
+        if args.expand_init_schema:
+            migration = transplant_expanded_checkpoint(model, initial_checkpoint)
+            log(f"expanded initial checkpoint: {migration}")
+        else:
+            model.load_state_dict(initial_checkpoint["model"])
     if args.search_head_only:
         for parameter in model.parameters():
             parameter.requires_grad_(False)
@@ -1410,6 +1738,15 @@ def train(args: argparse.Namespace) -> None:
             else model.output[-1]
         )
         for parameter in search_module.parameters():
+            parameter.requires_grad_(True)
+    if args.counterfactual_adapter_only:
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+        if model.counterfactual_value_adapter is None:
+            raise ValueError(
+                "counterfactual-adapter-only requires an enabled adapter and critic"
+            )
+        for parameter in model.counterfactual_value_adapter.parameters():
             parameter.requires_grad_(True)
     trainable_parameters = [
         parameter for parameter in model.parameters() if parameter.requires_grad
@@ -1442,19 +1779,37 @@ def train(args: argparse.Namespace) -> None:
     model.train()
     while time.monotonic() - started < args.seconds:
         epochs += 1
-        for (
-            state,
-            action,
-            inventory,
-            candidate,
-            numeric,
-            action_numeric,
-            history,
-            target,
-            mask,
-        ) in train_loader:
+        for batch in train_loader:
             if time.monotonic() - started >= args.seconds:
                 break
+            if args.counterfactual_adapter_only:
+                pair_indices = batch[0]
+                indices = torch.cat(
+                    (pair_indices[:, 0], pair_indices[:, 1]), dim=0
+                )
+                state = train_tensors["state"].index_select(0, indices)
+                action = train_tensors["action"].index_select(0, indices)
+                inventory = train_tensors["inventory"].index_select(0, indices)
+                candidate = train_tensors["candidate"].index_select(0, indices)
+                numeric = train_tensors["numeric"].index_select(0, indices)
+                action_numeric = train_tensors["action_numeric"].index_select(
+                    0, indices
+                )
+                history = train_tensors["history"].index_select(0, indices)
+                target = None
+                mask = None
+            else:
+                (
+                    state,
+                    action,
+                    inventory,
+                    candidate,
+                    numeric,
+                    action_numeric,
+                    history,
+                    target,
+                    mask,
+                ) = batch
             state = state.to(device=device, dtype=torch.long, non_blocking=True)
             action = action.to(device=device, dtype=torch.long, non_blocking=True)
             inventory = inventory.to(
@@ -1466,8 +1821,10 @@ def train(args: argparse.Namespace) -> None:
             numeric = numeric.to(device=device, non_blocking=True)
             action_numeric = action_numeric.to(device=device, non_blocking=True)
             history = history.to(device=device, dtype=torch.long, non_blocking=True)
-            target = target.to(device=device, non_blocking=True)
-            mask = mask.to(device=device, non_blocking=True)
+            if target is not None:
+                target = target.to(device=device, non_blocking=True)
+            if mask is not None:
+                mask = mask.to(device=device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(
                 device_type=device.type,
@@ -1483,7 +1840,16 @@ def train(args: argparse.Namespace) -> None:
                     candidate,
                     action_numeric,
                 )
-                loss = masked_loss(prediction, target, mask)
+                if args.counterfactual_adapter_only:
+                    index = model.choice_value_index
+                    assert index is not None
+                    winner, loser = prediction[:, index].chunk(2)
+                    loss = F.softplus(-(winner - loser) / 0.1).mean()
+                else:
+                    assert target is not None and mask is not None
+                    loss = masked_loss(
+                        policy_training_prediction(model, prediction), target, mask
+                    )
             if not torch.isfinite(loss):
                 raise RuntimeError(
                     f"non-finite loss at epoch={epochs} update={updates}; checkpoint rejected"
@@ -1506,8 +1872,32 @@ def train(args: argparse.Namespace) -> None:
             )
 
     metrics = evaluate(model, validation_loader, device)
+    preference_metrics = (
+        evaluate_preferences(
+            model,
+            validation_tensors,
+            preference_pairs["validation"],
+            device,
+            args.batch_size,
+        )
+        if preference_pairs is not None
+        else None
+    )
     elapsed = time.monotonic() - started
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_target_names = tuple(config["target_names"])
+    if (
+        initial_checkpoint is not None
+        and args.expand_init_schema
+        and args.counterfactual_adapter_only
+    ):
+        policy_supported_targets = tuple(
+            initial_checkpoint.get(
+                "policy_supported_targets", initial_checkpoint["target_names"]
+            )
+        )
+    else:
+        policy_supported_targets = checkpoint_target_names
     checkpoint = {
         "format": "sts-selfplay-hrm-v1",
         "model": model.state_dict(),
@@ -1520,15 +1910,20 @@ def train(args: argparse.Namespace) -> None:
         "max_history_steps": MAX_HISTORY_STEPS,
         "measurement_specs": MEASUREMENT_SPECS,
         "action_parameter_specs": ACTION_PARAMETER_SPECS,
-        "target_names": TARGET_NAMES,
+        "target_names": checkpoint_target_names,
         "target_scales": TARGET_SCALES,
         "dataset_signature": prepared["signature"],
         "teacher": None,
         "initialized_from": (
             str(args.init_checkpoint) if args.init_checkpoint is not None else None
         ),
+        "expanded_init_schema": args.expand_init_schema,
         "search_head_only": args.search_head_only,
+        "counterfactual_adapter_only": args.counterfactual_adapter_only,
         "search_value_supported": bool(args.branch_dataset),
+        "search_value_min_floor": 16,
+        "policy_supported_targets": policy_supported_targets,
+        "preference_validation": preference_metrics,
         "updates": updates,
         "epochs": epochs,
     }
@@ -1552,8 +1947,10 @@ def train(args: argparse.Namespace) -> None:
                 "initialized_from": (
                     str(args.init_checkpoint) if args.init_checkpoint is not None else None
                 ),
+                "expanded_init_schema": args.expand_init_schema,
                 "search_head_only": args.search_head_only,
-                "architecture": args.architecture,
+                "counterfactual_adapter_only": args.counterfactual_adapter_only,
+                "architecture": config["architecture"],
                 "replay_priority": (
                     "uniform_expected_final_floor_v1"
                     if args.frontier_priority_scale == 0.0
@@ -1562,6 +1959,7 @@ def train(args: argparse.Namespace) -> None:
                 "train_priority_mean": float(train_tensors["weight"].mean()),
                 "frontier_priority_scale": args.frontier_priority_scale,
                 "validation": metrics,
+                "preference_validation": preference_metrics,
             },
             indent=2,
             sort_keys=True,
@@ -1571,6 +1969,8 @@ def train(args: argparse.Namespace) -> None:
     log(f"saved {args.output} and {metrics_path}")
     for name, values in metrics.items():
         log(f"validation {name}: rmse={values['rmse']:.4f} mae={values['mae']:.4f}")
+    if preference_metrics is not None:
+        log(f"validation preferences: {preference_metrics}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1628,9 +2028,25 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--init-checkpoint", type=Path)
     parser.add_argument(
+        "--expand-init-schema",
+        action="store_true",
+        help=(
+            "migrate a teacher-free actor into the current numeric/target schema; "
+            "shared tensors and named output rows are preserved"
+        ),
+    )
+    parser.add_argument(
         "--search-head-only",
         action="store_true",
         help="train only the search-value output row on branch records",
+    )
+    parser.add_argument(
+        "--counterfactual-adapter-only",
+        action="store_true",
+        help=(
+            "freeze the migrated policy and train a zero-initialized A20 "
+            "counterfactual-value residual from exact branch records"
+        ),
     )
     parser.add_argument("--seed", type=int, default=20260826)
     args = parser.parse_args()
@@ -1638,8 +2054,16 @@ def parse_args() -> argparse.Namespace:
         args.dataset = [Path("artifacts/selfplay/defect-a0-random-traces-1000.jsonl.xz")]
     if args.branch_dataset is None:
         args.branch_dataset = []
-    if args.search_head_only and (args.init_checkpoint is None or not args.branch_dataset):
-        parser.error("search-head-only requires an initial checkpoint and branch data")
+    if (args.search_head_only or args.counterfactual_adapter_only) and (
+        args.init_checkpoint is None or not args.branch_dataset
+    ):
+        parser.error("search-only training requires an initial checkpoint and branch data")
+    if args.expand_init_schema and args.init_checkpoint is None:
+        parser.error("expand-init-schema requires an initial checkpoint")
+    if args.counterfactual_adapter_only and not args.expand_init_schema:
+        parser.error("counterfactual-adapter-only requires expand-init-schema")
+    if args.counterfactual_adapter_only and args.search_head_only:
+        parser.error("counterfactual adapter and search head modes are mutually exclusive")
     if (
         args.seconds <= 0
         or args.hidden_size <= 0
