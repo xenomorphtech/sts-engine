@@ -1504,7 +1504,11 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="exact cloned rollout depth; zero disables model-based planning",
     )
-    parser.add_argument("--lookahead-candidates", type=int, default=4)
+    parser.add_argument(
+        "--lookahead-candidates",
+        type=int,
+        help="root actions searched per decision; defaults to 3 on A20 and 4 otherwise",
+    )
     parser.add_argument("--lookahead-rollouts", type=int, default=1)
     parser.add_argument(
         "--lookahead-beam-width",
@@ -1582,6 +1586,8 @@ def parse_args() -> argparse.Namespace:
         help="plan route, event, rest, shop, and reward choices but not combat actions",
     )
     args = parser.parse_args()
+    if args.lookahead_candidates is None:
+        args.lookahead_candidates = 3 if args.ascension == 20 else 4
     if args.lookahead_combat_hp_weight is None:
         args.lookahead_combat_hp_weight = 100.0 if args.ascension == 20 else 20.0
     if (

@@ -356,3 +356,20 @@ python3 tools/eval_selfplay_hrm.py \
 
 No A20 run has won yet. This is a confirmed improvement to the population
 objective and health carried forward, not completion of the first-win goal.
+
+The HP-aware score also composes with the exact combat beam. On 50 paired
+seeds, depth 12 and width 8 improved from mean floor 11.86 at HP weight 20 to
+12.22 at weight 100; same-floor entries carried 9.6 more HP. Increasing depth
+to 16 regressed to 10.70 on the selection cohort. Increasing width to 16 first
+appeared positive but failed its independent gate, scoring 10.02 versus 11.60
+at width 8 while nearly doubling branch work. Adding depth-64 card/relic menu
+planning also regressed mean floor, even when it improved same-floor HP, and
+was rejected under the mean-first objective.
+
+Root pruning has a smaller confirmed efficiency gain. Three searched root
+actions versus four added six total floors across 80 paired seeds while using
+fewer branch steps. On the 50-seed confirmation it scored 10.84 versus 10.74,
+carried 0.42 more HP on same-floor pairs, reached floor 24 rather than 23, and
+used 839,063 rather than 882,744 branch steps. Searching two roots or six to
+eight roots regressed. A20 therefore defaults to three lookahead candidates;
+lower ascensions retain the previous default of four.
