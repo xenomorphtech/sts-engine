@@ -15,13 +15,13 @@ choice-critic, menu-residual, and population-adapter modes were removed. Git
 history and `artifacts/hrm/README.md` retain the experiment record, but they are
 not part of the active training interface.
 
-## Evidence available on 2026-08-27
+## Evidence available on 2026-08-28
 
 The local A20 corpus now contains:
 
-- 29,697 complete trajectories and 3,802,739 decisions;
-- 8,430 unique seeds;
-- mean observed final floor 9.773 and maximum floor 33;
+- 30,097 complete trajectories and 3,853,553 decisions;
+- 8,630 unique seeds;
+- mean observed final floor 9.798 and maximum floor 33;
 - no A20 wins yet;
 - 283,108 exact evaluated branches grouped into 98,372 distinct action menus;
 - 169,217 combat branches and 113,891 noncombat branches.
@@ -112,10 +112,10 @@ continued. Selecting the early snapshot by closed-loop play raised direct mean
 floor from 7.57 to 9.42 on 200 unseen seeds, a paired gain of 1.85 floors with
 95% confidence interval `[1.23, 2.47]`.
 
-On a separate 100-seed cohort with the default exact planner, mean floor rose
-from 11.57 to 12.27. The paired estimate was +0.70 floors with 95% confidence
-interval `[-0.27, 1.67]`; this is a positive mean-floor promotion, but it needs
-larger-cohort confirmation. Neither checkpoint won an A20 run yet.
+Across two separate cohorts totaling 300 seeds with the default exact planner,
+mean floor rose from 11.32 to 12.117. The paired estimate was +0.797 floors with
+95% confidence interval `[0.268, 1.326]`: 118 seeds improved, 102 were unchanged,
+and 80 regressed. Neither checkpoint won an A20 run yet.
 
 The key evidence is that extra optimizer steps are harmful without new data.
 Ten-minute experiments should retain temporal snapshots and select by actual

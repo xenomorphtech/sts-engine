@@ -52,15 +52,21 @@
       "lookahead_depth": 0
     },
     "planned": {
-      "seed_source": 20262100,
-      "episodes": 100,
-      "baseline_mean_floor": 11.57,
-      "candidate_mean_floor": 12.27,
-      "paired_delta": 0.7,
-      "paired_confidence_95": [
-        -0.2728287434113832,
-        1.672828743411383
+      "seed_sources": [
+        20262100,
+        20262103
       ],
+      "episodes": 300,
+      "baseline_mean_floor": 11.32,
+      "candidate_mean_floor": 12.116666666666667,
+      "paired_delta": 0.7966666666666666,
+      "paired_confidence_95": [
+        0.2678120730292042,
+        1.325521260304129
+      ],
+      "improved_seeds": 118,
+      "unchanged_seeds": 102,
+      "regressed_seeds": 80,
       "lookahead_depth": 12,
       "lookahead_beam_width": 8,
       "lookahead_beam_expansion": 4
