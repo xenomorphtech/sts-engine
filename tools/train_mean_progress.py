@@ -1,9 +1,9 @@
 """Train the compact mean-floor/retained-HP policy from scratch.
 
-With no data arguments the command consumes all local Defect A20 trajectory
-and exact-branch files. It seed-balances trajectories, samples decisions across
-each run, and combines Monte-Carlo progress regression with exact pairwise
-action ranking. There is intentionally no checkpoint-initialization mode.
+With no data arguments the command consumes all local Defect A20 trajectories
+for Monte-Carlo progress calibration and the retained generation-4 planner
+trajectories for full-menu policy distillation. There is intentionally no
+checkpoint-initialization mode.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from mean_progress_model import TARGET_NAMES, MeanProgressModel
+from mean_progress_model import LEGACY_TARGET_NAMES, TARGET_NAMES, MeanProgressModel
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
@@ -34,7 +34,6 @@ from training_schema import (
     action_parameter_vector,
     candidate_identity_features,
     decision_signature,
-    iter_branch_rows,
     iter_episodes,
     measurement_vector,
 )
@@ -46,6 +45,8 @@ ID_WIDTHS = (
     MAX_CANDIDATE_IDENTITIES,
     MAX_HISTORY_STEPS,
 )
+
+MAX_IMITATION_ACTIONS = 32
 
 
 def file_signature(paths: list[Path]) -> list[dict[str, Any]]:
@@ -144,7 +145,7 @@ class CandidateReservoir:
             (capacity, len(ACTION_PARAMETER_SPECS)), dtype=np.float32
         )
         self.history = np.zeros((capacity, MAX_HISTORY_STEPS), dtype=np.uint16)
-        self.target = np.zeros((capacity, len(TARGET_NAMES)), dtype=np.float32)
+        self.target = np.zeros((capacity, len(LEGACY_TARGET_NAMES)), dtype=np.float32)
         self.seed = np.zeros(capacity, dtype=np.int64)
 
     def add(
@@ -189,33 +190,52 @@ class CandidateReservoir:
         return tuple(torch.from_numpy(value[: self.size].copy()) for value in arrays)
 
 
-class PairReservoir:
+class ImitationReservoir:
     def __init__(self, capacity: int, seed: int):
         self.capacity = capacity
         self.rng = random.Random(seed)
         self.seen = 0
         self.size = 0
-        self.state = np.zeros((capacity, 2, MAX_STATE_FEATURES), dtype=np.uint16)
-        self.action = np.zeros((capacity, 2, MAX_ACTION_FEATURES), dtype=np.uint16)
-        self.inventory = np.zeros(
-            (capacity, 2, MAX_INVENTORY_IDENTITIES), dtype=np.uint16
+        self.state = np.zeros((capacity, MAX_STATE_FEATURES), dtype=np.uint16)
+        self.inventory = np.zeros((capacity, MAX_INVENTORY_IDENTITIES), dtype=np.uint16)
+        self.numeric = np.zeros((capacity, len(MEASUREMENT_SPECS)), dtype=np.float32)
+        self.history = np.zeros((capacity, MAX_HISTORY_STEPS), dtype=np.uint16)
+        self.action = np.zeros(
+            (capacity, MAX_IMITATION_ACTIONS, MAX_ACTION_FEATURES), dtype=np.uint16
         )
         self.candidate = np.zeros(
-            (capacity, 2, MAX_CANDIDATE_IDENTITIES), dtype=np.uint16
+            (capacity, MAX_IMITATION_ACTIONS, MAX_CANDIDATE_IDENTITIES),
+            dtype=np.uint16,
         )
-        self.numeric = np.zeros((capacity, 2, len(MEASUREMENT_SPECS)), dtype=np.float32)
         self.action_numeric = np.zeros(
-            (capacity, 2, len(ACTION_PARAMETER_SPECS)), dtype=np.float32
+            (capacity, MAX_IMITATION_ACTIONS, len(ACTION_PARAMETER_SPECS)),
+            dtype=np.float32,
         )
-        self.history = np.zeros((capacity, 2, MAX_HISTORY_STEPS), dtype=np.uint16)
+        self.mask = np.zeros((capacity, MAX_IMITATION_ACTIONS), dtype=np.bool_)
+        self.selected = np.zeros(capacity, dtype=np.int64)
         self.seed = np.zeros(capacity, dtype=np.int64)
 
     def add(
         self,
-        better: tuple[np.ndarray, ...],
-        worse: tuple[np.ndarray, ...],
+        observation: dict[str, Any],
+        measurements: dict[str, Any],
+        selected_action_index: int,
+        history: list[int],
         seed: int,
     ) -> None:
+        actions = observation["actions"]
+        if len(actions) < 2 or len(actions) > MAX_IMITATION_ACTIONS:
+            return
+        selected_position = next(
+            (
+                position
+                for position, action in enumerate(actions)
+                if int(action["index"]) == selected_action_index
+            ),
+            None,
+        )
+        if selected_position is None:
+            raise ValueError(f"selected action {selected_action_index} is absent")
         self.seen += 1
         if self.size < self.capacity:
             index = self.size
@@ -224,32 +244,38 @@ class PairReservoir:
             index = self.rng.randrange(self.seen)
             if index >= self.capacity:
                 return
-        for destination, first, second in zip(
-            (
-                self.state,
-                self.action,
-                self.inventory,
-                self.candidate,
-                self.numeric,
-                self.action_numeric,
-                self.history,
-            ),
-            better,
-            worse,
-        ):
-            destination[index, 0] = first
-            destination[index, 1] = second
+        encoded = [
+            encode_candidate(observation, measurements, int(action["index"]), history)
+            for action in actions
+        ]
+        first = encoded[0]
+        self.state[index] = first[0]
+        self.inventory[index] = first[2]
+        self.numeric[index] = first[4]
+        self.history[index] = first[6]
+        self.action[index].fill(0)
+        self.candidate[index].fill(0)
+        self.action_numeric[index].fill(0)
+        self.mask[index].fill(False)
+        for action_position, values in enumerate(encoded):
+            self.action[index, action_position] = values[1]
+            self.candidate[index, action_position] = values[3]
+            self.action_numeric[index, action_position] = values[5]
+        self.mask[index, : len(encoded)] = True
+        self.selected[index] = selected_position
         self.seed[index] = seed
 
     def tensors(self) -> tuple[torch.Tensor, ...]:
         arrays = (
             self.state,
-            self.action,
             self.inventory,
-            self.candidate,
             self.numeric,
-            self.action_numeric,
             self.history,
+            self.action,
+            self.candidate,
+            self.action_numeric,
+            self.mask,
+            self.selected,
             self.seed,
         )
         return tuple(torch.from_numpy(value[: self.size].copy()) for value in arrays)
@@ -306,85 +332,33 @@ def collect_trajectories(
     }
 
 
-def branch_group_key(row: dict[str, Any]) -> tuple[Any, ...]:
-    return (
-        int(row["seed"]),
-        int(row.get("step", -1)),
-        tuple(row["observation"]["state_features"]),
-    )
-
-
-def add_branch_group(
-    rows: list[dict[str, Any]], reservoir: PairReservoir, pairs_per_menu: int
-) -> None:
-    if not rows:
-        return
-    by_action: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        by_action[int(row["action_index"])].append(row)
-    ranked = sorted(
-        (
-            (
-                sum(float(row["branch_score"]) for row in action_rows)
-                / len(action_rows),
-                action_rows[0],
-            )
-            for action_rows in by_action.values()
-        ),
-        key=lambda item: item[0],
-        reverse=True,
-    )
-    if len(ranked) < 2 or ranked[0][0] == ranked[-1][0]:
-        return
-    best_score, best = ranked[0]
-    comparisons = [item for item in reversed(ranked[1:]) if item[0] < best_score]
-    for _, worse in comparisons[:pairs_per_menu]:
-        reservoir.add(
-            encode_candidate(
-                best["observation"],
-                best["before"],
-                int(best["action_index"]),
-                list(best.get("history", [])),
-            ),
-            encode_candidate(
-                worse["observation"],
-                worse["before"],
-                int(worse["action_index"]),
-                list(worse.get("history", [])),
-            ),
-            int(best["seed"]),
-        )
-
-
-def collect_branches(
-    paths: list[Path],
-    reservoir: PairReservoir,
-    pairs_per_menu: int,
-    seed: int,
+def collect_imitation(
+    paths: list[Path], reservoir: ImitationReservoir, seed: int
 ) -> dict[str, int]:
     rng = random.Random(seed)
     paths = list(paths)
     rng.shuffle(paths)
-    menus = 0
-    for path in paths:
-        key = None
-        rows: list[dict[str, Any]] = []
-        for row in iter_branch_rows([path]):
-            row_key = branch_group_key(row)
-            if key is not None and row_key != key:
-                add_branch_group(rows, reservoir, pairs_per_menu)
-                menus += 1
-                rows = []
-            key = row_key
-            rows.append(row)
-        if rows:
-            add_branch_group(rows, reservoir, pairs_per_menu)
-            menus += 1
+    episodes = 0
+    for episode in iter_episodes(paths):
+        episodes += 1
+        run_seed = int(episode["result"]["seed"])
+        history: list[int] = []
+        for transition in episode["transitions"]:
+            action_index = int(transition["action_index"])
+            observation = transition["observation"]
+            reservoir.add(
+                observation,
+                transition["before"],
+                action_index,
+                history,
+                run_seed,
+            )
+            history.append(decision_signature(observation, action_index))
     return {
         "files": len(paths),
-        "menus": menus,
-        "pairs_seen": reservoir.seen,
-        "pairs_kept": reservoir.size,
+        "episodes": episodes,
+        "menus_seen": reservoir.seen,
+        "menus_kept": reservoir.size,
     }
 
 
@@ -404,10 +378,10 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         args.cache.exists()
         and not args.rebuild_cache
         and args.trajectory is None
-        and args.branch is None
+        and args.imitation is None
     ):
         cached = torch.load(args.cache, map_location="cpu", weights_only=False)
-        if cached.get("format") != "sts-mean-progress-data-v1":
+        if cached.get("format") != "sts-mean-progress-data-v2":
             raise ValueError(f"{args.cache}: unsupported dataset cache")
         print(f"loaded frozen canonical dataset cache {args.cache}", flush=True)
         return cached
@@ -415,17 +389,21 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     trajectory_paths = args.trajectory or sorted(
         Path("artifacts/selfplay").glob("defect-a20-*-traces.jsonl*")
     )
-    branch_paths = args.branch or sorted(
-        Path("artifacts/selfplay").glob("defect-a20-*-branches.jsonl*")
+    imitation_paths = args.imitation or sorted(
+        path
+        for path in Path("artifacts/selfplay").glob(
+            "defect-a20-mean-progress-v4-*-traces.jsonl*"
+        )
+        if "planned" in path.name or "onpolicy-branches" in path.name
     )
     signature = {
         "trajectories": file_signature(trajectory_paths),
-        "branches": file_signature(branch_paths),
+        "imitation": file_signature(imitation_paths),
         "max_pointwise": args.max_pointwise,
-        "max_branch_pairs": args.max_branch_pairs,
+        "max_imitation_menus": args.max_imitation_menus,
+        "max_imitation_actions": MAX_IMITATION_ACTIONS,
         "steps_per_episode": args.steps_per_episode,
         "episodes_per_seed": args.episodes_per_seed,
-        "pairs_per_menu": args.pairs_per_menu,
         "measurement_specs": MEASUREMENT_SPECS,
         "action_parameter_specs": ACTION_PARAMETER_SPECS,
     }
@@ -447,19 +425,17 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         args.seed,
     )
     print(f"trajectory evidence: {trajectory_stats}", flush=True)
-    pairs = PairReservoir(args.max_branch_pairs, args.seed + 1)
-    branch_stats = collect_branches(
-        branch_paths, pairs, args.pairs_per_menu, args.seed + 1
-    )
-    print(f"exact branch evidence: {branch_stats}", flush=True)
+    imitation = ImitationReservoir(args.max_imitation_menus, args.seed + 1)
+    imitation_stats = collect_imitation(imitation_paths, imitation, args.seed + 1)
+    print(f"planner imitation evidence: {imitation_stats}", flush=True)
     prepared = {
-        "format": "sts-mean-progress-data-v1",
+        "format": "sts-mean-progress-data-v2",
         "signature_sha256": digest,
         "signature": signature,
         "trajectory_stats": trajectory_stats,
-        "branch_stats": branch_stats,
+        "imitation_stats": imitation_stats,
         "pointwise": split_tensors(pointwise.tensors(), -1),
-        "pairs": split_tensors(pairs.tensors(), -1),
+        "imitation": split_tensors(imitation.tensors(), -1),
     }
     args.cache.parent.mkdir(parents=True, exist_ok=True)
     torch.save(prepared, args.cache)
@@ -476,7 +452,7 @@ def model_call(
 
 def selection_score(metrics: dict[str, float | int]) -> float:
     return float(metrics["progress_mae"]) + 0.1 * (
-        1.0 - float(metrics["branch_pair_accuracy"])
+        1.0 - float(metrics["imitation_top_accuracy"])
     )
 
 
@@ -511,11 +487,52 @@ def to_device(
     return tuple(value.to(device, non_blocking=True) for value in batch)
 
 
+def imitation_logits(
+    model: MeanProgressModel, tensors: tuple[torch.Tensor, ...]
+) -> torch.Tensor:
+    state, inventory, numeric, history, action, candidate, action_numeric, mask = (
+        tensors
+    )
+    visible = mask.flatten().nonzero(as_tuple=False).squeeze(1)
+    owners = (
+        torch.arange(len(state), device=state.device)[:, None]
+        .expand_as(mask)
+        .masked_select(mask)
+    )
+    prediction = model_call(
+        model,
+        (
+            state.index_select(0, owners),
+            action.flatten(0, 1).index_select(0, visible),
+            inventory.index_select(0, owners),
+            candidate.flatten(0, 1).index_select(0, visible),
+            numeric.index_select(0, owners),
+            action_numeric.flatten(0, 1).index_select(0, visible),
+            history.index_select(0, owners),
+        ),
+    )[:, 0]
+    return prediction.new_full(mask.shape, -torch.inf).masked_scatter(mask, prediction)
+
+
+def masked_cross_entropy(
+    logits: torch.Tensor,
+    selected: torch.Tensor,
+    mask: torch.Tensor,
+    label_smoothing: float,
+) -> torch.Tensor:
+    log_probabilities = F.log_softmax(logits, dim=1)
+    selected_loss = -log_probabilities.gather(1, selected[:, None]).squeeze(1)
+    smooth_loss = -log_probabilities.masked_fill(~mask, 0.0).sum(1) / mask.sum(1)
+    return (
+        (1.0 - label_smoothing) * selected_loss + label_smoothing * smooth_loss
+    ).mean()
+
+
 @torch.inference_mode()
 def validate(
     model: MeanProgressModel,
     point_loader: DataLoader,
-    pair_loader: DataLoader,
+    imitation_loader: DataLoader,
     device: torch.device,
 ) -> dict[str, float | int]:
     model.eval()
@@ -524,25 +541,23 @@ def validate(
     for batch in point_loader:
         *inputs, target = to_device(batch, device)
         prediction = model_call(model, tuple(inputs))
-        progress_error += (prediction[:, 0] - target[:, 0]).abs().sum().item()
-        floor_error += (prediction[:, 1] - target[:, 1]).abs().sum().item() * 50.0
-        hp_error += (prediction[:, 2] - target[:, 2]).abs().sum().item()
+        progress_error += (prediction[:, 1] - target[:, 0]).abs().sum().item()
+        floor_error += (prediction[:, 2] - target[:, 1]).abs().sum().item() * 50.0
+        hp_error += (prediction[:, 3] - target[:, 2]).abs().sum().item()
         points += len(target)
-    correct = pairs = 0
-    for batch in pair_loader:
-        inputs = to_device(batch, device)
-        batch_size = inputs[0].shape[0]
-        flat = tuple(value.flatten(0, 1) for value in inputs)
-        value = model_call(model, flat)[:, 0].reshape(batch_size, 2)
-        correct += value[:, 0].gt(value[:, 1]).sum().item()
-        pairs += batch_size
+    correct = menus = 0
+    for batch in imitation_loader:
+        *inputs, selected = to_device(batch, device)
+        logits = imitation_logits(model, tuple(inputs))
+        correct += logits.argmax(1).eq(selected).sum().item()
+        menus += len(selected)
     return {
         "pointwise_samples": points,
         "progress_mae": progress_error / max(points, 1),
         "floor_mae": floor_error / max(points, 1),
         "entry_hp_fraction_mae": hp_error / max(points, 1),
-        "branch_pairs": pairs,
-        "branch_pair_accuracy": correct / max(pairs, 1),
+        "imitation_menus": menus,
+        "imitation_top_accuracy": correct / max(menus, 1),
     }
 
 
@@ -557,15 +572,15 @@ def train(args: argparse.Namespace) -> None:
     prepared = prepare(args)
     point_train = TensorDataset(*prepared["pointwise"]["train"])
     point_validation = TensorDataset(*prepared["pointwise"]["validation"])
-    pair_train = TensorDataset(*prepared["pairs"]["train"])
-    pair_validation = TensorDataset(*prepared["pairs"]["validation"])
-    if not point_train or not pair_train:
-        raise ValueError("training requires both trajectory and exact branch evidence")
+    imitation_train = TensorDataset(*prepared["imitation"]["train"])
+    imitation_validation = TensorDataset(*prepared["imitation"]["validation"])
+    if not point_train or not imitation_train:
+        raise ValueError("training requires trajectory and planner imitation evidence")
     point_loader = DataLoader(
         point_train, batch_size=args.batch_size, shuffle=True, pin_memory=True
     )
-    pair_loader = DataLoader(
-        pair_train,
+    imitation_loader = DataLoader(
+        imitation_train,
         batch_size=max(args.batch_size // 2, 1),
         shuffle=True,
         pin_memory=True,
@@ -573,8 +588,8 @@ def train(args: argparse.Namespace) -> None:
     point_validation_loader = DataLoader(
         point_validation, batch_size=args.batch_size, shuffle=False
     )
-    pair_validation_loader = DataLoader(
-        pair_validation, batch_size=max(args.batch_size // 2, 1), shuffle=False
+    imitation_validation_loader = DataLoader(
+        imitation_validation, batch_size=max(args.batch_size // 2, 1), shuffle=False
     )
     config = {
         "hidden_size": args.hidden_size,
@@ -601,7 +616,7 @@ def train(args: argparse.Namespace) -> None:
     best_model: dict[str, torch.Tensor] | None = None
     next_validation = args.validation_interval_seconds
     point_iterator = iter(point_loader)
-    pair_iterator = iter(pair_loader)
+    imitation_iterator = iter(imitation_loader)
     model.train()
     while time.monotonic() - started < args.seconds:
         try:
@@ -610,29 +625,30 @@ def train(args: argparse.Namespace) -> None:
             point_iterator = iter(point_loader)
             point_batch = next(point_iterator)
         try:
-            pair_batch = next(pair_iterator)
+            imitation_batch = next(imitation_iterator)
         except StopIteration:
-            pair_iterator = iter(pair_loader)
-            pair_batch = next(pair_iterator)
+            imitation_iterator = iter(imitation_loader)
+            imitation_batch = next(imitation_iterator)
         *point_inputs, point_target = to_device(point_batch, device)
-        pair_inputs = to_device(pair_batch, device)
-        pair_batch_size = pair_inputs[0].shape[0]
-        pair_flat = tuple(value.flatten(0, 1) for value in pair_inputs)
+        *imitation_inputs, imitation_selected = to_device(imitation_batch, device)
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(
             device_type=device.type, dtype=amp_dtype, enabled=scaler_enabled
         ):
             point_prediction = model_call(model, tuple(point_inputs))
             point_loss = (
-                F.smooth_l1_loss(point_prediction[:, 0], point_target[:, 0])
-                + 0.5 * F.smooth_l1_loss(point_prediction[:, 1], point_target[:, 1])
-                + 0.25 * F.smooth_l1_loss(point_prediction[:, 2], point_target[:, 2])
+                F.smooth_l1_loss(point_prediction[:, 1], point_target[:, 0])
+                + 0.5 * F.smooth_l1_loss(point_prediction[:, 2], point_target[:, 1])
+                + 0.25 * F.smooth_l1_loss(point_prediction[:, 3], point_target[:, 2])
             )
-            pair_value = model_call(model, pair_flat)[:, 0].reshape(pair_batch_size, 2)
-            pair_loss = F.softplus(
-                -args.pair_margin_scale * (pair_value[:, 0] - pair_value[:, 1])
-            ).mean()
-            loss = point_loss + args.pair_loss_weight * pair_loss
+            logits = imitation_logits(model, tuple(imitation_inputs))
+            imitation_loss = masked_cross_entropy(
+                logits,
+                imitation_selected,
+                imitation_inputs[-1],
+                args.imitation_label_smoothing,
+            )
+            loss = point_loss + args.imitation_loss_weight * imitation_loss
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -640,7 +656,7 @@ def train(args: argparse.Namespace) -> None:
         if steps % 100 == 0:
             print(
                 f"step={steps} point={point_loss.item():.5f} "
-                f"pair={pair_loss.item():.5f}",
+                f"imitation={imitation_loss.item():.5f}",
                 flush=True,
             )
 
@@ -649,7 +665,7 @@ def train(args: argparse.Namespace) -> None:
             metrics = validate(
                 model,
                 point_validation_loader,
-                pair_validation_loader,
+                imitation_validation_loader,
                 device,
             )
             score = selection_score(metrics)
@@ -670,8 +686,8 @@ def train(args: argparse.Namespace) -> None:
                     ),
                     "learning_rate": args.learning_rate,
                     "weight_decay": args.weight_decay,
-                    "pair_loss_weight": args.pair_loss_weight,
-                    "pair_margin_scale": args.pair_margin_scale,
+                    "imitation_loss_weight": args.imitation_loss_weight,
+                    "imitation_label_smoothing": args.imitation_label_smoothing,
                     "selection_score": score,
                 }
                 torch.save(
@@ -687,7 +703,7 @@ def train(args: argparse.Namespace) -> None:
             print(
                 f"selection step={steps} score={score:.6f} "
                 f"best={best_score:.6f} progress_mae={metrics['progress_mae']:.6f} "
-                f"pair_accuracy={metrics['branch_pair_accuracy']:.6f}",
+                f"imitation_accuracy={metrics['imitation_top_accuracy']:.6f}",
                 flush=True,
             )
             next_validation += args.validation_interval_seconds
@@ -696,7 +712,7 @@ def train(args: argparse.Namespace) -> None:
     final_metrics = validate(
         model,
         point_validation_loader,
-        pair_validation_loader,
+        imitation_validation_loader,
         device,
     )
     final_score = selection_score(final_metrics)
@@ -718,8 +734,8 @@ def train(args: argparse.Namespace) -> None:
             "parameters": parameters,
             "learning_rate": args.learning_rate,
             "weight_decay": args.weight_decay,
-            "pair_loss_weight": args.pair_loss_weight,
-            "pair_margin_scale": args.pair_margin_scale,
+            "imitation_loss_weight": args.imitation_loss_weight,
+            "imitation_label_smoothing": args.imitation_label_smoothing,
             "selected_step": best_step,
             "selected_elapsed_seconds": best_elapsed_seconds,
             "selection_score": best_score,
@@ -752,17 +768,17 @@ def train(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trajectory", type=Path, action="append")
-    parser.add_argument("--branch", type=Path, action="append")
+    parser.add_argument("--imitation", type=Path, action="append")
     parser.add_argument(
         "--cache",
         type=Path,
-        default=Path("artifacts/selfplay/defect-a20-mean-progress-v4-planner-data.pt"),
+        default=Path("artifacts/selfplay/defect-a20-mean-progress-v10-distill-data.pt"),
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=Path(
-            "artifacts/selfplay/defect-a20-mean-progress-v4-planner-selected-10m.pt"
+            "artifacts/selfplay/defect-a20-mean-progress-v10-distill-selected-10m.pt"
         ),
     )
     parser.add_argument("--rebuild-cache", action="store_true")
@@ -772,12 +788,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.02)
     parser.add_argument("--max-pointwise", type=int, default=160_000)
-    parser.add_argument("--max-branch-pairs", type=int, default=100_000)
+    parser.add_argument("--max-imitation-menus", type=int, default=64_000)
     parser.add_argument("--steps-per-episode", type=int, default=16)
     parser.add_argument("--episodes-per-seed", type=int, default=4)
-    parser.add_argument("--pairs-per-menu", type=int, default=4)
-    parser.add_argument("--pair-loss-weight", type=float, default=0.5)
-    parser.add_argument("--pair-margin-scale", type=float, default=4.0)
+    parser.add_argument("--imitation-loss-weight", type=float, default=1.0)
+    parser.add_argument("--imitation-label-smoothing", type=float, default=0.05)
     parser.add_argument("--validation-interval-seconds", type=float, default=60.0)
     parser.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
@@ -790,16 +805,15 @@ def parse_args() -> argparse.Namespace:
             args.batch_size,
             args.learning_rate,
             args.max_pointwise,
-            args.max_branch_pairs,
+            args.max_imitation_menus,
             args.steps_per_episode,
             args.episodes_per_seed,
-            args.pairs_per_menu,
-            args.pair_margin_scale,
             args.validation_interval_seconds,
         )
         <= 0
         or args.weight_decay < 0
-        or args.pair_loss_weight < 0
+        or args.imitation_loss_weight < 0
+        or not 0 <= args.imitation_label_smoothing < 1
     ):
         parser.error("training sizes and rates must be positive")
     return args

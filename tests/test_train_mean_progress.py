@@ -11,7 +11,13 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from train_mean_progress import final_entry, prepare, progress_target, selection_score
+from train_mean_progress import (
+    final_entry,
+    masked_cross_entropy,
+    prepare,
+    progress_target,
+    selection_score,
+)
 
 
 def episode(floor: int, entry_hp: int, max_hp: int) -> dict:
@@ -47,7 +53,7 @@ def test_progress_target_keeps_floor_primary_and_hp_dense() -> None:
 
 def test_existing_implicit_cache_is_a_frozen_generation(tmp_path: Path) -> None:
     cache = tmp_path / "generation.pt"
-    expected = {"format": "sts-mean-progress-data-v1", "sentinel": 17}
+    expected = {"format": "sts-mean-progress-data-v2", "sentinel": 17}
     torch.save(expected, cache)
 
     loaded = prepare(
@@ -55,17 +61,26 @@ def test_existing_implicit_cache_is_a_frozen_generation(tmp_path: Path) -> None:
             cache=cache,
             rebuild_cache=False,
             trajectory=None,
-            branch=None,
+            imitation=None,
         )
     )
 
     assert loaded == expected
 
 
-def test_checkpoint_selection_tracks_progress_and_pair_ordering() -> None:
-    reference = {"progress_mae": 0.12, "branch_pair_accuracy": 0.55}
-    better_progress = {"progress_mae": 0.11, "branch_pair_accuracy": 0.55}
-    better_pairs = {"progress_mae": 0.12, "branch_pair_accuracy": 0.60}
+def test_checkpoint_selection_tracks_progress_and_planner_imitation() -> None:
+    reference = {"progress_mae": 0.12, "imitation_top_accuracy": 0.55}
+    better_progress = {"progress_mae": 0.11, "imitation_top_accuracy": 0.55}
+    better_imitation = {"progress_mae": 0.12, "imitation_top_accuracy": 0.60}
 
     assert selection_score(better_progress) < selection_score(reference)
-    assert selection_score(better_pairs) < selection_score(reference)
+    assert selection_score(better_imitation) < selection_score(reference)
+
+
+def test_label_smoothing_ignores_padded_actions() -> None:
+    logits = torch.tensor([[2.0, 1.0, -torch.inf]])
+    mask = torch.tensor([[True, True, False]])
+
+    loss = masked_cross_entropy(logits, torch.tensor([0]), mask, 0.05)
+
+    assert torch.isfinite(loss)

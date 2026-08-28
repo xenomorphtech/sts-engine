@@ -159,11 +159,17 @@ def utilities(
     counterfactual_search_weight: float,
     outside_search_weight: float,
     counterfactual_outside_weight: float,
+    value_name: str | None = None,
 ) -> torch.Tensor:
     head = {name: prediction[:, index] for index, name in enumerate(target_names)}
-    if "progress_value" not in head or "progress_value" not in supported_targets:
+    selected = value_name or (
+        "policy_logit"
+        if "policy_logit" in head and "policy_logit" in supported_targets
+        else "progress_value"
+    )
+    if selected not in head or selected not in supported_targets:
         raise ValueError("checkpoint does not expose the mean-progress policy value")
-    return head["progress_value"]
+    return head[selected]
 
 
 def observation_key(observation: dict[str, Any]) -> tuple[int, ...]:
@@ -211,6 +217,9 @@ def rank_actions(
     counterfactual_search_weight: float,
     outside_search_weight: float,
     counterfactual_outside_weight: float,
+    value_name: str | None = None,
+    auxiliary_value_name: str | None = None,
+    auxiliary_ranked: dict[int, list[tuple[float, int]]] | None = None,
 ) -> dict[int, list[tuple[float, int]]]:
     state_rows: list[list[int]] = []
     action_rows: list[list[int]] = []
@@ -273,6 +282,7 @@ def rank_actions(
         else torch.float16
     )
     utility_parts: list[torch.Tensor] = []
+    auxiliary_parts: list[torch.Tensor] = []
     for start in range(0, len(owners), INFERENCE_BATCH_SIZE):
         end = min(start + INFERENCE_BATCH_SIZE, len(owners))
         with torch.autocast(
@@ -289,9 +299,10 @@ def rank_actions(
                 candidate[start:end],
                 action_numeric[start:end],
             )
+            prediction = prediction.float()
             utility_parts.append(
                 utilities(
-                    prediction.float(),
+                    prediction,
                     combat[start:end],
                     search_supported[start:end],
                     choice_supported[start:end],
@@ -302,8 +313,26 @@ def rank_actions(
                     counterfactual_search_weight,
                     outside_search_weight,
                     counterfactual_outside_weight,
+                    value_name,
                 )
             )
+            if auxiliary_value_name is not None:
+                auxiliary_parts.append(
+                    utilities(
+                        prediction,
+                        combat[start:end],
+                        search_supported[start:end],
+                        choice_supported[start:end],
+                        policy,
+                        target_names,
+                        model.policy_supported_targets,
+                        combat_search_weight,
+                        counterfactual_search_weight,
+                        outside_search_weight,
+                        counterfactual_outside_weight,
+                        auxiliary_value_name,
+                    )
+                )
     utility = torch.cat(utility_parts)
     ranked: dict[int, list[tuple[float, int]]] = {}
     for (environment, action_index), score in zip(owners, utility.cpu().tolist()):
@@ -312,6 +341,14 @@ def rank_actions(
         ranked.setdefault(environment, []).append((score, action_index))
     for candidates in ranked.values():
         candidates.sort(reverse=True)
+    if auxiliary_value_name is not None:
+        if auxiliary_ranked is None:
+            raise ValueError("auxiliary_ranked is required for an auxiliary value")
+        auxiliary_utility = torch.cat(auxiliary_parts).cpu().tolist()
+        for (environment, action_index), score in zip(owners, auxiliary_utility):
+            auxiliary_ranked.setdefault(environment, []).append((score, action_index))
+        for candidates in auxiliary_ranked.values():
+            candidates.sort(reverse=True)
     return ranked
 
 
@@ -509,6 +546,7 @@ def improve_with_exact_combat_beam(
             for index in range(len(current_rows))
         ]
         branch_histories = [meta["history"] for meta in current_meta]
+        leaf_ranked: dict[int, list[tuple[float, int]]] = {}
         ranked = rank_actions(
             model,
             current_rows,
@@ -522,6 +560,9 @@ def improve_with_exact_combat_beam(
             args.counterfactual_search_weight,
             args.outside_search_weight,
             args.counterfactual_outside_weight,
+            None,
+            "progress_value",
+            leaf_ranked,
         )
         scores: list[float] = []
         active_by_environment: dict[int, list[int]] = {}
@@ -529,7 +570,7 @@ def improve_with_exact_combat_beam(
             candidates = ranked.get(
                 index, [(float(meta["root_prior"]), int(meta["root_action"]))]
             )
-            learned_leaf = candidates[0][0]
+            learned_leaf = leaf_ranked.get(index, candidates)[0][0]
             environment = int(meta["environment"])
             score = branch_score(
                 rows[environment]["measurements"],
@@ -757,6 +798,7 @@ def improve_with_exact_lookahead(
         args.counterfactual_search_weight,
         args.outside_search_weight,
         args.counterfactual_outside_weight,
+        "progress_value",
     )
     action_samples: dict[tuple[int, int], list[float]] = {}
     for branch, ((environment, action, prior, _, _), leaf) in enumerate(
@@ -1217,7 +1259,7 @@ def parse_args() -> argparse.Namespace:
         "--checkpoint",
         type=Path,
         default=Path(
-            "artifacts/selfplay/defect-a20-mean-progress-v4-planner-selected-10m.pt"
+            "artifacts/selfplay/defect-a20-mean-progress-v10-distill-selected-10m.pt"
         ),
     )
     parser.add_argument(

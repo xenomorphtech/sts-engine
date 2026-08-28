@@ -1,0 +1,72 @@
+{
+  "format": "sts-mean-progress-v1",
+  "character": "defect",
+  "ascension": 20,
+  "initialized_from": null,
+  "checkpoint": {
+    "path": "artifacts/selfplay/defect-a20-mean-progress-v10-distill-selected-10m.pt",
+    "sha256": "81921f8bd195e0f7593e912421b8f553dd074f7751e1e96b87f65e0ead76a077",
+    "parameters": 3979280
+  },
+  "dataset": {
+    "path": "artifacts/selfplay/defect-a20-mean-progress-v10-distill-data.pt",
+    "sha256": "b013533aa8c53e5f44893f9102d57bc8b8cc7b87b73c2e826f630c40c1a10f3e",
+    "trajectory_files": 165,
+    "eligible_episodes": 23480,
+    "unique_seeds": 9830,
+    "sampled_trajectory_decisions": 160000,
+    "planner_imitation_files": 4,
+    "planner_imitation_episodes": 500,
+    "planner_imitation_menus": 49366
+  },
+  "training": {
+    "random_initialization": true,
+    "seconds": 601.6789115699939,
+    "steps": 7974,
+    "snapshots": 10,
+    "selected_step": 2394,
+    "selected_elapsed_seconds": 180.04540360497776,
+    "targets": [
+      "policy_logit",
+      "progress_value",
+      "final_floor",
+      "entry_hp_fraction"
+    ],
+    "validation": {
+      "progress_mae": 0.04439019329772058,
+      "floor_mae": 2.2288492975814904,
+      "entry_hp_fraction_mae": 0.1991627311502166,
+      "imitation_top_accuracy": 0.5451139556665626
+    }
+  },
+  "evaluation": {
+    "direct_screen": {
+      "seed_source": 20262115,
+      "episodes": 100,
+      "baseline_mean_floor": 9.39,
+      "candidate_mean_floor": 9.21,
+      "lookahead_depth": 0
+    },
+    "planned": {
+      "seed_sources": [
+        20262116,
+        20262117
+      ],
+      "episodes": 200,
+      "baseline_mean_floor": 11.635,
+      "candidate_mean_floor": 13.445,
+      "paired_delta": 1.81,
+      "paired_confidence_95": [
+        1.056717047029351,
+        2.563282952970649
+      ],
+      "improved_seeds": 95,
+      "unchanged_seeds": 63,
+      "regressed_seeds": 42,
+      "lookahead_depth": 12,
+      "lookahead_beam_width": 8,
+      "lookahead_beam_expansion": 4
+    },
+    "wins": 0
+  }
+}

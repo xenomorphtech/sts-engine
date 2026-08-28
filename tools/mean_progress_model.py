@@ -19,7 +19,13 @@ from training_schema import (
     MEASUREMENT_SPECS,
 )
 
-TARGET_NAMES = ("progress_value", "final_floor", "entry_hp_fraction")
+LEGACY_TARGET_NAMES = ("progress_value", "final_floor", "entry_hp_fraction")
+TARGET_NAMES = (
+    "policy_logit",
+    "progress_value",
+    "final_floor",
+    "entry_hp_fraction",
+)
 
 
 class SelectiveSsmMemory(nn.Module):
@@ -192,8 +198,11 @@ class MeanProgressModel(nn.Module):
             config.get("action_numeric_measurements", len(ACTION_PARAMETER_SPECS))
         )
         self.target_names = tuple(config.get("target_names", TARGET_NAMES))
-        if self.target_names != TARGET_NAMES:
-            raise ValueError(f"mean-progress targets must be {TARGET_NAMES!r}")
+        if self.target_names not in (LEGACY_TARGET_NAMES, TARGET_NAMES):
+            raise ValueError(
+                "mean-progress targets must be either "
+                f"{LEGACY_TARGET_NAMES!r} or {TARGET_NAMES!r}"
+            )
 
         self.embedding = nn.Embedding(FEATURE_BUCKETS + 1, hidden, padding_idx=0)
         self.state_projection = nn.Sequential(
@@ -225,12 +234,26 @@ class MeanProgressModel(nn.Module):
         self.state_attention = ActionConditionedStateAttention(hidden)
         self.inventory_relation = CandidateInventoryMemory(hidden)
         context_width = hidden * 11
-        self.output = nn.Sequential(
-            nn.RMSNorm(context_width),
-            nn.Linear(context_width, hidden * 3),
-            nn.SiLU(),
-            nn.Linear(hidden * 3, len(TARGET_NAMES)),
-        )
+        if self.target_names == LEGACY_TARGET_NAMES:
+            self.output = nn.Sequential(
+                nn.RMSNorm(context_width),
+                nn.Linear(context_width, hidden * 3),
+                nn.SiLU(),
+                nn.Linear(hidden * 3, len(LEGACY_TARGET_NAMES)),
+            )
+        else:
+            self.progress_output = nn.Sequential(
+                nn.RMSNorm(context_width),
+                nn.Linear(context_width, hidden * 3),
+                nn.SiLU(),
+                nn.Linear(hidden * 3, len(LEGACY_TARGET_NAMES)),
+            )
+            self.policy_output = nn.Sequential(
+                nn.RMSNorm(context_width),
+                nn.Linear(context_width, hidden * 3),
+                nn.SiLU(),
+                nn.Linear(hidden * 3, 1),
+            )
 
         self.policy_supported_targets = frozenset(TARGET_NAMES)
 
@@ -301,4 +324,8 @@ class MeanProgressModel(nn.Module):
             ),
             dim=1,
         )
-        return self.output(context)
+        if self.target_names == LEGACY_TARGET_NAMES:
+            return self.output(context)
+        return torch.cat(
+            (self.policy_output(context.detach()), self.progress_output(context)), dim=1
+        )

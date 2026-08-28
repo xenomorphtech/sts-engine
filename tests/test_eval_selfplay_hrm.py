@@ -12,6 +12,7 @@ from eval_selfplay_hrm import (
     decision_signature,
     observation_key,
     replay_policy_state,
+    utilities,
 )
 from mean_progress_model import (
     ActionConditionedStateAttention,
@@ -220,3 +221,61 @@ def test_mean_progress_model_has_one_shared_embedding_and_three_outputs() -> Non
     assert (
         sum(isinstance(module, torch.nn.Embedding) for module in model.modules()) == 1
     )
+
+
+def test_distilled_policy_head_is_separate_from_progress_representation() -> None:
+    target_names = (
+        "policy_logit",
+        "progress_value",
+        "final_floor",
+        "entry_hp_fraction",
+    )
+    model = MeanProgressModel(
+        {
+            "hidden_size": 8,
+            "numeric_measurements": 45,
+            "action_numeric_measurements": len(ACTION_PARAMETER_SPECS),
+            "target_names": target_names,
+        }
+    )
+    prediction = model(
+        state_ids=torch.tensor([[1, 2]]),
+        action_ids=torch.tensor([[3]]),
+        numeric=torch.zeros((1, 45)),
+        history_ids=torch.zeros((1, 1), dtype=torch.long),
+        inventory_ids=torch.tensor([[4]]),
+        candidate_identity_ids=torch.tensor([[5]]),
+        action_numeric=torch.zeros((1, len(ACTION_PARAMETER_SPECS))),
+    )
+    prediction[:, 0].sum().backward()
+
+    assert prediction.shape == (1, 4)
+    assert model.embedding.weight.grad is not None
+    assert torch.count_nonzero(model.embedding.weight.grad) == 0
+    assert model.policy_output[-1].weight.grad is not None
+
+
+def test_policy_and_leaf_utility_select_distinct_heads() -> None:
+    prediction = torch.tensor([[4.0, 0.25, 0.2, 0.8]])
+    target_names = (
+        "policy_logit",
+        "progress_value",
+        "final_floor",
+        "entry_hp_fraction",
+    )
+    args = (
+        prediction,
+        torch.tensor([False]),
+        torch.tensor([True]),
+        torch.tensor([True]),
+        "mean_progress",
+        target_names,
+        frozenset(target_names),
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    )
+
+    assert utilities(*args).item() == 4.0
+    assert utilities(*args, "progress_value").item() == 0.25

@@ -17,14 +17,16 @@ not part of the active training interface.
 
 ## Evidence available on 2026-08-28
 
-The local A20 corpus now contains:
+The active prepared A20 corpus now contains:
 
-- 30,097 complete trajectories and 3,853,553 decisions;
-- 8,630 unique seeds;
-- mean observed final floor 9.798 and maximum floor 33;
+- 165 trajectory files and 23,480 eligible seed-balanced episodes;
+- 9,830 unique seeds and 375,672 sampled-decision candidates;
+- 160,000 retained terminal-progress decisions;
+- 500 generation-4 planner episodes containing 49,366 nontrivial legal-action
+  menus for policy distillation;
+- maximum observed floor 33;
 - no A20 wins yet;
-- 283,108 exact evaluated branches grouped into 98,372 distinct action menus;
-- 169,217 combat branches and 113,891 noncombat branches.
+- retained exact-branch and failed-policy trajectories for future generations.
 
 Many seeds have repeated random or policy-driven attempts. Preparation caps
 each seed at four trajectories and samples across the whole run so repeated CRN
@@ -44,13 +46,16 @@ while higher HP remains dense continuation value among runs reaching comparable
 floors. Separate final-floor and entry-HP-fraction heads prevent the HP signal
 from disappearing inside the scalar target.
 
-Training combines two kinds of evidence:
+Training separates two kinds of evidence:
 
-1. Monte-Carlo regression from random and policy play, including failed runs.
-2. Pairwise ranking from exact cloned action branches.
+1. A calibrated progress critic regresses Monte-Carlo outcomes from random and
+   policy play, including failed runs.
+2. A policy head distills the action selected by the deployed generation-4
+   exact planner from the complete legal-action menu.
 
-There is no win threshold, boss-only objective, expert imitation target, or
-checkpoint initialization.
+The policy head reads a detached progress representation, so imitation cannot
+move the shared critic away from its terminal-progress scale. There is no win
+threshold, boss-only objective, external expert, or checkpoint initialization.
 
 ## Inputs and model
 
@@ -68,13 +73,17 @@ and enemy HP, block, energy, hand/draw/discard/exhaust sizes, deck changes,
 relics, potions, orb capacity/occupancy/evoke value, incoming attack, living
 enemies, turn/card counters, and power totals.
 
-The 3,673,519-parameter model has one shared 32,769-by-96 token embedding,
+The 3,979,280-parameter model has one shared 32,769-by-96 token embedding,
 selective state/history memories, action-conditioned state attention, and an
-explicit candidate-to-inventory join. It emits only:
+explicit candidate-to-inventory join. It emits:
 
-- `progress_value` for action ranking;
+- `policy_logit` for live, root, and continuation action ranking;
+- `progress_value` for calibrated exact-rollout leaf value;
 - `final_floor` as an auxiliary target;
 - `entry_hp_fraction` as an auxiliary target.
+
+The evaluator obtains policy and progress scores from one forward pass. Legacy
+three-output generation-4 checkpoints remain load-compatible.
 
 ## Commands
 
@@ -99,7 +108,37 @@ uv run --with torch --with numpy python tools/eval_selfplay_hrm.py
 
 Use `--lookahead-depth 0` to measure the learned policy without search.
 
-## Promoted generation 4
+## Promoted generation 10
+
+Generation 10 replaces raw exact-branch score fitting with planner
+distillation. Four retained generation-4 planned cohorts supply 49,366 full
+legal-action menus. The progress critic is trained from all 23,480 eligible
+episodes, while the detached policy adapter learns only which menu action the
+planner selected. The 601.7-second run started from random initialization and
+produced ten temporal snapshots; closed-loop screening selected step 2,394 at
+180.0 seconds rather than the offline-selected step 3,191.
+
+Held-out-by-seed validation for the promoted snapshot is:
+
+- planner top-action agreement: 54.51%;
+- progress MAE: 0.04439 normalized, or about 2.22 floor units;
+- explicit final-floor MAE: 2.23 floors;
+- entry-HP-fraction MAE: 0.199.
+
+The standalone distilled policy did not beat generation 4 on its 100-seed
+screen (9.21 versus 9.39 mean floor). The intended policy-plus-planner system
+did. Across two independent 100-seed cohorts (`20262116` and `20262117`), the
+default exact planner improved from mean floor 11.635 to 13.445. The paired
+gain is +1.81 floors with 95% confidence interval `[1.057, 2.563]`: 95 seeds
+improved, 63 tied, and 42 regressed. Neither system won an A20 run; both have a
+maximum observed floor of 33.
+
+Separating policy logits from calibrated leaf values initially required two
+frontier inference calls. Fusing both outputs into one model pass produced
+byte-identical terminal results on a fixed 10-seed cohort and reduced runtime
+from 57.4 to 45.7 seconds.
+
+## Historical generation 4
 
 Generation 4 deliberately rebuilt the cache after collecting direct and exact-
 planner trajectories from several policies on common seeds. The resulting
@@ -117,7 +156,7 @@ mean floor rose from 11.32 to 12.117. The paired estimate was +0.797 floors with
 95% confidence interval `[0.268, 1.326]`: 118 seeds improved, 102 were unchanged,
 and 80 regressed. Neither checkpoint won an A20 run yet.
 
-The key evidence is that extra optimizer steps are harmful without new data.
+The key evidence was that extra optimizer steps are harmful without new data.
 Ten-minute experiments should retain temporal snapshots and select by actual
 closed-loop mean floor; the final training step is not a valid default.
 
@@ -147,9 +186,10 @@ checkpoints/caches (3.38 GiB), and seven superseded combat-model exports
 (roughly 105 MiB) were moved to the desktop trash. Raw trajectory and exact
 branch evidence was retained. The active local artifacts are:
 
-After generation 4 was promoted, its ten temporary snapshots and the
-superseded generation-1 checkpoint/cache (roughly 645 MiB total) were also
-moved to trash.
+After generation 10 was promoted, its ten temporary snapshots and the
+superseded generation-4 checkpoint/cache were also moved to trash. The raw
+generation-4 planner trajectories remain because they are the reproducible
+distillation source.
 
-- `artifacts/selfplay/defect-a20-mean-progress-v4-planner-data.pt`;
-- `artifacts/selfplay/defect-a20-mean-progress-v4-planner-selected-10m.pt`.
+- `artifacts/selfplay/defect-a20-mean-progress-v10-distill-data.pt`;
+- `artifacts/selfplay/defect-a20-mean-progress-v10-distill-selected-10m.pt`.
