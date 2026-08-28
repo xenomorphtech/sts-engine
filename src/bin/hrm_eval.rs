@@ -1,8 +1,7 @@
-//! Zero-configuration frontend for native Rust closed-loop combat HRM evaluation.
+//! Historical PyTorch/ONNX combat-HRM evaluator.
 //!
-//! The ordinary workflow is simply:
-//!
-//!     cargo run --release --bin sts-hrm-eval
+//! This consumes the superseded 500-puzzle checkpoint format, not the native
+//! procedural trainer's safetensors format.
 
 use std::env;
 use std::fs;
@@ -29,7 +28,8 @@ fn usage() {
     println!(
         "Usage: sts-hrm-eval [--checkpoint PATH] [--device auto|cuda|cpu] \
 [--output-dir PATH] [--max-actions N] [--batch-size N] [--branches-output PATH]\n\n\
-Defaults: artifacts/hrm/combat-hrm-10m.pt, checked-in 500-puzzle Defect A0 Act 3 \
+The legacy default checkpoint path is artifacts/hrm/combat-hrm-10m.pt. The \
+generated file is no longer retained. The checked-in 500-puzzle Defect A0 Act 3 \
 boss fixture, automatic CUDA selection, 1000 actions per puzzle, and reports \
 under artifacts/hrm.\n\n\
 Inference, exact rollouts, loop detection, and reporting run in Rust. If the \
@@ -316,7 +316,7 @@ fn run() -> Result<(), String> {
     }
     if !options.checkpoint.is_file() {
         return Err(format!(
-            "checkpoint is missing: {}; run sts-hrm-train first",
+            "legacy checkpoint is missing: {}; provide a preserved compatible .pt file explicitly",
             options.checkpoint.display()
         ));
     }

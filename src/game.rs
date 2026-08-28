@@ -3,7 +3,10 @@ use crate::card::Card;
 use crate::combat::{self, after_combat_relics, Combat};
 use crate::creature::{Player, PotionInstance, RelicInstance};
 use crate::dungeon::{CowVec, Dungeon};
-use crate::ids::{Act, CardId, CardRarity, CardType, Character, EncounterId, EventId, PotionId, RelicId, RelicTier, RoomType};
+use crate::ids::{
+    Act, CardId, CardRarity, CardType, Character, EncounterId, EventId, PotionId, RelicId,
+    RelicTier, RoomType,
+};
 use crate::java_util::shuffle_java;
 use crate::rng::{RngSet, StsRandom};
 use crate::unlocks::Unlocks;
@@ -394,27 +397,43 @@ struct CombatDungeonState {
 impl CombatDungeonState {
     fn capture(dungeon: &Dungeon) -> Self {
         Self {
-            boss_list: dungeon.boss_list.clone(), monster_list: dungeon.monster_list.clone(),
-            elite_list: dungeon.elite_list.clone(), event_list: dungeon.event_list.clone(),
-            shrine_list: dungeon.shrine_list.clone(), special_one_time: dungeon.special_one_time.clone(),
-            common_relics: Arc::clone(&dungeon.common_relics), uncommon_relics: Arc::clone(&dungeon.uncommon_relics),
-            rare_relics: Arc::clone(&dungeon.rare_relics), shop_relics: Arc::clone(&dungeon.shop_relics),
-            boss_relics: Arc::clone(&dungeon.boss_relics), common_cards: Arc::clone(&dungeon.common_cards),
-            uncommon_cards: Arc::clone(&dungeon.uncommon_cards), rare_cards: Arc::clone(&dungeon.rare_cards),
-            colorless_cards: Arc::clone(&dungeon.colorless_cards), src_colorless_cards: Arc::clone(&dungeon.src_colorless_cards),
+            boss_list: dungeon.boss_list.clone(),
+            monster_list: dungeon.monster_list.clone(),
+            elite_list: dungeon.elite_list.clone(),
+            event_list: dungeon.event_list.clone(),
+            shrine_list: dungeon.shrine_list.clone(),
+            special_one_time: dungeon.special_one_time.clone(),
+            common_relics: Arc::clone(&dungeon.common_relics),
+            uncommon_relics: Arc::clone(&dungeon.uncommon_relics),
+            rare_relics: Arc::clone(&dungeon.rare_relics),
+            shop_relics: Arc::clone(&dungeon.shop_relics),
+            boss_relics: Arc::clone(&dungeon.boss_relics),
+            common_cards: Arc::clone(&dungeon.common_cards),
+            uncommon_cards: Arc::clone(&dungeon.uncommon_cards),
+            rare_cards: Arc::clone(&dungeon.rare_cards),
+            colorless_cards: Arc::clone(&dungeon.colorless_cards),
+            src_colorless_cards: Arc::clone(&dungeon.src_colorless_cards),
             curse_cards: Arc::clone(&dungeon.curse_cards),
         }
     }
 
     fn restore(&self, dungeon: &mut Dungeon) {
-        dungeon.boss_list = self.boss_list.clone(); dungeon.monster_list = self.monster_list.clone();
-        dungeon.elite_list = self.elite_list.clone(); dungeon.event_list = self.event_list.clone();
-        dungeon.shrine_list = self.shrine_list.clone(); dungeon.special_one_time = self.special_one_time.clone();
-        dungeon.common_relics = Arc::clone(&self.common_relics); dungeon.uncommon_relics = Arc::clone(&self.uncommon_relics);
-        dungeon.rare_relics = Arc::clone(&self.rare_relics); dungeon.shop_relics = Arc::clone(&self.shop_relics);
-        dungeon.boss_relics = Arc::clone(&self.boss_relics); dungeon.common_cards = Arc::clone(&self.common_cards);
-        dungeon.uncommon_cards = Arc::clone(&self.uncommon_cards); dungeon.rare_cards = Arc::clone(&self.rare_cards);
-        dungeon.colorless_cards = Arc::clone(&self.colorless_cards); dungeon.src_colorless_cards = Arc::clone(&self.src_colorless_cards);
+        dungeon.boss_list = self.boss_list.clone();
+        dungeon.monster_list = self.monster_list.clone();
+        dungeon.elite_list = self.elite_list.clone();
+        dungeon.event_list = self.event_list.clone();
+        dungeon.shrine_list = self.shrine_list.clone();
+        dungeon.special_one_time = self.special_one_time.clone();
+        dungeon.common_relics = Arc::clone(&self.common_relics);
+        dungeon.uncommon_relics = Arc::clone(&self.uncommon_relics);
+        dungeon.rare_relics = Arc::clone(&self.rare_relics);
+        dungeon.shop_relics = Arc::clone(&self.shop_relics);
+        dungeon.boss_relics = Arc::clone(&self.boss_relics);
+        dungeon.common_cards = Arc::clone(&self.common_cards);
+        dungeon.uncommon_cards = Arc::clone(&self.uncommon_cards);
+        dungeon.rare_cards = Arc::clone(&self.rare_cards);
+        dungeon.colorless_cards = Arc::clone(&self.colorless_cards);
+        dungeon.src_colorless_cards = Arc::clone(&self.src_colorless_cards);
         dungeon.curse_cards = Arc::clone(&self.curse_cards);
     }
 }
@@ -423,60 +442,107 @@ impl CombatSearchState {
     /// Complete equality for state that can affect another combat action.
     /// Root-only rollback values are invariant within a planning call.
     pub(crate) fn exact_eq(&self, other: &Self) -> bool {
-        self.rng == other.rng && self.player == other.player
-            && self.screen == other.screen && self.combat == other.combat
+        self.rng == other.rng
+            && self.player == other.player
+            && self.screen == other.screen
+            && self.combat == other.combat
             && self.hand_select == other.hand_select
-            && self.pending_cards == other.pending_cards && self.hand_held == other.hand_held
+            && self.pending_cards == other.pending_cards
+            && self.hand_held == other.hand_held
             && self.grid == other.grid
             && self.grid_confirm_disabled == other.grid_confirm_disabled
-            && self.exhaust_select == other.exhaust_select && self.put_on_deck_select == other.put_on_deck_select
-            && self.gambling_select == other.gambling_select && self.memories_select == other.memories_select
-            && self.discovery_combat == other.discovery_combat && self.discovery_skippable == other.discovery_skippable
-            && self.discovery_typ == other.discovery_typ && self.discovery_colorless == other.discovery_colorless
+            && self.exhaust_select == other.exhaust_select
+            && self.put_on_deck_select == other.put_on_deck_select
+            && self.gambling_select == other.gambling_select
+            && self.memories_select == other.memories_select
+            && self.discovery_combat == other.discovery_combat
+            && self.discovery_skippable == other.discovery_skippable
+            && self.discovery_typ == other.discovery_typ
+            && self.discovery_colorless == other.discovery_colorless
             && self.discovery_copies == other.discovery_copies
             && self.pending_potion_actions == other.pending_potion_actions
     }
 
     pub(crate) fn bucket_key(&self) -> CombatSearchKey {
-        let (turn, cards_played, monster_count, enemy_hp_and_block) = self.combat.as_ref().map(|combat| (
-            combat.turn, combat.cards_played_this_turn, combat.monsters.len(),
-            combat.monsters.iter().fold(0i32, |total, monster| total.saturating_add(monster.hp).saturating_add(monster.block)),
-        )).unwrap_or_default();
+        let (turn, cards_played, monster_count, enemy_hp_and_block) = self
+            .combat
+            .as_ref()
+            .map(|combat| {
+                (
+                    combat.turn,
+                    combat.cards_played_this_turn,
+                    combat.monsters.len(),
+                    combat.monsters.iter().fold(0i32, |total, monster| {
+                        total
+                            .saturating_add(monster.hp)
+                            .saturating_add(monster.block)
+                    }),
+                )
+            })
+            .unwrap_or_default();
         CombatSearchKey {
-            screen: self.screen as u8, hp: self.player.hp, block: self.player.block, energy: self.player.energy,
-            hand_len: self.player.hand.len(), draw_len: self.player.draw.len(), discard_len: self.player.discard.len(),
-            exhaust_len: self.player.exhaust.len(), turn, cards_played, monster_count, enemy_hp_and_block,
+            screen: self.screen as u8,
+            hp: self.player.hp,
+            block: self.player.block,
+            energy: self.player.energy,
+            hand_len: self.player.hand.len(),
+            draw_len: self.player.draw.len(),
+            discard_len: self.player.discard.len(),
+            exhaust_len: self.player.exhaust.len(),
+            turn,
+            cards_played,
+            monster_count,
+            enemy_hp_and_block,
         }
     }
 }
 
 impl CombatSearchCheckpoint {
-    pub(crate) fn root(&self) -> &CombatSearchState { &self.root }
+    pub(crate) fn root(&self) -> &CombatSearchState {
+        &self.root
+    }
 }
 
 impl Game {
     pub(crate) fn combat_search_state(&self) -> CombatSearchState {
         CombatSearchState {
-            rng: self.rng.clone(), player: self.player.clone(), screen: self.screen,
-            combat: self.combat.clone(), hand_select: self.hand_select.clone(),
-            pending_cards: self.pending_cards.clone(), hand_held: self.hand_held.clone(),
-            grid: self.grid.clone(), grid_confirm_disabled: self.grid_confirm_disabled,
-            exhaust_select: self.exhaust_select, put_on_deck_select: self.put_on_deck_select,
-            gambling_select: self.gambling_select, memories_select: self.memories_select,
-            discovery_combat: self.discovery_combat, discovery_skippable: self.discovery_skippable,
-            discovery_typ: self.discovery_typ, discovery_colorless: self.discovery_colorless,
-            discovery_copies: self.discovery_copies, pending_potion_actions: self.pending_potion_actions.clone(),
+            rng: self.rng.clone(),
+            player: self.player.clone(),
+            screen: self.screen,
+            combat: self.combat.clone(),
+            hand_select: self.hand_select.clone(),
+            pending_cards: self.pending_cards.clone(),
+            hand_held: self.hand_held.clone(),
+            grid: self.grid.clone(),
+            grid_confirm_disabled: self.grid_confirm_disabled,
+            exhaust_select: self.exhaust_select,
+            put_on_deck_select: self.put_on_deck_select,
+            gambling_select: self.gambling_select,
+            memories_select: self.memories_select,
+            discovery_combat: self.discovery_combat,
+            discovery_skippable: self.discovery_skippable,
+            discovery_typ: self.discovery_typ,
+            discovery_colorless: self.discovery_colorless,
+            discovery_copies: self.discovery_copies,
+            pending_potion_actions: self.pending_potion_actions.clone(),
         }
     }
 
     pub(crate) fn combat_search_checkpoint(&self) -> CombatSearchCheckpoint {
         CombatSearchCheckpoint {
-            root: self.combat_search_state(), dungeon: CombatDungeonState::capture(&self.dungeon),
-            rewards: self.rewards.clone(), card_reward: self.card_reward.clone(),
-            active_card_reward: self.active_card_reward, event: self.event.clone(), done: self.done,
-            potion_blizzard: self.potion_blizzard, card_blizz: self.card_blizz,
-            pending_room: self.pending_room, pending_shop_purge: self.pending_shop_purge,
-            we_meet_again_room: self.we_meet_again_room, toolbox_reward: self.toolbox_reward,
+            root: self.combat_search_state(),
+            dungeon: CombatDungeonState::capture(&self.dungeon),
+            rewards: self.rewards.clone(),
+            card_reward: self.card_reward.clone(),
+            active_card_reward: self.active_card_reward,
+            event: self.event.clone(),
+            done: self.done,
+            potion_blizzard: self.potion_blizzard,
+            card_blizz: self.card_blizz,
+            pending_room: self.pending_room,
+            pending_shop_purge: self.pending_shop_purge,
+            we_meet_again_room: self.we_meet_again_room,
+            toolbox_reward: self.toolbox_reward,
         }
     }
 
@@ -486,24 +552,37 @@ impl Game {
         state: &CombatSearchState,
     ) {
         let restore_root_only = self.screen != Screen::Combat || self.done;
-        self.rng = state.rng.clone(); self.player = state.player.clone();
-        self.screen = state.screen; self.combat = state.combat.clone();
+        self.rng = state.rng.clone();
+        self.player = state.player.clone();
+        self.screen = state.screen;
+        self.combat = state.combat.clone();
         self.hand_select.clone_from(&state.hand_select);
-        self.pending_cards.clone_from(&state.pending_cards); self.hand_held.clone_from(&state.hand_held);
+        self.pending_cards.clone_from(&state.pending_cards);
+        self.hand_held.clone_from(&state.hand_held);
         self.grid.clone_from(&state.grid);
-        self.grid_confirm_disabled = state.grid_confirm_disabled; self.exhaust_select = state.exhaust_select;
-        self.put_on_deck_select = state.put_on_deck_select; self.gambling_select = state.gambling_select;
-        self.memories_select = state.memories_select; self.discovery_combat = state.discovery_combat;
-        self.discovery_skippable = state.discovery_skippable; self.discovery_typ = state.discovery_typ;
-        self.discovery_colorless = state.discovery_colorless; self.discovery_copies = state.discovery_copies;
-        self.pending_potion_actions.clone_from(&state.pending_potion_actions);
+        self.grid_confirm_disabled = state.grid_confirm_disabled;
+        self.exhaust_select = state.exhaust_select;
+        self.put_on_deck_select = state.put_on_deck_select;
+        self.gambling_select = state.gambling_select;
+        self.memories_select = state.memories_select;
+        self.discovery_combat = state.discovery_combat;
+        self.discovery_skippable = state.discovery_skippable;
+        self.discovery_typ = state.discovery_typ;
+        self.discovery_colorless = state.discovery_colorless;
+        self.discovery_copies = state.discovery_copies;
+        self.pending_potion_actions
+            .clone_from(&state.pending_potion_actions);
 
         if restore_root_only {
             checkpoint.dungeon.restore(&mut self.dungeon);
-            self.rewards.clone_from(&checkpoint.rewards); self.card_reward.clone_from(&checkpoint.card_reward);
-            self.active_card_reward = checkpoint.active_card_reward; self.event.clone_from(&checkpoint.event);
-            self.done = checkpoint.done; self.potion_blizzard = checkpoint.potion_blizzard;
-            self.card_blizz = checkpoint.card_blizz; self.pending_room = checkpoint.pending_room;
+            self.rewards.clone_from(&checkpoint.rewards);
+            self.card_reward.clone_from(&checkpoint.card_reward);
+            self.active_card_reward = checkpoint.active_card_reward;
+            self.event.clone_from(&checkpoint.event);
+            self.done = checkpoint.done;
+            self.potion_blizzard = checkpoint.potion_blizzard;
+            self.card_blizz = checkpoint.card_blizz;
+            self.pending_room = checkpoint.pending_room;
             self.pending_shop_purge = checkpoint.pending_shop_purge;
             self.we_meet_again_room = checkpoint.we_meet_again_room;
             self.toolbox_reward = checkpoint.toolbox_reward;
@@ -809,7 +888,11 @@ mod event_fidelity_tests {
         assert_eq!(options.len(), 3);
         assert_eq!(
             options,
-            &[EventOption::OfferRelic, EventOption::OfferRelic, EventOption::Leave]
+            &[
+                EventOption::OfferRelic,
+                EventOption::OfferRelic,
+                EventOption::Leave
+            ]
         );
 
         let tomb = start_named_event(EventId::TombOfLordRedMask);
@@ -898,10 +981,17 @@ mod event_fidelity_tests {
 
     #[test]
     fn event_transform_of_a_curse_stays_in_the_vanilla_curse_pool() {
-        let mut game = Game::new(1_146_262_684_929_551_399, Character::Defect, 20, Unlocks::fixture());
+        let mut game = Game::new(
+            1_146_262_684_929_551_399,
+            Character::Defect,
+            20,
+            Unlocks::fixture(),
+        );
         game.rng.reset_floor_streams(game.seed, 21);
 
-        let transformed = game.misc_transform_roll(CardId::Regret).expect("replacement curse");
+        let transformed = game
+            .misc_transform_roll(CardId::Regret)
+            .expect("replacement curse");
         assert_ne!(transformed, CardId::Regret);
         assert_eq!(transformed.def().color, crate::ids::CardColor::CURSE);
     }
@@ -963,8 +1053,19 @@ mod event_fidelity_tests {
         });
 
         assert_eq!(game.player.max_hp, max_before - loss);
-        assert!(!game.player.deck.iter().any(|card| card.id == CardId::Strike_B));
-        assert_eq!(game.player.deck.iter().filter(|card| card.id == CardId::Bite).count(), 5);
+        assert!(!game
+            .player
+            .deck
+            .iter()
+            .any(|card| card.id == CardId::Strike_B));
+        assert_eq!(
+            game.player
+                .deck
+                .iter()
+                .filter(|card| card.id == CardId::Bite)
+                .count(),
+            5
+        );
         assert_eq!(event_options(&game), [EventOption::Leave]);
     }
 
@@ -1407,9 +1508,11 @@ impl Game {
         match self.screen {
             Screen::Combat => {
                 if let Some(combat) = &self.combat {
-                    let velvet_choker_full = self.player.relics.iter().any(|r| {
-                        r.id == RelicId::Velvet_Choker && r.counter >= 6
-                    });
+                    let velvet_choker_full = self
+                        .player
+                        .relics
+                        .iter()
+                        .any(|r| r.id == RelicId::Velvet_Choker && r.counter >= 6);
                     let normality_full = combat.cards_played_this_turn >= 3
                         && self
                             .player
@@ -1423,7 +1526,8 @@ impl Game {
                         {
                             continue;
                         }
-                        if card.cost_for_turn > self.player.energy as i16 && card.cost_for_turn >= 0 {
+                        if card.cost_for_turn > self.player.energy as i16 && card.cost_for_turn >= 0
+                        {
                             continue;
                         }
                         if card.card_type() == crate::ids::CardType::ATTACK
@@ -1607,17 +1711,16 @@ impl Game {
                         room: None,
                     });
                 }
-                if !self.toolbox_reward
-                    && (!self.discovery_combat || self.discovery_skippable)
-                {
+                if !self.toolbox_reward && (!self.discovery_combat || self.discovery_skippable) {
                     actions.push(Action::Skip);
                 }
             }
             Screen::HandSelect => {
                 let thinking_ahead_requires_one = self.put_on_deck_select
-                    && self.combat.as_ref().is_some_and(|combat| {
-                        combat.need_put_on_deck && !combat.need_forethought
-                    });
+                    && self
+                        .combat
+                        .as_ref()
+                        .is_some_and(|combat| combat.need_put_on_deck && !combat.need_forethought);
                 let thinking_ahead_confirm =
                     thinking_ahead_requires_one && !self.pending_cards.is_empty();
                 if !thinking_ahead_confirm {
@@ -1682,7 +1785,10 @@ impl Game {
         if self.we_meet_again_room {
             return;
         }
-        let active_combat = self.combat.as_ref().is_some_and(|combat| !combat.all_dead());
+        let active_combat = self
+            .combat
+            .as_ref()
+            .is_some_and(|combat| !combat.all_dead());
         for (slot, potion) in self.player.potions.iter().enumerate() {
             if potion.id == PotionId::Slot || potion.id == PotionId::Fairy {
                 continue;
@@ -1697,8 +1803,7 @@ impl Game {
                 // Mind Bloom's I am War fight remains an EventRoom (rank 74).
                 continue;
             }
-            if !active_combat
-                && !matches!(potion.id, PotionId::FruitJuice | PotionId::EntropicBrew)
+            if !active_combat && !matches!(potion.id, PotionId::FruitJuice | PotionId::EntropicBrew)
             {
                 continue;
             }
@@ -1846,7 +1951,9 @@ impl Game {
             NeowKind::ThreeEnemyKill,
             NeowKind::HundredGold,
         ];
-        let pick = |rng: &mut StsRandom, opts: &[NeowKind]| opts[rng.random_range(0, opts.len() as i32 - 1) as usize];
+        let pick = |rng: &mut StsRandom, opts: &[NeowKind]| {
+            opts[rng.random_range(0, opts.len() as i32 - 1) as usize]
+        };
         let a = pick(&mut self.neow_rng, &cat0);
         let b = pick(&mut self.neow_rng, &cat1);
         let drawback = match self.neow_rng.random_range(0, 3) {
@@ -1881,10 +1988,7 @@ impl Game {
                 kind: b,
                 drawback: NeowDrawback::None,
             },
-            NeowOption {
-                kind: c,
-                drawback,
-            },
+            NeowOption { kind: c, drawback },
             NeowOption {
                 kind: NeowKind::BossRelic,
                 drawback: NeowDrawback::None,
@@ -1969,7 +2073,12 @@ impl Game {
             }
             NeowKind::RandomColorless | NeowKind::RandomColorless2 => {
                 let rare_only = matches!(kind, NeowKind::RandomColorless2);
-                self.card_reward = crate::rewards::neow_colorless_cards(&self.dungeon, &mut self.rng, 3, rare_only);
+                self.card_reward = crate::rewards::neow_colorless_cards(
+                    &self.dungeon,
+                    &mut self.rng,
+                    3,
+                    rare_only,
+                );
                 self.screen = Screen::CardReward;
             }
             NeowKind::RemoveCard => self.open_grid(GridKind::Purge, 1, false),
@@ -2325,11 +2434,7 @@ impl Game {
             } else {
                 CardRarity::COMMON
             };
-            let rarity = if rare_only {
-                CardRarity::RARE
-            } else {
-                rolled
-            };
+            let rarity = if rare_only { CardRarity::RARE } else { rolled };
             let pool: &[CardId] = match rarity {
                 CardRarity::RARE => &self.dungeon.rare_cards,
                 CardRarity::UNCOMMON => &self.dungeon.uncommon_cards,
@@ -2367,7 +2472,10 @@ impl Game {
             let card = match grid.kind {
                 GridKind::DiscardToHand => self.player.discard.get(pile_i),
                 GridKind::DrawPileToHand | GridKind::SkillFromDeck => self.player.draw.get(pile_i),
-                GridKind::Library => self.event.as_ref().and_then(|e| e.library_cards.get(pile_i)),
+                GridKind::Library => self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.library_cards.get(pile_i)),
                 _ => self.player.deck.get(pile_i),
             };
             if let Some(card) = card {
@@ -2454,9 +2562,7 @@ impl Game {
                 // still open after Choose 3, Melter is the second pick).
                 let combat_multi = matches!(
                     kind,
-                    GridKind::DiscardToHand
-                        | GridKind::DrawPileToHand
-                        | GridKind::SkillFromDeck
+                    GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck
                 ) && needed > 1;
                 if !combat_multi
                     && (matches!(
@@ -2532,7 +2638,10 @@ impl Game {
         let completed_beggar_purge = kind == GridKind::Purge
             && !selection_order.is_empty()
             && self.grid.as_ref().is_some_and(|grid| grid.return_event)
-            && self.event.as_ref().is_some_and(|event| event.id == EventId::Beggar);
+            && self
+                .event
+                .as_ref()
+                .is_some_and(|event| event.id == EventId::Beggar);
         match kind {
             GridKind::Purge => {
                 let shop_purge = self.grid.as_ref().is_some_and(|g| g.return_shop);
@@ -2546,7 +2655,10 @@ impl Game {
                     self.shop.purge_cost += 25;
                 }
                 let bonfire = self.grid.as_ref().is_some_and(|g| g.return_event)
-                    && self.event.as_ref().is_some_and(|e| e.id == EventId::BonfireElementals);
+                    && self
+                        .event
+                        .as_ref()
+                        .is_some_and(|e| e.id == EventId::BonfireElementals);
                 let designer_full = self.grid.as_ref().is_some_and(|g| g.return_event)
                     && self.event.as_ref().is_some_and(|e| {
                         e.id == EventId::Designer && e.data.get(6).copied().unwrap_or(0) != 0
@@ -2587,9 +2699,10 @@ impl Game {
                 }
             }
             GridKind::Transform => {
-                let astrolabe = self.grid.as_ref().is_some_and(|g| {
-                    g.needed == 3 && g.return_screen == Some(Screen::BossRelic)
-                });
+                let astrolabe = self
+                    .grid
+                    .as_ref()
+                    .is_some_and(|g| g.needed == 3 && g.return_screen == Some(Screen::BossRelic));
                 let event_transform = self.grid.as_ref().is_some_and(|g| g.return_event);
                 if astrolabe {
                     // Astrolabe.giveCards: transformCard(c, true, miscRng) and
@@ -2777,15 +2890,12 @@ impl Game {
 
     fn finish_grid(&mut self) {
         let memories = self.memories_select;
-        let back_to_combat = self
-            .grid
-            .as_ref()
-            .is_some_and(|g| {
-                matches!(
-                    g.kind,
-                    GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck
-                )
-            });
+        let back_to_combat = self.grid.as_ref().is_some_and(|g| {
+            matches!(
+                g.kind,
+                GridKind::DiscardToHand | GridKind::DrawPileToHand | GridKind::SkillFromDeck
+            )
+        });
         let back_to_event = self.grid.as_ref().is_some_and(|g| g.return_event);
         let back_to_shop = self.grid.as_ref().is_some_and(|g| g.return_shop);
         let return_screen = self.grid.as_ref().and_then(|g| g.return_screen);
@@ -2811,7 +2921,11 @@ impl Game {
         }
         if back_to_event {
             self.flush_pending_cards();
-            if self.event.as_ref().is_some_and(|e| e.id == EventId::BonfireElementals) {
+            if self
+                .event
+                .as_ref()
+                .is_some_and(|e| e.id == EventId::BonfireElementals)
+            {
                 self.screen = Screen::Event;
                 return;
             }
@@ -3009,10 +3123,14 @@ impl Game {
         self.rng.reset_floor_streams(self.seed, self.dungeon.floor);
         self.maw_bank_on_enter_room();
         if y >= 0 && y < self.dungeon.map.height() as i32 && x >= 0 {
-            std::sync::Arc::make_mut(&mut self.dungeon.map).node_mut(x, y).taken = true;
+            std::sync::Arc::make_mut(&mut self.dungeon.map)
+                .node_mut(x, y)
+                .taken = true;
         }
         match room {
-            RoomType::Monster | RoomType::Elite | RoomType::Boss => self.start_combat_in_current_room(),
+            RoomType::Monster | RoomType::Elite | RoomType::Boss => {
+                self.start_combat_in_current_room()
+            }
             RoomType::Rest => {
                 self.rest_smithing = false;
                 self.rest_smith_picked = false;
@@ -3218,7 +3336,8 @@ impl Game {
                     } else {
                         5
                     };
-                    self.player.add_power(crate::ids::PowerId::Strength, potency);
+                    self.player
+                        .add_power(crate::ids::PowerId::Strength, potency);
                     self.player
                         .add_power(crate::ids::PowerId::LoseStrength, potency);
                 }
@@ -3406,7 +3525,8 @@ impl Game {
                     } else {
                         4
                     };
-                    self.player.add_power(crate::ids::PowerId::PlatedArmor, potency);
+                    self.player
+                        .add_power(crate::ids::PowerId::PlatedArmor, potency);
                 }
                 PotionId::BlessingOfTheForge => {
                     // BlessingOfTheForge.use -> ArmamentsAction(true): upgrade every
@@ -3652,10 +3772,7 @@ impl Game {
             combat::deal_thorns(monster, &mut self.rng, damage);
             // AbstractCreature.decrementBlock calls brokeBlock for THORNS
             // damage too. HandDrill queues Vulnerable after DamageAction.
-            if block_before > 0
-                && monster.block == 0
-                && self.player.has_relic(RelicId::HandDrill)
-            {
+            if block_before > 0 && monster.block == 0 && self.player.has_relic(RelicId::HandDrill) {
                 combat::apply_player_power_to_monster(
                     &self.player,
                     monster,
@@ -3667,12 +3784,7 @@ impl Game {
         }
         // FirePotion DamageAction can kill; GremlinHorn.onMonsterDeath
         // addToBot Draw+Energy if combat is not over (seed 773).
-        combat::gremlin_horn_on_kills(
-            &mut self.player,
-            combat,
-            &mut self.rng,
-            dead_before,
-        );
+        combat::gremlin_horn_on_kills(&mut self.player, combat, &mut self.rng, dead_before);
     }
 
     /// Drop any modal selection owned by the combat that is ending.
@@ -3768,9 +3880,10 @@ impl Game {
         let event_room = self.current_room == RoomType::Event;
         // MonsterGroup.haveMonstersEscaped: true only if every monster
         // escaped. Hallway gold and potion then skip (Looter/Mugger run).
-        let all_escaped = self.combat.as_ref().is_some_and(|c| {
-            !c.monsters.is_empty() && c.monsters.iter().all(|m| m.escaped)
-        });
+        let all_escaped = self
+            .combat
+            .as_ref()
+            .is_some_and(|c| !c.monsters.is_empty() && c.monsters.iter().all(|m| m.escaped));
         // AbstractRoom.endBattle gold is `instanceof MonsterRoomBoss/Elite/MonsterRoom`.
         // EventRoom keeps pre-seeded rewards (Mushrooms gold+Odd Mushroom, MindBloom, …)
         // and does not roll hallway gold.
@@ -3782,7 +3895,8 @@ impl Game {
             let boss = self.current_room == RoomType::Boss;
             let elite = self.current_room == RoomType::Elite;
             if boss || elite || !all_escaped {
-                let gold = crate::rewards::roll_monster_gold(&mut self.rng, boss, elite, self.ascension);
+                let gold =
+                    crate::rewards::roll_monster_gold(&mut self.rng, boss, elite, self.ascension);
                 self.add_gold_to_rewards(gold);
             }
             if elite {
@@ -3827,7 +3941,10 @@ impl Game {
         // use chance 40+blizzard. EventRoom uses the same 40+blizzard roll.
         let skip_combat_rewards = !event_room
             && boss
-            && matches!(self.dungeon.act, crate::ids::Act::Beyond | crate::ids::Act::Ending);
+            && matches!(
+                self.dungeon.act,
+                crate::ids::Act::Beyond | crate::ids::Act::Ending
+            );
         // Hallway + all escaped: addPotionToRewards still rolls with chance 0.
         let escaped_hallway = !event_room && !boss && !elite && all_escaped;
         if let Some(p) = crate::rewards::roll_potion(
@@ -3986,7 +4103,12 @@ impl Game {
     }
 
     fn claim_reward_at(&mut self, real: usize) {
-        let Some(kind) = self.rewards.get(real).filter(|r| !r.taken).map(|r| r.kind.clone()) else {
+        let Some(kind) = self
+            .rewards
+            .get(real)
+            .filter(|r| !r.taken)
+            .map(|r| r.kind.clone())
+        else {
             return;
         };
         match kind {
@@ -4054,7 +4176,10 @@ impl Game {
                     // leaves two entries in bossList. The second boss is a real
                     // room transition (floor/RNG reset and resetPlayer), not a
                     // second phase of the same combat, and does not heal HP.
-                    if self.ascension >= 20 && self.dungeon.act == Act::Beyond && self.dungeon.boss_list.len() == 2 {
+                    if self.ascension >= 20
+                        && self.dungeon.act == Act::Beyond
+                        && self.dungeon.boss_list.len() == 2
+                    {
                         self.rewards.clear();
                         self.dungeon.boss = self.dungeon.boss_list[0];
                         self.enter_room(-1, 15, RoomType::Boss);
@@ -4114,7 +4239,8 @@ impl Game {
     }
 
     fn begin_discovery(&mut self, typ: Option<crate::ids::CardType>, colorless: bool) {
-        self.card_reward = crate::rewards::discovery_cards(&self.dungeon, &mut self.rng, typ, colorless);
+        self.card_reward =
+            crate::rewards::discovery_cards(&self.dungeon, &mut self.rng, typ, colorless);
         self.discovery_combat = self.combat.is_some();
         self.discovery_skippable = typ.is_some();
         self.discovery_typ = typ;
@@ -4130,11 +4256,12 @@ impl Game {
             1
         };
         if self.screen != Screen::Combat {
-            self.pending_potion_actions.push(PendingPotionAction::Discovery {
-                typ,
-                colorless,
-                copies,
-            });
+            self.pending_potion_actions
+                .push(PendingPotionAction::Discovery {
+                    typ,
+                    colorless,
+                    copies,
+                });
             return;
         }
         self.begin_discovery(typ, colorless);
@@ -4176,7 +4303,8 @@ impl Game {
     }
 
     fn begin_toolbox_reward(&mut self) {
-        self.card_reward = crate::rewards::discovery_cards(&self.dungeon, &mut self.rng, None, true);
+        self.card_reward =
+            crate::rewards::discovery_cards(&self.dungeon, &mut self.rng, None, true);
         self.toolbox_reward = true;
         self.screen = Screen::CardReward;
     }
@@ -4591,7 +4719,12 @@ impl Game {
     fn spend_shop_gold(&mut self, amount: i32) {
         self.player.gold -= amount;
         // ShopScreen: every relic.onSpendGold after loseGold.
-        if let Some(r) = self.player.relics.iter_mut().find(|r| r.id == RelicId::MawBank) {
+        if let Some(r) = self
+            .player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::MawBank)
+        {
             if !r.used_up {
                 r.used_up = true;
                 r.counter = -2;
@@ -4897,6 +5030,12 @@ impl Game {
         }
     }
 
+    /// Training-only entry point that still executes the ordinary pre-battle
+    /// setup, relic hooks, deck shuffle, and encounter RNG.
+    pub(crate) fn start_training_combat(&mut self, encounter: EncounterId) {
+        self.start_combat_encounter(encounter);
+    }
+
     fn start_combat_in_current_room(&mut self) {
         let encounter = if self.current_room == RoomType::Boss {
             self.dungeon.boss
@@ -4909,7 +5048,11 @@ impl Game {
         // the head of bossList. A20's double-boss transition keys off the two
         // unconsumed Beyond bosses left after the first entry.
         if self.current_room == RoomType::Boss
-            && self.dungeon.boss_list.first().is_some_and(|boss| boss == &self.dungeon.boss)
+            && self
+                .dungeon
+                .boss_list
+                .first()
+                .is_some_and(|boss| boss == &self.dungeon.boss)
         {
             self.dungeon.boss_list.remove(0);
         }
@@ -5088,7 +5231,12 @@ impl Game {
         let roll = dup.random_float();
         self.rng.event = dup;
         let mut force_chest = false;
-        if let Some(r) = self.player.relics.iter_mut().find(|r| r.id == RelicId::Tiny_Chest) {
+        if let Some(r) = self
+            .player
+            .relics
+            .iter_mut()
+            .find(|r| r.id == RelicId::Tiny_Chest)
+        {
             r.counter += 1;
             if r.counter == 4 {
                 r.counter = 0;
@@ -5293,8 +5441,7 @@ impl Game {
                 };
                 let hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * hp_pct);
                 let heal = crate::rewards::gdx_round(self.player.max_hp as f32 * heal_pct);
-                let max_hp_loss =
-                    crate::rewards::gdx_round(self.player.max_hp as f32 * 0.05);
+                let max_hp_loss = crate::rewards::gdx_round(self.player.max_hp as f32 * 0.05);
                 data = vec![hp_loss, heal, max_hp_loss];
                 vec![EventOption::Continue]
             }
@@ -5310,7 +5457,11 @@ impl Game {
             }
             EventId::MindBloom => mind_bloom_options(self.dungeon.floor),
             EventId::WorldOfGoop => {
-                let (lo, hi) = if self.ascension >= 15 { (35, 75) } else { (20, 50) };
+                let (lo, hi) = if self.ascension >= 15 {
+                    (35, 75)
+                } else {
+                    (20, 50)
+                };
                 let mut loss = self.rng.misc.random_range(lo, hi);
                 if loss > self.player.gold {
                     loss = self.player.gold;
@@ -5346,7 +5497,12 @@ impl Game {
             }
             EventId::Purifier => {
                 let mut opts = Vec::new();
-                if self.player.deck.iter().any(|card| purgeable_card(card) && !card.in_bottle) {
+                if self
+                    .player
+                    .deck
+                    .iter()
+                    .any(|card| purgeable_card(card) && !card.in_bottle)
+                {
                     opts.push(EventOption::Pray);
                 }
                 opts.push(EventOption::Leave);
@@ -5436,7 +5592,10 @@ impl Game {
                     .deck
                     .iter()
                     .enumerate()
-                    .filter(|(_, c)| c.rarity() != CardRarity::BASIC && c.card_type() != crate::ids::CardType::CURSE)
+                    .filter(|(_, c)| {
+                        c.rarity() != CardRarity::BASIC
+                            && c.card_type() != crate::ids::CardType::CURSE
+                    })
                     .map(|(i, _)| i)
                     .collect();
                 shuffle_java(&mut idxs, seed);
@@ -5553,7 +5712,12 @@ impl Game {
                 // DrugDealer ctor: JAX, transform 2 if >=2 purgeable, MutagenicStrength.
                 // Transform is disabled below that; ChoiceDriver skips it.
                 let mut opts = vec![EventOption::Ingest];
-                let purgeable = self.player.deck.iter().filter(|c| purgeable_card(c)).count();
+                let purgeable = self
+                    .player
+                    .deck
+                    .iter()
+                    .filter(|c| purgeable_card(c))
+                    .count();
                 if purgeable >= 2 {
                     opts.push(EventOption::Study);
                 }
@@ -5863,10 +6027,27 @@ impl Game {
 
     /// Designer MAIN buttons. Disabled options are omitted (ChoiceDriver skips them).
     fn designer_main_options(&self) -> Vec<EventOption> {
-        let adj = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(40);
-        let clean = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(60);
-        let full = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(90);
-        let rem_cards = self.event.as_ref().and_then(|e| e.data.get(5).copied()).unwrap_or(0) != 0;
+        let adj = self
+            .event
+            .as_ref()
+            .and_then(|e| e.data.first().copied())
+            .unwrap_or(40);
+        let clean = self
+            .event
+            .as_ref()
+            .and_then(|e| e.data.get(1).copied())
+            .unwrap_or(60);
+        let full = self
+            .event
+            .as_ref()
+            .and_then(|e| e.data.get(2).copied())
+            .unwrap_or(90);
+        let rem_cards = self
+            .event
+            .as_ref()
+            .and_then(|e| e.data.get(5).copied())
+            .unwrap_or(0)
+            != 0;
         let upgradable = self.player.deck.iter().any(|c| c.can_upgrade());
         let unbottled = self
             .player
@@ -6103,18 +6284,23 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            EventOption::Touch,
-                            EventOption::Trade,
-                            EventOption::Leave,
-                        ];
+                        event.options =
+                            vec![EventOption::Touch, EventOption::Trade, EventOption::Leave];
                     }
                 }
                 1 => {
                     match *index {
                         0 => {
-                            let dmg = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(1);
-                            let gold = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(75);
+                            let dmg = self
+                                .event
+                                .as_ref()
+                                .and_then(|e| e.data.first().copied())
+                                .unwrap_or(1);
+                            let gold = self
+                                .event
+                                .as_ref()
+                                .and_then(|e| e.data.get(1).copied())
+                                .unwrap_or(75);
                             let dmg = combat::on_lose_hp_last(&self.player, dmg);
                             self.player.hp = (self.player.hp - dmg).max(0);
                             if !self.player.has_relic(RelicId::Ectoplasm) {
@@ -6241,10 +6427,7 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            EventOption::SmashAndGrab,
-                            EventOption::StayInLine,
-                        ];
+                        event.options = vec![EventOption::SmashAndGrab, EventOption::StayInLine];
                     }
                 }
                 1 => {
@@ -6321,10 +6504,7 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            EventOption::Murderer,
-                            EventOption::Owner,
-                        ];
+                        event.options = vec![EventOption::Murderer, EventOption::Owner];
                     }
                 }
                 1 => {
@@ -6350,7 +6530,11 @@ impl Game {
                         .map(|e| (e.data[0] != 0, e.data[1] != 0))
                         .unwrap_or((false, false));
                     let payout = if bet_for == owner_wins {
-                        if owner_wins { 250 } else { 100 }
+                        if owner_wins {
+                            250
+                        } else {
+                            100
+                        }
                     } else {
                         0
                     };
@@ -6437,7 +6621,9 @@ impl Game {
                     self.player.hp = self.player.hp.min(self.player.max_hp);
                     self.heal_player(self.player.max_hp);
                 } else if chosen == Some(EventOption::OfferGoldenIdol) {
-                    self.player.relics.retain(|relic| relic.id != RelicId::Golden_Idol);
+                    self.player
+                        .relics
+                        .retain(|relic| relic.id != RelicId::Golden_Idol);
                     if !self.player.has_relic(RelicId::Ectoplasm) {
                         self.player.gold += 333;
                     }
@@ -6501,9 +6687,7 @@ impl Game {
             .as_ref()
             .and_then(|event| event.options.get(*index))
             .is_some_and(|option| *option == EventOption::Leave);
-        if selected_is_leave
-            && id != EventId::WomanInBlue
-        {
+        if selected_is_leave && id != EventId::WomanInBlue {
             // Tomb INTRO Leave opens the map; Mausoleum/Scrap Ooze-style Leave goes to RESULT first.
             if id == EventId::TombOfLordRedMask || screen > 0 || option_count == 1 {
                 self.open_map();
@@ -6522,8 +6706,16 @@ impl Game {
                 return;
             }
             if *index == 0 {
-                let dmg = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(3);
-                let chance = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(25);
+                let dmg = self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.data.first().copied())
+                    .unwrap_or(3);
+                let chance = self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.data.get(1).copied())
+                    .unwrap_or(25);
                 let dmg = combat::on_lose_hp_last(&self.player, dmg);
                 self.player.hp = (self.player.hp - dmg).max(1);
                 let roll = self.rng.misc.random_range(0, 99);
@@ -6557,7 +6749,14 @@ impl Game {
                 if chosen == Some(EventOption::Ingest) {
                     self.obtain_master_deck_card(CardId::J_A_X_);
                 } else if chosen == Some(EventOption::Study) {
-                    if self.player.deck.iter().filter(|c| purgeable_card(c)).count() >= 2 {
+                    if self
+                        .player
+                        .deck
+                        .iter()
+                        .filter(|c| purgeable_card(c))
+                        .count()
+                        >= 2
+                    {
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
                             event.options = vec![EventOption::Leave];
@@ -6596,12 +6795,38 @@ impl Game {
                         .as_ref()
                         .and_then(|e| e.options.get(*index))
                         .copied();
-                    let adj = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(40);
-                    let clean = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(60);
-                    let full = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(90);
-                    let hp = self.event.as_ref().and_then(|e| e.data.get(3).copied()).unwrap_or(3);
-                    let upg_one = self.event.as_ref().and_then(|e| e.data.get(4).copied()).unwrap_or(0) != 0;
-                    let rem_cards = self.event.as_ref().and_then(|e| e.data.get(5).copied()).unwrap_or(0) != 0;
+                    let adj = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.first().copied())
+                        .unwrap_or(40);
+                    let clean = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(1).copied())
+                        .unwrap_or(60);
+                    let full = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(2).copied())
+                        .unwrap_or(90);
+                    let hp = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(3).copied())
+                        .unwrap_or(3);
+                    let upg_one = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(4).copied())
+                        .unwrap_or(0)
+                        != 0;
+                    let rem_cards = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(5).copied())
+                        .unwrap_or(0)
+                        != 0;
                     if chosen == Some(EventOption::Adjustments) {
                         self.player.gold = (self.player.gold - adj).max(0);
                         if let Some(event) = self.event.as_mut() {
@@ -6891,7 +7116,11 @@ impl Game {
                         self.player.gold += 75;
                     }
                     _ => {
-                        let loss = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
+                        let loss = self
+                            .event
+                            .as_ref()
+                            .and_then(|e| e.data.first().copied())
+                            .unwrap_or(0);
                         self.player.gold = (self.player.gold - loss).max(0);
                     }
                 }
@@ -6922,11 +7151,8 @@ impl Game {
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
                             event.data = vec![dmg, max_loss];
-                            event.options = vec![
-                                EventOption::Outrun,
-                                EventOption::Smash,
-                                EventOption::Hide,
-                            ];
+                            event.options =
+                                vec![EventOption::Outrun, EventOption::Smash, EventOption::Hide];
                         }
                     } else if let Some(event) = self.event.as_mut() {
                         event.screen = 2;
@@ -6934,8 +7160,16 @@ impl Game {
                     }
                 }
                 1 => {
-                    let dmg = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
-                    let max_loss = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(1);
+                    let dmg = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.first().copied())
+                        .unwrap_or(0);
+                    let max_loss = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.get(1).copied())
+                        .unwrap_or(1);
                     match *index {
                         0 => self.player.deck.push(Card::new(CardId::Injury)),
                         1 => {
@@ -7004,7 +7238,11 @@ impl Game {
                         .and_then(|e| e.options.get(*index))
                         .copied();
                     if chosen == Some(EventOption::Heal) {
-                        let heal = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
+                        let heal = self
+                            .event
+                            .as_ref()
+                            .and_then(|e| e.data.first().copied())
+                            .unwrap_or(0);
                         self.player.gold -= 35;
                         self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
                         if let Some(event) = self.event.as_mut() {
@@ -7012,7 +7250,11 @@ impl Game {
                             event.options = vec![EventOption::Leave];
                         }
                     } else if chosen == Some(EventOption::Purify) {
-                        let cost = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(50);
+                        let cost = self
+                            .event
+                            .as_ref()
+                            .and_then(|e| e.data.get(1).copied())
+                            .unwrap_or(50);
                         self.player.gold -= cost;
                         if let Some(event) = self.event.as_mut() {
                             event.screen = 1;
@@ -7060,7 +7302,12 @@ impl Game {
                             event.screen = 1;
                             event.options = vec![EventOption::Leave];
                         }
-                        if self.player.deck.iter().any(|c| purgeable_card(c) && !c.in_bottle) {
+                        if self
+                            .player
+                            .deck
+                            .iter()
+                            .any(|c| purgeable_card(c) && !c.in_bottle)
+                        {
                             self.open_grid(GridKind::Purge, 1, true);
                             if let Some(g) = self.grid.as_mut() {
                                 g.can_cancel = true;
@@ -7194,11 +7441,8 @@ impl Game {
                 0 => {
                     if let Some(event) = self.event.as_mut() {
                         event.screen = 1;
-                        event.options = vec![
-                            EventOption::Land,
-                            EventOption::Channel,
-                            EventOption::Strike,
-                        ];
+                        event.options =
+                            vec![EventOption::Land, EventOption::Channel, EventOption::Strike];
                     }
                 }
                 1 => {
@@ -7231,7 +7475,11 @@ impl Game {
                     }
                 }
                 0 => {
-                    let heal = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
+                    let heal = self
+                        .event
+                        .as_ref()
+                        .and_then(|e| e.data.first().copied())
+                        .unwrap_or(0);
                     self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
                     self.player.deck.push(Card::new(CardId::Parasite));
                     if let Some(event) = self.event.as_mut() {
@@ -7262,7 +7510,8 @@ impl Game {
                     self.card_reward.clear();
                     let n = if self.ascension < 15 { 3 } else { 2 };
                     for _ in 0..n {
-                        let p = crate::rewards::get_random_potion_for(&mut self.rng, self.character);
+                        let p =
+                            crate::rewards::get_random_potion_for(&mut self.rng, self.character);
                         self.rewards.push(Reward::new(RewardKind::Potion(p)));
                     }
                     if let Some(event) = self.event.as_mut() {
@@ -7287,7 +7536,10 @@ impl Game {
                         self.rewards.clear();
                         self.card_reward.clear();
                         for _ in 0..=*index {
-                            let p = crate::rewards::get_random_potion_for(&mut self.rng, self.character);
+                            let p = crate::rewards::get_random_potion_for(
+                                &mut self.rng,
+                                self.character,
+                            );
                             self.rewards.push(Reward::new(RewardKind::Potion(p)));
                         }
                         if let Some(event) = self.event.as_mut() {
@@ -7368,9 +7620,21 @@ impl Game {
                 }
             }
             EventId::WeMeetAgain => {
-                let gold_amt = self.event.as_ref().and_then(|e| e.data.first().copied()).unwrap_or(0);
-                let card_idx = self.event.as_ref().and_then(|e| e.data.get(1).copied()).unwrap_or(-1);
-                let potion_slot = self.event.as_ref().and_then(|e| e.data.get(2).copied()).unwrap_or(-1);
+                let gold_amt = self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.data.first().copied())
+                    .unwrap_or(0);
+                let card_idx = self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.data.get(1).copied())
+                    .unwrap_or(-1);
+                let potion_slot = self
+                    .event
+                    .as_ref()
+                    .and_then(|e| e.data.get(2).copied())
+                    .unwrap_or(-1);
                 let chosen = self
                     .event
                     .as_ref()
@@ -7378,7 +7642,12 @@ impl Game {
                     .copied();
                 if chosen == Some(EventOption::GivePotion) {
                     if potion_slot >= 0 {
-                        if let Some(p) = self.player.potions.iter_mut().find(|p| p.slot == potion_slot) {
+                        if let Some(p) = self
+                            .player
+                            .potions
+                            .iter_mut()
+                            .find(|p| p.slot == potion_slot)
+                        {
                             p.id = PotionId::Slot;
                         }
                     }
@@ -7535,10 +7804,7 @@ impl Game {
     }
 
     fn put_card_from_forethought_or_top(&mut self, mut card: crate::card::Card) {
-        let fore = self
-            .combat
-            .as_ref()
-            .is_some_and(|c| c.need_forethought);
+        let fore = self.combat.as_ref().is_some_and(|c| c.need_forethought);
         if fore {
             if card.cost > 0 {
                 card.free_to_play_once = true;
@@ -7652,7 +7918,8 @@ impl Game {
                     let n = self.pending_cards.len() as i32;
                     self.player.discard.append(&mut self.pending_cards);
                     if let Some(combat) = self.combat.as_mut() {
-                        let drawn = crate::combat::draw_cards_rng(&mut self.player, n, Some(&mut self.rng));
+                        let drawn =
+                            crate::combat::draw_cards_rng(&mut self.player, n, Some(&mut self.rng));
                         crate::combat::apply_fire_breathing(
                             &self.player,
                             &mut combat.monsters,
@@ -7677,7 +7944,12 @@ impl Game {
                     let pending = std::mem::take(&mut self.pending_cards);
                     if let Some(combat) = self.combat.as_mut() {
                         for card in pending {
-                            crate::combat::exhaust_card(&mut self.player, combat, card, &mut self.rng);
+                            crate::combat::exhaust_card(
+                                &mut self.player,
+                                combat,
+                                card,
+                                &mut self.rng,
+                            );
                         }
                     } else {
                         self.player.exhaust.extend(pending);
@@ -7760,7 +8032,9 @@ impl Game {
         };
         // BossRelicSelectScreen: Black Blood / FrozenCore / Ring of the Serpent /
         // HolyWater instantObtain at slot 0, replacing the starter relic.
-        if matches!(id, RelicId::FrozenCore | RelicId::Black_Blood) && !self.player.relics.is_empty() {
+        if matches!(id, RelicId::FrozenCore | RelicId::Black_Blood)
+            && !self.player.relics.is_empty()
+        {
             self.player.relics[0] = inst;
         } else {
             self.player.relics.push(inst);
@@ -7802,10 +8076,8 @@ impl Game {
                 // opens CombatRewardScreen, then removes its automatic CARD.
                 self.rewards.clear();
                 for _ in 0..5 {
-                    let potion = crate::rewards::get_random_potion_for(
-                        &mut self.rng,
-                        self.character,
-                    );
+                    let potion =
+                        crate::rewards::get_random_potion_for(&mut self.rng, self.character);
                     self.rewards.push(Reward::new(RewardKind::Potion(potion)));
                 }
                 // CombatRewardScreen.open rolls its automatic CARD reward
@@ -7817,11 +8089,20 @@ impl Game {
             }
             _ => {}
         }
-        if matches!(id, RelicId::Frozen_Egg_2 | RelicId::Molten_Egg_2 | RelicId::Toxic_Egg_2) {
+        if matches!(
+            id,
+            RelicId::Frozen_Egg_2 | RelicId::Molten_Egg_2 | RelicId::Toxic_Egg_2
+        ) {
             for card in &mut self.card_reward {
                 crate::rewards::preview_obtain(&self.player, card);
             }
         }
+    }
+
+    /// Equip a curriculum relic through the same acquisition hooks as a run.
+    /// Procedural generation filters relics that would open a choice screen.
+    pub(crate) fn gain_training_relic(&mut self, id: RelicId) {
+        self.gain_relic(id);
     }
 
     /// `AbstractCreature.increaseMaxHp`: raise max HP, then `heal(amount)`.
@@ -7919,8 +8200,9 @@ impl Game {
         let act = self.dungeon.act;
         let room = self.current_room;
         let player = &self.player;
-        self.dungeon
-            .next_relic(tier, &|id| crate::dungeon::relic_can_spawn(id, floor, act, room, player))
+        self.dungeon.next_relic(tier, &|id| {
+            crate::dungeon::relic_can_spawn(id, floor, act, room, player)
+        })
     }
 
     fn take_noncamp_relic(&mut self, tier: RelicTier) -> Option<RelicId> {
@@ -7966,7 +8248,12 @@ impl Game {
         if self.player.has_relic(RelicId::Sozu) {
             return false;
         }
-        if let Some(slot) = self.player.potions.iter_mut().find(|p| p.id == PotionId::Slot) {
+        if let Some(slot) = self
+            .player
+            .potions
+            .iter_mut()
+            .find(|p| p.id == PotionId::Slot)
+        {
             slot.id = id;
             true
         } else {
@@ -8008,12 +8295,11 @@ fn seek_draw_grid_indices(draw: &[Card]) -> Vec<usize> {
     }
     let mut idxs: Vec<usize> = (0..draw.len()).collect();
     idxs.sort_by_key(|&index| {
-        crate::generated::card_name_order::card_name_order(
-            draw[index].id,
-            draw[index].upgraded,
-        )
+        crate::generated::card_name_order::card_name_order(draw[index].id, draw[index].upgraded)
     });
-    idxs.sort_by(|&a, &b| java_rarity_ord(draw[b].rarity()).cmp(&java_rarity_ord(draw[a].rarity())));
+    idxs.sort_by(|&a, &b| {
+        java_rarity_ord(draw[b].rarity()).cmp(&java_rarity_ord(draw[a].rarity()))
+    });
     idxs.sort_by(|&a, &b| {
         let sa = draw[a].card_type() == CardType::STATUS;
         let sb = draw[b].card_type() == CardType::STATUS;
@@ -8035,7 +8321,7 @@ fn mind_bloom_options(floor: i32) -> Vec<EventOption> {
 
 #[cfg(test)]
 mod mind_bloom_tests {
-    use super::{EventOption, mind_bloom_options};
+    use super::{mind_bloom_options, EventOption};
 
     #[test]
     fn third_option_switches_from_rich_to_healthy_after_floor_forty() {
@@ -8087,8 +8373,7 @@ mod combat_overlay_cleanup_tests {
             potion(PotionId::DistilledChaos, 1),
         ]
         .into();
-        game.player.discard =
-            vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)].into();
+        game.player.discard = vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)].into();
 
         game.step(&potion_use(0));
         assert_eq!(game.screen, Screen::Grid);
@@ -8115,8 +8400,7 @@ mod combat_overlay_cleanup_tests {
             potion(PotionId::LiquidMemories, 1),
         ]
         .into();
-        game.player.discard =
-            vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)].into();
+        game.player.discard = vec![Card::new(CardId::Strike_B), Card::new(CardId::Defend_B)].into();
 
         game.step(&potion_use(0));
         assert_eq!(game.screen, Screen::CardReward);

@@ -10,6 +10,11 @@ publish = false
 name = "sts_engine"
 path = "src/lib.rs"
 
+[features]
+default = []
+native-training = ["dep:candle-core", "dep:candle-nn"]
+native-training-cuda = ["native-training", "candle-core/cuda"]
+
 [[bin]]
 name = "sts-replay"
 path = "src/bin/replay.rs"
@@ -37,6 +42,7 @@ path = "src/bin/combat_trace.rs"
 [[bin]]
 name = "sts-hrm-train"
 path = "src/bin/hrm_train.rs"
+required-features = ["native-training"]
 
 [[bin]]
 name = "sts-hrm-eval"
@@ -54,6 +60,8 @@ flate2 = "1"
 tiny_http = "0.12"
 ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic", "cuda", "api-27"] }
 rayon = "1.11"
+candle-core = { version = "0.11", optional = true, default-features = false }
+candle-nn = { version = "0.11", optional = true }
 
 [profile.release]
 lto = "thin"

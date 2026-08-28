@@ -1,18 +1,19 @@
 use crate::action::Action;
+use crate::card::Card;
 use crate::game::{Game, Screen};
-use crate::ids::{Act, CardId, CardType, Character, PotionId, RoomType};
+use crate::ids::{Act, CardId, CardType, Character, EncounterId, PotionId, RelicId, RoomType};
 use crate::unlocks::Unlocks;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Why an episode stopped. Act 3 boss victory is deliberately distinct from
-/// the game's optional Act 4 / credits flow: it is the target used by the
-/// from-scratch A0 experiments.
+/// Why an episode stopped. A procedural fight ends at `CombatVictory`, while
+/// a full run reserves `Act3BossVictory` for the external mean-floor target.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunOutcome {
     Running,
     PlayerDeath,
+    CombatVictory,
     Act3BossVictory,
     StepLimit,
 }
@@ -30,6 +31,9 @@ pub struct RunMeasurements {
     pub act: i32,
     pub ascension: i32,
     pub floor: i32,
+    /// Dispatch-only room class. This is deliberately not part of the numeric
+    /// model vector, so adding it cannot change existing checkpoint inputs.
+    pub elite_or_boss_combat: bool,
     pub hp: i32,
     pub max_hp: i32,
     pub block: i32,
@@ -184,6 +188,8 @@ impl RunMeasurements {
             act: game.dungeon.act as i32,
             ascension: game.ascension,
             floor: game.dungeon.floor,
+            elite_or_boss_combat: game.combat.is_some()
+                && matches!(game.current_room, RoomType::Elite | RoomType::Boss),
             hp: game.player.hp,
             max_hp: game.player.max_hp,
             block: game.player.block,
@@ -310,11 +316,57 @@ pub struct TrainEnv {
     ascension: i32,
     steps: usize,
     max_steps: usize,
+    goal: TrainingGoal,
+    scenario: Option<ProceduralCombatScenario>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrainingGoal {
+    FullRun,
+    CurrentCombat,
+}
+
+/// Which room class a procedural combat request should sample.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProceduralCombatKind {
+    Elite,
+    Boss,
+    #[default]
+    Mixed,
+}
+
+/// Deterministic request for a freshly generated Defect combat puzzle.
+///
+/// Omitting `act` samples uniformly from Acts 1 through 3. `kind = mixed`
+/// independently samples an elite or boss. The seed controls the encounter,
+/// deck, upgrades, relics, HP, relic counters, and ordinary combat RNG.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProceduralCombatSpec {
+    pub seed: i64,
+    #[serde(default)]
+    pub act: Option<i32>,
+    #[serde(default)]
+    pub kind: ProceduralCombatKind,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProceduralCombatScenario {
+    pub seed: i64,
+    pub act: i32,
+    pub floor: i32,
+    pub kind: ProceduralCombatKind,
+    pub encounter: EncounterId,
+    pub starting_hp: i32,
+    pub max_hp: i32,
+    pub deck_size: usize,
+    pub upgraded_cards: usize,
+    pub relics: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StepInfo {
-    /// Sparse objective reward: +1 for the Act 3 boss, -1 for death.
+    /// Sparse objective reward: +1 for the configured victory, -1 for failure.
     pub reward: f32,
     pub done: bool,
     pub outcome: RunOutcome,
@@ -322,6 +374,16 @@ pub struct StepInfo {
     pub terminal_score: Option<i32>,
     pub measurements: RunMeasurements,
     pub legal: Vec<Action>,
+}
+
+/// Minimal transition result for native rollout policies that inspect the
+/// environment directly. Unlike [`StepInfo`], this does not scan the deck,
+/// construct measurements, or enumerate the next action menu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct CompactStepInfo {
+    pub outcome: RunOutcome,
+    /// Surviving player HP on a win, negative living-monster HP on a loss.
+    pub terminal_score: Option<i32>,
 }
 
 /// Compact, vocabulary-free input for whole-run policy experiments. Feature
@@ -1082,6 +1144,159 @@ fn action_identity_features(game: &Game, action: &Action) -> Vec<u16> {
     features
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ProceduralRng(u64);
+
+impl ProceduralRng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
+        let mut value = self.0;
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D049BB133111EB);
+        value ^ (value >> 31)
+    }
+
+    fn index(&mut self, len: usize) -> usize {
+        debug_assert!(len > 0);
+        (self.next() as usize) % len
+    }
+
+    fn inclusive(&mut self, low: usize, high: usize) -> usize {
+        debug_assert!(low <= high);
+        low + self.index(high - low + 1)
+    }
+
+    fn chance(&mut self, numerator: usize, denominator: usize) -> bool {
+        self.index(denominator) < numerator
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DeckTheme {
+    Balanced,
+    Orbs,
+    CardAccess,
+    Energy,
+    Focus,
+    ZeroCost,
+    Powers,
+}
+
+fn card_matches_theme(id: CardId, theme: DeckTheme) -> bool {
+    match theme {
+        DeckTheme::Balanced => true,
+        DeckTheme::Orbs => card_channels_or_manipulates_orbs(id),
+        DeckTheme::CardAccess => card_accesses_more_cards(id),
+        DeckTheme::Energy => card_generates_energy(id),
+        DeckTheme::Focus => card_changes_focus(id) || card_channels_or_manipulates_orbs(id),
+        DeckTheme::ZeroCost => Card::new(id).cost == 0,
+        DeckTheme::Powers => Card::new(id).card_type() == CardType::POWER,
+    }
+}
+
+fn procedural_encounters(act: i32, kind: ProceduralCombatKind) -> &'static [EncounterId] {
+    match (act, kind) {
+        (1, ProceduralCombatKind::Elite) => &[
+            EncounterId::GremlinNob,
+            EncounterId::Lagavulin,
+            EncounterId::ThreeSentries,
+        ],
+        (1, ProceduralCombatKind::Boss) => &[
+            EncounterId::Hexaghost,
+            EncounterId::TheGuardian,
+            EncounterId::SlimeBoss,
+        ],
+        (2, ProceduralCombatKind::Elite) => &[
+            EncounterId::BookOfStabbing,
+            EncounterId::Slavers,
+            EncounterId::GremlinLeader,
+        ],
+        (2, ProceduralCombatKind::Boss) => &[
+            EncounterId::Automaton,
+            EncounterId::Champ,
+            EncounterId::Collector,
+        ],
+        (3, ProceduralCombatKind::Elite) => &[
+            EncounterId::GiantHead,
+            EncounterId::Nemesis,
+            EncounterId::Reptomancer,
+        ],
+        (3, ProceduralCombatKind::Boss) => &[
+            EncounterId::DonuAndDeca,
+            EncounterId::AwakenedOne,
+            EncounterId::TimeEater,
+        ],
+        _ => unreachable!("procedural act and room kind are normalized"),
+    }
+}
+
+fn procedural_floor(act: i32, kind: ProceduralCombatKind, rng: &mut ProceduralRng) -> i32 {
+    match (act, kind) {
+        (1, ProceduralCombatKind::Elite) => rng.inclusive(6, 14) as i32,
+        (1, ProceduralCombatKind::Boss) => 16,
+        (2, ProceduralCombatKind::Elite) => rng.inclusive(23, 31) as i32,
+        (2, ProceduralCombatKind::Boss) => 33,
+        (3, ProceduralCombatKind::Elite) => rng.inclusive(40, 48) as i32,
+        (3, ProceduralCombatKind::Boss) => 50,
+        _ => unreachable!("procedural act and room kind are normalized"),
+    }
+}
+
+fn added_card_range(act: i32, kind: ProceduralCombatKind) -> (usize, usize) {
+    match (act, kind) {
+        (1, ProceduralCombatKind::Elite) => (2, 8),
+        (1, ProceduralCombatKind::Boss) => (5, 12),
+        (2, ProceduralCombatKind::Elite) => (8, 16),
+        (2, ProceduralCombatKind::Boss) => (11, 21),
+        (3, ProceduralCombatKind::Elite) => (14, 25),
+        (3, ProceduralCombatKind::Boss) => (18, 30),
+        _ => unreachable!("procedural act and room kind are normalized"),
+    }
+}
+
+fn relic_range(act: i32, kind: ProceduralCombatKind) -> (usize, usize) {
+    match (act, kind) {
+        (1, ProceduralCombatKind::Elite) => (1, 4),
+        (1, ProceduralCombatKind::Boss) => (2, 6),
+        (2, ProceduralCombatKind::Elite) => (4, 9),
+        (2, ProceduralCombatKind::Boss) => (6, 11),
+        (3, ProceduralCombatKind::Elite) => (8, 14),
+        (3, ProceduralCombatKind::Boss) => (10, 17),
+        _ => unreachable!("procedural act and room kind are normalized"),
+    }
+}
+
+fn acquisition_safe_training_relic(id: RelicId) -> bool {
+    !matches!(
+        id,
+        RelicId::Astrolabe
+            | RelicId::Bottled_Flame
+            | RelicId::Bottled_Lightning
+            | RelicId::Bottled_Tornado
+            | RelicId::Calling_Bell
+            | RelicId::Cauldron
+            | RelicId::DollysMirror
+            | RelicId::Empty_Cage
+            | RelicId::Orrery
+            | RelicId::Pandoras_Box
+            | RelicId::Tiny_House
+    )
+}
+
+fn randomize_training_relic_counters(game: &mut Game, rng: &mut ProceduralRng) {
+    for relic in &mut game.player.relics {
+        relic.counter = match relic.id {
+            RelicId::Happy_Flower => rng.inclusive(0, 2) as i32,
+            RelicId::Pen_Nib | RelicId::InkBottle | RelicId::Nunchaku => rng.inclusive(0, 9) as i32,
+            RelicId::Incense_Burner => rng.inclusive(0, 5) as i32,
+            RelicId::Sundial => rng.inclusive(0, 2) as i32,
+            RelicId::Inserter => rng.inclusive(0, 1) as i32,
+            RelicId::Girya => rng.inclusive(0, 3) as i32,
+            _ => relic.counter,
+        };
+    }
+}
+
 impl TrainEnv {
     pub const DEFAULT_MAX_STEPS: usize = 5_000;
 
@@ -1113,13 +1328,246 @@ impl TrainEnv {
             ascension,
             steps: 0,
             max_steps,
+            goal: TrainingGoal::FullRun,
+            scenario: None,
         }
+    }
+
+    /// Build a deterministic but effectively unbounded combat curriculum row.
+    ///
+    /// The generator samples only from real Defect card/relic pools and starts
+    /// the ordinary combat engine, so subsequent actions and RNG semantics are
+    /// identical to full-run play. It intentionally varies both coherent deck
+    /// mechanisms and off-theme cards instead of assigning standalone card
+    /// values.
+    pub fn procedural_defect_combat(
+        spec: ProceduralCombatSpec,
+        ascension: i32,
+        max_steps: usize,
+    ) -> Result<Self, String> {
+        if !(0..=20).contains(&ascension) {
+            return Err("procedural combat ascension must be between 0 and 20".to_string());
+        }
+        if max_steps == 0 {
+            return Err("procedural combat step limit must be positive".to_string());
+        }
+        if spec.act.is_some_and(|act| !(1..=3).contains(&act)) {
+            return Err("procedural combat act must be 1, 2, or 3".to_string());
+        }
+
+        let mut scenario_rng = ProceduralRng(spec.seed as u64 ^ 0xC04B_A771_5EED_5EED);
+        let act_number = spec
+            .act
+            .unwrap_or_else(|| scenario_rng.inclusive(1, 3) as i32);
+        let kind = match spec.kind {
+            ProceduralCombatKind::Mixed => {
+                if scenario_rng.chance(1, 2) {
+                    ProceduralCombatKind::Elite
+                } else {
+                    ProceduralCombatKind::Boss
+                }
+            }
+            kind => kind,
+        };
+        let encounter_pool = procedural_encounters(act_number, kind);
+        let encounter = encounter_pool[scenario_rng.index(encounter_pool.len())];
+        let floor = procedural_floor(act_number, kind, &mut scenario_rng);
+        let act = match act_number {
+            1 => Act::Exordium,
+            2 => Act::City,
+            3 => Act::Beyond,
+            _ => unreachable!("act was validated"),
+        };
+
+        let mut game = Game::new(spec.seed, Character::Defect, ascension, Unlocks::fixture());
+        game.dungeon.act = act;
+        game.dungeon.floor = floor;
+        game.dungeon.boss = encounter;
+        game.current_room = match kind {
+            ProceduralCombatKind::Elite => RoomType::Elite,
+            ProceduralCombatKind::Boss => RoomType::Boss,
+            ProceduralCombatKind::Mixed => unreachable!("room kind was normalized"),
+        };
+
+        let starter_removals = scenario_rng.inclusive(0, (act_number as usize) * 2 + 1);
+        for _ in 0..starter_removals {
+            let removable = game
+                .player
+                .deck
+                .iter()
+                .enumerate()
+                .filter_map(|(index, card)| {
+                    matches!(card.id, CardId::Strike_B | CardId::Defend_B).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            if removable.is_empty() {
+                break;
+            }
+            let index = removable[scenario_rng.index(removable.len())];
+            game.player.deck.remove(index);
+        }
+
+        let themes = [
+            DeckTheme::Balanced,
+            DeckTheme::Orbs,
+            DeckTheme::CardAccess,
+            DeckTheme::Energy,
+            DeckTheme::Focus,
+            DeckTheme::ZeroCost,
+            DeckTheme::Powers,
+        ];
+        let theme = themes[scenario_rng.index(themes.len())];
+        let all_cards = game
+            .dungeon
+            .common_cards
+            .iter()
+            .chain(game.dungeon.uncommon_cards.iter())
+            .chain(game.dungeon.rare_cards.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        let themed_cards = all_cards
+            .iter()
+            .copied()
+            .filter(|id| card_matches_theme(*id, theme))
+            .collect::<Vec<_>>();
+        let (minimum_cards, maximum_cards) = added_card_range(act_number, kind);
+        let added_cards = scenario_rng.inclusive(minimum_cards, maximum_cards);
+        let upgrade_chance = match act_number {
+            1 => 12,
+            2 => 24,
+            3 => 36,
+            _ => unreachable!(),
+        };
+        for _ in 0..added_cards {
+            let rarity_roll = scenario_rng.index(100);
+            let rarity_pool = if rarity_roll < 54 {
+                game.dungeon.common_cards.as_ref()
+            } else if rarity_roll < 89 {
+                game.dungeon.uncommon_cards.as_ref()
+            } else {
+                game.dungeon.rare_cards.as_ref()
+            };
+            let themed_rarity = rarity_pool
+                .iter()
+                .copied()
+                .filter(|id| card_matches_theme(*id, theme))
+                .collect::<Vec<_>>();
+            let pool = if scenario_rng.chance(2, 3) && !themed_rarity.is_empty() {
+                &themed_rarity
+            } else if scenario_rng.chance(1, 5) && !themed_cards.is_empty() {
+                &themed_cards
+            } else {
+                rarity_pool
+            };
+            let mut id = pool[scenario_rng.index(pool.len())];
+            for _ in 0..8 {
+                if game.player.deck.iter().filter(|card| card.id == id).count() < 4 {
+                    break;
+                }
+                id = pool[scenario_rng.index(pool.len())];
+            }
+            let mut card = Card::new(id);
+            if card.can_upgrade() && scenario_rng.chance(upgrade_chance, 100) {
+                card.upgrade();
+            }
+            game.player.deck.push(card);
+        }
+
+        let starter_upgrade_chance = match act_number {
+            1 => 5,
+            2 => 12,
+            3 => 20,
+            _ => unreachable!(),
+        };
+        for card in &mut game.player.deck {
+            if card.can_upgrade() && scenario_rng.chance(starter_upgrade_chance, 100) {
+                card.upgrade();
+            }
+        }
+
+        let ordinary_relics = game
+            .dungeon
+            .common_relics
+            .iter()
+            .chain(game.dungeon.uncommon_relics.iter())
+            .chain(game.dungeon.rare_relics.iter())
+            .chain(game.dungeon.shop_relics.iter())
+            .copied()
+            .filter(|id| acquisition_safe_training_relic(*id))
+            .collect::<Vec<_>>();
+        let boss_relics = game
+            .dungeon
+            .boss_relics
+            .iter()
+            .copied()
+            .filter(|id| acquisition_safe_training_relic(*id))
+            .collect::<Vec<_>>();
+        for _ in 0..act_number.saturating_sub(1) {
+            for _ in 0..16 {
+                let id = boss_relics[scenario_rng.index(boss_relics.len())];
+                if !game.player.has_relic(id) {
+                    game.gain_training_relic(id);
+                    break;
+                }
+            }
+        }
+        let (minimum_relics, maximum_relics) = relic_range(act_number, kind);
+        let target_relics = scenario_rng.inclusive(minimum_relics, maximum_relics);
+        while game.player.relics.len() < target_relics {
+            let id = ordinary_relics[scenario_rng.index(ordinary_relics.len())];
+            if !game.player.has_relic(id) {
+                game.gain_training_relic(id);
+            }
+        }
+        randomize_training_relic_counters(&mut game, &mut scenario_rng);
+
+        let (minimum_max_hp, maximum_max_hp) = match act_number {
+            1 => (55, 82),
+            2 => (48, 90),
+            3 => (42, 96),
+            _ => unreachable!(),
+        };
+        game.player.max_hp = scenario_rng.inclusive(minimum_max_hp, maximum_max_hp) as i32;
+        game.player.hp = scenario_rng.inclusive(
+            (game.player.max_hp as usize / 4).max(1),
+            game.player.max_hp as usize,
+        ) as i32;
+        game.player.gold = scenario_rng.inclusive(0, 450) as i32;
+        game.start_training_combat(encounter);
+
+        let scenario = ProceduralCombatScenario {
+            seed: spec.seed,
+            act: act_number,
+            floor,
+            kind,
+            encounter,
+            starting_hp: game.player.hp,
+            max_hp: game.player.max_hp,
+            deck_size: game.player.deck.len(),
+            upgraded_cards: game.player.deck.iter().filter(|card| card.upgraded).count(),
+            relics: game.player.relics.len(),
+        };
+        Ok(Self {
+            game,
+            character: Character::Defect,
+            ascension,
+            steps: 0,
+            max_steps,
+            goal: TrainingGoal::CurrentCombat,
+            scenario: Some(scenario),
+        })
     }
 
     pub fn reset(&mut self, seed: i64) -> Vec<Action> {
         self.game = Game::new(seed, self.character, self.ascension, Unlocks::fixture());
         self.steps = 0;
+        self.goal = TrainingGoal::FullRun;
+        self.scenario = None;
         self.game.legal_actions()
+    }
+
+    pub fn scenario(&self) -> Option<&ProceduralCombatScenario> {
+        self.scenario.as_ref()
     }
 
     pub fn steps(&self) -> usize {
@@ -1169,6 +1617,9 @@ impl TrainEnv {
         if self.game.player.hp <= 0 {
             return RunOutcome::PlayerDeath;
         }
+        if self.goal == TrainingGoal::CurrentCombat && self.game.combat.is_none() {
+            return RunOutcome::CombatVictory;
+        }
         let act_three_boss_cleared = self.game.dungeon.act == Act::Beyond
             && ((self.game.current_room == RoomType::Boss
                 && self.game.combat.is_none()
@@ -1198,16 +1649,34 @@ impl TrainEnv {
         self.step_info()
     }
 
+    /// Apply one action without constructing the observation data required by
+    /// protocol clients. This is the branch-rollout hot path for the in-process
+    /// Rust trainer and has the same state-transition semantics as [`Self::step`].
+    pub fn step_compact(&mut self, action_index: usize) -> CompactStepInfo {
+        if !self.outcome().done() {
+            let legal = self.game.legal_actions();
+            if let Some(action) = legal.get(action_index) {
+                self.game.step(action);
+                self.steps += 1;
+            }
+        }
+        let outcome = self.outcome();
+        let terminal_score = self.terminal_score(outcome);
+        CompactStepInfo {
+            outcome,
+            terminal_score,
+        }
+    }
+
     fn step_info(&self) -> StepInfo {
         let outcome = self.outcome();
         let measurements = self.measurements();
-        let (reward, terminal_score) = match outcome {
-            RunOutcome::Running => (0.0, None),
-            RunOutcome::Act3BossVictory => (1.0, Some(self.game.player.hp.max(0))),
-            RunOutcome::PlayerDeath | RunOutcome::StepLimit => {
-                (-1.0, Some(-measurements.enemy_hp.max(1)))
-            }
+        let reward = match outcome {
+            RunOutcome::Running => 0.0,
+            RunOutcome::CombatVictory | RunOutcome::Act3BossVictory => 1.0,
+            RunOutcome::PlayerDeath | RunOutcome::StepLimit => -1.0,
         };
+        let terminal_score = self.terminal_score(outcome);
         StepInfo {
             reward,
             done: outcome.done(),
@@ -1219,6 +1688,31 @@ impl TrainEnv {
             } else {
                 self.game.legal_actions()
             },
+        }
+    }
+
+    fn terminal_score(&self, outcome: RunOutcome) -> Option<i32> {
+        match outcome {
+            RunOutcome::Running => None,
+            RunOutcome::CombatVictory | RunOutcome::Act3BossVictory => {
+                Some(self.game.player.hp.max(0))
+            }
+            RunOutcome::PlayerDeath | RunOutcome::StepLimit => {
+                let enemy_hp = self
+                    .game
+                    .combat
+                    .as_ref()
+                    .map(|combat| {
+                        combat
+                            .monsters
+                            .iter()
+                            .filter(|monster| !monster.dead && !monster.escaped)
+                            .map(|monster| monster.hp.max(0))
+                            .sum::<i32>()
+                    })
+                    .unwrap_or(0);
+                Some(-enemy_hp.max(1))
+            }
         }
     }
 
@@ -1255,6 +1749,101 @@ mod tests {
     }
 
     #[test]
+    fn procedural_combat_is_deterministic_and_uses_real_combat_setup() {
+        let spec = ProceduralCombatSpec {
+            seed: 0x1234_5678,
+            act: Some(3),
+            kind: ProceduralCombatKind::Boss,
+        };
+        let first = TrainEnv::procedural_defect_combat(spec, 20, 500).unwrap();
+        let second = TrainEnv::procedural_defect_combat(spec, 20, 500).unwrap();
+        assert_eq!(first.scenario(), second.scenario());
+        assert_eq!(
+            first.training_observation().state_features,
+            second.training_observation().state_features
+        );
+        assert_eq!(
+            first.training_observation().inventory_identities,
+            second.training_observation().inventory_identities
+        );
+        assert_eq!(first.game.current_room, RoomType::Boss);
+        assert_eq!(first.game.dungeon.act, Act::Beyond);
+        assert_eq!(first.game.dungeon.floor, 50);
+        assert!(first.game.combat.is_some());
+        assert!(first.game.player.deck.len() >= 20);
+        assert!(first.game.player.relics.len() >= 10);
+        assert_eq!(first.outcome(), RunOutcome::Running);
+    }
+
+    #[test]
+    fn procedural_curriculum_covers_every_elite_and_boss() {
+        for act in 1..=3 {
+            for kind in [ProceduralCombatKind::Elite, ProceduralCombatKind::Boss] {
+                let encounters = (0..128)
+                    .map(|seed| {
+                        let env = TrainEnv::procedural_defect_combat(
+                            ProceduralCombatSpec {
+                                seed,
+                                act: Some(act),
+                                kind,
+                            },
+                            20,
+                            500,
+                        )
+                        .unwrap();
+                        format!("{:?}", env.scenario().unwrap().encounter)
+                    })
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(encounters.len(), 3, "act {act} {kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn procedural_combat_victory_uses_surviving_hp_margin() {
+        let mut env = TrainEnv::procedural_defect_combat(
+            ProceduralCombatSpec {
+                seed: 77,
+                act: Some(1),
+                kind: ProceduralCombatKind::Elite,
+            },
+            20,
+            500,
+        )
+        .unwrap();
+        env.game.combat = None;
+        env.game.screen = Screen::CombatReward;
+        let info = env.step_info();
+        let compact = env.step_compact(0);
+        assert_eq!(info.outcome, RunOutcome::CombatVictory);
+        assert_eq!(info.reward, 1.0);
+        assert_eq!(info.terminal_score, Some(env.game.player.hp));
+        assert!(info.done);
+        assert!(info.legal.is_empty());
+        assert_eq!(compact.outcome, info.outcome);
+        assert_eq!(compact.terminal_score, info.terminal_score);
+    }
+
+    #[test]
+    fn full_run_reset_leaves_the_procedural_goal() {
+        let mut env = TrainEnv::procedural_defect_combat(
+            ProceduralCombatSpec {
+                seed: 9,
+                act: None,
+                kind: ProceduralCombatKind::Mixed,
+            },
+            20,
+            500,
+        )
+        .unwrap();
+        assert!(env.scenario().is_some());
+        env.reset(10);
+        assert!(env.scenario().is_none());
+        assert_eq!(env.game.screen, Screen::Neow);
+        assert_eq!(env.outcome(), RunOutcome::Running);
+    }
+
+    #[test]
     fn defect_a0_starts_at_the_first_neow_choice() {
         let env = TrainEnv::defect_a0(1);
         assert_eq!(env.game.character, Character::Defect);
@@ -1277,11 +1866,16 @@ mod tests {
     #[test]
     fn step_limit_is_terminal_without_becoming_a_victory() {
         let mut env = TrainEnv::new_with_config(1, Character::Defect, 0, 1);
+        let mut compact_env = env.clone();
         let info = env.step(0);
+        let compact = compact_env.step_compact(0);
         assert!(info.done);
         assert_eq!(info.reward, -1.0);
         assert_eq!(info.outcome, RunOutcome::StepLimit);
         assert!(info.legal.is_empty());
+        assert_eq!(compact.outcome, info.outcome);
+        assert_eq!(compact.terminal_score, info.terminal_score);
+        assert_eq!(format!("{:?}", compact_env.game), format!("{:?}", env.game));
     }
 
     #[test]

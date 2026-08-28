@@ -149,6 +149,16 @@ def test_combat_branch_hp_weight_prefers_healthier_leaf() -> None:
     assert high_weight_margin > low_weight_margin
 
 
+def test_procedural_combat_victory_is_a_winning_exact_leaf() -> None:
+    root = {"floor": 50, "enemy_max_hp": 480}
+    leaf = {
+        "outcome": "combat_victory",
+        "measurements": {"hp": 17},
+    }
+
+    assert branch_score(root, leaf, learned_leaf_value=-999.0) == 1_000_017.0
+
+
 def test_replay_policy_state_restores_tried_actions() -> None:
     observation = {
         "state_features": [1, 2],

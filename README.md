@@ -122,33 +122,35 @@ let obs = env.compact_obs();
 `TrainEnv::step` indexes into the current `legal_actions()` list, the same
 discrete interface the Java headless sim advertises.
 
-### Act 3 boss HRM training
+### Native procedural combat training
 
 The dedicated frontend runs the standard experiment without exposing the
 preprocessing and model hyperparameters:
 
 ```sh
-cargo run --release --bin sts-hrm-train
+cargo run --release --features native-training-cuda --bin sts-hrm-train
 ```
 
-With no arguments it verifies and expands the checked-in 500-puzzle Defect A0
-Act 3 boss corpus, selects CUDA when available, trains for 600 wall-clock
-seconds, evaluates a deterministic 400/50/50 puzzle split, and writes the
-checkpoint, metrics, trainer-neutral fixed-batch FP16 ONNX graph, and Rust
-runtime manifest to `artifacts/hrm`. It finds an existing training environment
-or provisions one through `uv`. The only routine overrides are `--seconds`,
-`--device auto|cuda|cpu`, `--output-dir`, and `--rebuild-data`; run
-`sts-hrm-train --help` for their concise interface.
+With no arguments it trains for 600 wall-clock seconds on fresh A20 Defect
+elite/boss combats spanning Acts 1–3. Exact forks, HTN continuations, feature
+encoding, autograd, AdamW, unseen validation, and safetensors checkpointing all
+run in one Rust process. There is no Python or JSON transport in the training
+path. Use `--features native-training -- --device cpu` for a CPU-only build;
+run `sts-hrm-train --help` for the small set of routine overrides.
 
-Run the resulting checkpoint through all 500 boss entries with live model
-actions and exact engine transitions using the companion frontend:
+The current native trainer validates its checkpoint on a fresh procedural
+cohort. The older `sts-hrm-eval` command below is retained for historical
+500-puzzle ONNX artifacts; it does not consume the new safetensors critic yet.
+
+To reproduce the historical ONNX experiment, supply a compatible preserved
+checkpoint to the companion frontend:
 
 ```sh
-cargo run --release --bin sts-hrm-eval
+cargo run --release --bin sts-hrm-eval -- --checkpoint PATH
 column -ts $'\t' artifacts/hrm/combat-hrm-10m-rollouts.tsv | less -S
 ```
 
-The zero-argument evaluator performs tokenization, fixed-batch ONNX inference,
+That evaluator performs tokenization, fixed-batch ONNX inference,
 parallel state preparation, exact engine transitions, loop detection, and
 report generation in Rust; Python is used only for a one-time export if the
 runtime artifact is absent or stale. Ready-state encoding and independent game

@@ -404,7 +404,7 @@ def branch_score(
 ) -> float:
     """Score an exact self-play branch without a scripted action target."""
     measurements = leaf["measurements"]
-    if leaf["outcome"] == "act3_boss_victory":
+    if leaf["outcome"] in ("combat_victory", "act3_boss_victory"):
         return 1_000_000.0 + float(measurements["hp"])
     floor_progress = measurements["floor"] - root["floor"]
     hp_fraction = measurements["hp"] / max(measurements["max_hp"], 1)

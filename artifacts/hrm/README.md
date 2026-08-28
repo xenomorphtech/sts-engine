@@ -7,19 +7,16 @@ part of the supported toolchain. Superseded local `.pt`, `.onnx`, and runtime
 exports were moved to the desktop trash; the checked-in metrics below remain as
 the reproducible historical record.
 
-Run the standard experiment from the repository root with no training
-hyperparameters:
+The current native procedural trainer is run from the repository root with:
 
 ```sh
-cargo run --release --bin sts-hrm-train
+cargo run --release --features native-training-cuda --bin sts-hrm-train
 ```
 
-The frontend expands and verifies the checked-in 500-puzzle Defect A0 Act 3
-boss fixture, caches the prepared tensors, trains for 600 wall-clock seconds,
-evaluates puzzle-level train/validation/test splits, and exports an FP16 ONNX
-policy plus its Rust runtime manifest. Large generated `.jsonl`, `.pt`, and
-`.onnx` files are ignored by Git. Small metrics and summary JSON files are
-retained as machine-readable records.
+It uses fresh A20 elite/boss scenarios and writes safetensors weights plus a
+metrics JSON under `artifacts/selfplay`. The remainder of this file documents
+the superseded 500-puzzle Python/ONNX experiment. Its generated `.pt` files have
+been deleted; the checked-in metrics remain historical evidence.
 
 The promoted 26 August 2026 default run used an RTX 5060 and produced:
 

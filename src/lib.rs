@@ -7,8 +7,11 @@
 mod string_id;
 
 pub mod action;
+pub mod batch_env;
 pub mod card;
 pub mod combat;
+#[cfg(feature = "native-training")]
+pub mod combat_training;
 pub mod content;
 pub mod creature;
 pub mod dungeon;
@@ -29,7 +32,11 @@ pub mod unlocks;
 pub mod walk;
 
 pub use action::Action;
+pub use batch_env::{
+    BatchCompactStepRow, BatchForkRequest, BatchRequest, BatchStepRow, BatchedTrainEnv,
+};
 pub use env::{
+    CompactStepInfo, ProceduralCombatKind, ProceduralCombatScenario, ProceduralCombatSpec,
     RunMeasurements, RunOutcome, StepInfo, TrainEnv, TrainingAction, TrainingObservation,
     TRAINING_FEATURE_BUCKETS,
 };

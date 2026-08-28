@@ -108,6 +108,138 @@ uv run --with torch --with numpy python tools/eval_selfplay_hrm.py
 
 Use `--lookahead-depth 0` to measure the learned policy without search.
 
+## Procedural combat curriculum
+
+The frozen full-run corpus remains useful evidence, but generation 11 showed
+that it is not a sound repeated-training distribution. A 30-minute scratch run
+selected step 2,386 after about three minutes; by step 23,271, held-out planner
+agreement had fallen from 56.63% to 46.27% and progress MAE had risen from
+0.0463 to 0.0566. The selected checkpoint was also flat against generation 10
+in closed-loop play: +0.095 mean floor over 200 paired seeds with 95% interval
+`[-0.539, 0.729]`.
+
+`TrainEnv::procedural_defect_combat` and the self-play protocol's
+`reset_combat` operation provide an unbounded alternative. Each seed creates a
+new combination of:
+
+- Act 1, 2, or 3 and an elite or boss room, stratified across all 18 encounters;
+- a stage-sized Defect deck sampled from the real card pools;
+- a latent mechanism bias (orbs, draw/access, energy, focus, zero-cost, powers,
+  or balanced) mixed with off-theme cards;
+- starter removals, per-card upgrades, safe acquired relics, and realistic
+  stateful relic counters;
+- maximum HP and current HP over a broad stage-dependent range;
+- the ordinary seeded combat shuffle, monsters, intents, and relic hooks.
+
+The native `sts-hrm-train` learner does not build a data cache or repeat epochs.
+For every optimizer batch it:
+
+1. requests never-before-used procedural seeds;
+2. advances each fight by a random number of HTN actions so roots cover
+   later turns as well as opening hands;
+3. forks the HTN-preferred action and random legal alternatives from the same
+   root state;
+4. continues each branch to the fight's terminal state in the exact engine;
+5. ranks the actions by surviving player HP fraction on a win or negative
+   remaining monster HP fraction on a loss;
+6. takes one optimizer step and discards the scenarios.
+
+Because action labels are compared within one state, recognizing that a deck is
+generally strong cannot explain which action is better. Training and validation
+have independent seed streams. Validation scenarios are also one-use, and the
+final unseen cohort is evaluated once against both the trained network and its
+saved random initialization. This makes memorizing individual training menus
+useless. It does not make distribution shift impossible: the deck generator
+and continuation policy still define what the learner can observe.
+
+The procedural model is separate from the run-progress critic. It emits a menu
+policy logit and combat margin; both outputs train a shared state/action/deck/
+relic representation. Isolated fight margins are not written into whole-run
+floor targets.
+
+Run the default ten-minute online curriculum on CUDA:
+
+```bash
+cargo run --release --features native-training-cuda --bin sts-hrm-train
+```
+
+Use `--features native-training -- --device cpu` for a CPU-only build. The
+trainer defaults the experiment parameters; `--seconds` is the ordinary
+override. It writes model weights as safetensors and a neighboring metrics JSON.
+
+`BatchedTrainEnv` is called directly. There is no subprocess, JSONL, ctypes,
+MessagePack, Python, PyTorch, or ONNX operation in the training path. Reset,
+Step, Fork, BranchFork, BranchStep, and observation construction run independent
+environments on Rayon while retaining request order exactly. Candle supplies
+Rust autograd, AdamW, CPU/CUDA tensors, and safetensors serialization. A captured
+six-request JSON protocol fixture covering every batch operation remains
+byte-identical to the earlier serial adapter.
+
+The fresh native critic has 3,467,522 parameters at the default width of 96.
+One shared 32,769-row hashed embedding represents state, legal action, full
+deck/relic inventory, candidate identity, and action history. Pooled state ×
+action and inventory × candidate products make the two important joins
+explicit. The model also receives all 45 run/combat measurements and 31
+candidate-specific resource parameters, including current/max HP and lethal
+HP/enemy-damage indicators. Nine context vectors feed a two-output MLP.
+
+Before native training, the Python/PyTorch path on the 6-core/12-thread Ryzen 5
+7500F host measured:
+
+| Rayon threads | Scenarios/batch | Scenarios/s | Branch steps/s |
+| ---: | ---: | ---: | ---: |
+| 1 | 12 | 19.7 | 1,286 |
+| 12 | 12 | 20.3 | 1,332 |
+| 1 | 96 | 23.2 | 1,547 |
+| 12 | 48 | 25.8 | 1,740 |
+| 12 | 96 | 26.5 | 1,722 |
+| 12 | 128 | 22.4 | 1,520 |
+| 12 | 192 | 19.5 | 1,402 |
+| 12 | 384 | 23.7 | 1,623 |
+
+Batch 96 remains the default. Hundreds or thousands are not automatically
+better: terminal branches thin unevenly, so very large synchronous batches wait
+on stragglers and perform fewer optimizer updates. Set `RAYON_NUM_THREADS` to
+bound engine CPU use when sharing a host.
+
+With the same 96 scenarios, four root actions, 16-action burn-in, and 12 Rayon
+threads, the native implementation measured:
+
+| Trainer/device | Scenarios/s | Branch steps/s | Optimizer time |
+| --- | ---: | ---: | ---: |
+| Python/PyTorch CUDA (previous best) | 26.5 | 1,722 | not isolated |
+| Native Rust/Candle CPU | 26.3 | 2,190 | 0.86 s / 6 batches |
+| Native Rust/Candle CUDA | 26.6 | 2,222 | 0.63 s / 6 batches |
+
+Scenario rates are continuation-policy dependent, so exact branch steps per
+second are the better comparison. Native CUDA improved that rate by about 29%
+in the controlled 20-second run. The branch hot path returns only outcome and
+terminal margin: it skips post-step run/deck measurements, the next legal menu,
+and full neural observations while the HTN continuation reads the environment
+directly. Compact and full transitions have exact-state and terminal-score
+equivalence tests. The result also confirms that neither serialization nor
+tensor optimization is the main bottleneck: exact rollout collection still
+dominates, and CUDA is only about 1.5% faster than CPU at this batch size.
+
+A 60-second native CUDA run before the compact-row optimization processed
+1,440 unique scenarios, 1,177 usable
+menus, 4,341 root branches, and 125,290 exact branch steps in 15 updates. It
+reached 2,071.6 branch steps/s. Collection consumed 58.96 seconds, optimizer
+work 1.52 seconds, and checkpoint serialization 0.019 seconds.
+
+On a final 120-scenario stream that was never trained or used for selection, 95
+usable menus completed. Against the saved random initialization, total loss
+fell from 2.0912 to 1.5267, margin MAE from 0.9604 to 0.4897, mean action regret
+from 0.1261 to 0.1057, and optimal-action accuracy rose from 34.7% to 44.2%.
+The checkpoint is
+`artifacts/selfplay/defect-a20-procedural-combat-v2-60s.safetensors`. This is a
+successful learning and throughput check, not yet a mean-floor promotion.
+
+The superseded `.pt` checkpoints were deleted. The former Python procedural
+trainer and its FFI bridge were removed rather than kept as a second training
+implementation. Full A20 mean floor remains the only promotion gate once the
+native policy is wired into closed-loop run evaluation.
+
 ## Promoted generation 10
 
 Generation 10 replaces raw exact-branch score fitting with planner
